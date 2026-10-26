@@ -1,0 +1,6 @@
+{
+  "name": "Pentix - Mobile Vector Logo Studio",
+  "description": "Futuristic mobile vector logo design studio with professional Illustrator-grade Bezier pen, Shape Builder, ergonomic thumb-zone modifiers, and SVG export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
