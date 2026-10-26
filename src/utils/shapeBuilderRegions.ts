@@ -202,8 +202,8 @@ export function computeAtomicSubRegions(paths: VectorPath[]): SubRegion[] {
       pathD: polygonToSvgPathD(r.poly),
       bbox,
       centroid,
-      fill: r.topPath.fill !== 'none' ? r.topPath.fill : '#00E5FF',
-      stroke: r.topPath.stroke !== 'none' ? r.topPath.stroke : '#38BDF8',
+      fill: r.topPath.fill !== 'none' ? r.topPath.fill : '#CDFF5C',
+      stroke: r.topPath.stroke !== 'none' ? r.topPath.stroke : '#E8EAED',
     };
   });
 }
@@ -260,9 +260,9 @@ export function polygonToVectorPath(
     name: baseStyle.name || 'Merged Shape',
     points,
     closed: true,
-    fill: baseStyle.fill || '#00E5FF',
+    fill: baseStyle.fill || '#CDFF5C',
     fillOpacity: baseStyle.fillOpacity ?? 1,
-    stroke: baseStyle.stroke || '#38BDF8',
+    stroke: baseStyle.stroke || '#E8EAED',
     strokeWidth: baseStyle.strokeWidth ?? 3,
     strokeOpacity: baseStyle.strokeOpacity ?? 1,
     strokeCap: baseStyle.strokeCap || 'round',

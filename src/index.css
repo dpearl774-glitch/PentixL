@@ -1,49 +1,276 @@
 @import "tailwindcss";
 
+/* ------------------------------------------------------------------
+   Pentix design tokens
+   One accent. Hairlines. No gradients. Everything else is graphite.
+   ------------------------------------------------------------------ */
+@theme {
+  --color-ink-0: #08090b;
+  --color-ink-1: #0c0e11;
+  --color-ink-2: #12151a;
+  --color-ink-3: #191d23;
+  --color-line: #24282f;
+  --color-line-strong: #363b44;
+  --color-text: #eceef1;
+  --color-dim: #9aa1aa;
+  --color-mute: #6a717a;
+  --color-accent: #cdff5c;
+  --color-accent-dim: #9ec93f;
+  --color-danger: #ff6b6b;
+  --color-warn: #ffc15e;
+
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --radius-sheet: 22px;
+}
+
 @layer base {
-  :root {
-    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    --font-mono: 'JetBrains Mono', monospace;
+  html,
+  body,
+  #root {
+    height: 100%;
   }
-  
+
+  html {
+    background-color: var(--color-ink-0);
+    overscroll-behavior: none;
+  }
+
   body {
     font-family: var(--font-sans);
-    background-color: #0b0f19;
-    color: #f1f5f9;
+    background-color: var(--color-ink-0);
+    color: var(--color-text);
     overflow: hidden;
+    overscroll-behavior: none;
     user-select: none;
     -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
     touch-action: manipulation;
+    font-feature-settings: "ss01", "cv01";
+  }
+
+  /* Form fields must remain selectable/editable — the app-wide
+     user-select: none otherwise blocks caret placement. */
+  input,
+  textarea,
+  select,
+  [contenteditable="true"] {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  canvas,
+  svg {
+    touch-action: none;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+    color: #fff;
+  }
+
+  button {
+    touch-action: manipulation;
+  }
+
+  :focus-visible {
+    outline: 1.5px solid var(--color-accent);
+    outline-offset: 2px;
   }
 }
 
-/* Prevent unwanted browser behaviors during vector drawing */
-canvas, svg {
-  touch-action: none;
+@layer utilities {
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pad-bottom-safe {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Numeric / technical labels */
+  .label-mono {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-mute);
+  }
+
+  .press {
+    transition: transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+  }
+  .press:active {
+    transform: scale(0.96);
+  }
+
+  .hairline-t {
+    box-shadow: inset 0 1px 0 0 var(--color-line);
+  }
+  .hairline-b {
+    box-shadow: inset 0 -1px 0 0 var(--color-line);
+  }
+
+  .sheet-surface {
+    background: var(--color-ink-1);
+    border: 1px solid var(--color-line);
+    box-shadow: 0 -8px 40px -12px rgba(0, 0, 0, 0.9), 0 1px 0 0 rgba(255, 255, 255, 0.03) inset;
+  }
+
+  .glass {
+    background: color-mix(in srgb, var(--color-ink-1) 82%, transparent);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+  }
+
+  .scroll-x {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    overscroll-behavior-x: contain;
+  }
+  .scroll-x::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Motion (no plugin dependency) */
+  .anim-sheet {
+    animation: pentix-sheet 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .anim-scrim {
+    animation: pentix-fade 200ms ease-out;
+  }
+  .anim-pop {
+    animation: pentix-pop 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .anim-rise {
+    animation: pentix-rise 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
 }
 
-/* Custom scrollbars for layer lists */
+@keyframes pentix-sheet {
+  from {
+    transform: translateY(18px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pentix-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pentix-pop {
+  from {
+    transform: scale(0.94);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes pentix-rise {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* ------------------------------------------------------------------
+   Range inputs: thin graphite track, lime handle
+   ------------------------------------------------------------------ */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-line-strong);
+}
+input[type="range"]::-moz-range-track {
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-line-strong);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -7px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  border: 3px solid var(--color-ink-1);
+  box-shadow: 0 0 0 1px var(--color-line-strong);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  border: 3px solid var(--color-ink-1);
+  box-shadow: 0 0 0 1px var(--color-line-strong);
+}
+
+/* Scrollbars */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.6);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(100, 116, 139, 0.4);
+  background: var(--color-line-strong);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.6);
+  background: #4a5058;
 }
 
-/* Hide scrollbars for swipeable ribbons */
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
+/* Color swatch inputs render as clean tiles */
+input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  border: none;
+  padding: 0;
+  background: transparent;
 }
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
 }
-
+input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 10px;
+}

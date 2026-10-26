@@ -1,4 +1,4 @@
-import { Layer, CanvasView } from '../types/vector';
+import { Layer, CanvasView, ReferenceImage } from '../types/vector';
 import { LOGO_TEMPLATES } from '../data/templates';
 import { generateProjectThumbnailSvg } from './thumbnailGenerator';
 
@@ -9,6 +9,8 @@ export interface StoredProject {
   createdAt: number;
   updatedAt: number;
   layers: Layer[];
+  /** Tracing references travel with the document. */
+  references?: ReferenceImage[];
   view?: CanvasView;
   thumbnailSvg: string;
   pathsCount: number;

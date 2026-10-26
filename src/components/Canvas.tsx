@@ -1,8 +1,10 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { Lock, Layers as LayersIcon, Magnet } from 'lucide-react';
+import { CANVAS } from '../theme';
 import {
   AnchorPoint,
   CanvasView,
+  GradientDef,
+  Guide,
   Layer,
   ModifierState,
   Point,
@@ -14,11 +16,12 @@ import {
   ToolType,
   VectorPath,
 } from '../types/vector';
+import { gradientCoords } from '../utils/gradients';
+import { gradientIdFor } from '../utils/svgExport';
 import {
   distance,
   pointsToSvgPath,
   snapAngle,
-  snapToGrid,
   createSymmetricHandles,
   generateVariableStrokePolygon,
 } from '../utils/bezier';
@@ -44,6 +47,8 @@ import {
   SubRegion,
 } from '../utils/shapeBuilderRegions';
 
+const RULER_SIZE = 18;
+
 interface CanvasProps {
   view: CanvasView;
   onViewChange: (newView: CanvasView) => void;
@@ -59,7 +64,23 @@ interface CanvasProps {
   onSelectionChange: (newSelection: SelectionState) => void;
   gridVisible: boolean;
   gridSnapEnabled: boolean;
-  gridSize: number;
+  gridSpacingX: number;
+  gridSpacingY: number;
+  /** 0..1 line visibility of the grid */
+  gridOpacity: number;
+  artboardColor: string;
+  rulersVisible: boolean;
+  guides: Guide[];
+  onAddGuide: (axis: 'h' | 'v', position: number) => void;
+  onUpdateGuide: (id: string, position: number) => void;
+  /** Called once when a guide drag ends, so the move becomes one undo step */
+  onCommitGuides?: () => void;
+  /** Gradient paint for newly created fills, when the gradient style is active */
+  fillGradient?: GradientDef | null;
+  fillOpacity?: number;
+  strokeOpacity?: number;
+  eyedropperActive?: boolean;
+  onSamplePoint?: (point: Point) => void;
   fillColor: string;
   strokeColor: string;
   strokeWidth: number;
@@ -67,14 +88,15 @@ interface CanvasProps {
   onCommitHistory: () => void;
   activePathInProgress: VectorPath | null;
   setActivePathInProgress: React.Dispatch<React.SetStateAction<VectorPath | null>>;
-  onShapeBuilderAction: (op: 'union' | 'subtract' | 'intersect' | 'divide') => void;
   onReplacePaths?: (removePathIds: string[], newPaths: VectorPath[]) => void;
   isPanZoomLocked?: boolean;
-  onToggleLockPanZoom?: () => void;
-  onOpenLayers?: () => void;
   smartGuidesEnabled?: boolean;
-  onToggleSmartGuides?: () => void;
   referenceImages?: ReferenceImage[];
+  onUpdateReference?: (image: ReferenceImage) => void;
+  sbMode?: 'merge' | 'erase';
+  clipArtboard?: boolean;
+  onRequestText?: (point: Point) => void;
+  onToolSwitch?: (tool: ToolType) => void;
 }
 
 export const Canvas: React.FC<CanvasProps> = ({
@@ -92,7 +114,20 @@ export const Canvas: React.FC<CanvasProps> = ({
   onSelectionChange,
   gridVisible,
   gridSnapEnabled,
-  gridSize,
+  gridSpacingX,
+  gridSpacingY,
+  gridOpacity,
+  artboardColor,
+  rulersVisible,
+  guides,
+  onAddGuide,
+  onUpdateGuide,
+  onCommitGuides,
+  fillGradient = null,
+  fillOpacity = 1,
+  strokeOpacity = 1,
+  eyedropperActive = false,
+  onSamplePoint,
   fillColor,
   strokeColor,
   strokeWidth,
@@ -100,14 +135,15 @@ export const Canvas: React.FC<CanvasProps> = ({
   onCommitHistory,
   activePathInProgress,
   setActivePathInProgress,
-  onShapeBuilderAction,
   onReplacePaths,
   isPanZoomLocked = false,
-  onToggleLockPanZoom,
-  onOpenLayers,
   smartGuidesEnabled = true,
-  onToggleSmartGuides,
   referenceImages = [],
+  onUpdateReference,
+  sbMode = 'merge',
+  clipArtboard = false,
+  onRequestText,
+  onToolSwitch,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -135,8 +171,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     initialSelectedPaths?: VectorPath[];
   } | null>(null);
 
-  // Adobe Illustrator Shape Builder State
-  const [sbMode, setSbMode] = useState<'merge' | 'erase'>('merge');
+  // Shape Builder region selection (the merge/erase mode lives in the app shell)
   const [sbSelectedRegionIds, setSbSelectedRegionIds] = useState<string[]>([]);
   const [sbHoveredRegionId, setSbHoveredRegionId] = useState<string | null>(null);
   const [sbDragPoints, setSbDragPoints] = useState<Point[]>([]);
@@ -155,27 +190,49 @@ export const Canvas: React.FC<CanvasProps> = ({
   // Synchronous brush reference to prevent dropped strokes
   const brushStrokeRef = useRef<VectorPath | null>(null);
 
-  // Vector Typography modal state
-  const [textInputModal, setTextInputModal] = useState<{ open: boolean; point: Point; text: string } | null>(null);
+  // Double tap on an object switches to direct selection
+  const lastTapRef = useRef<{ id: string; time: number } | null>(null);
+  const registerTap = (id: string) => {
+    const now = performance.now();
+    const last = lastTapRef.current;
+    lastTapRef.current = { id, time: now };
+    return !!last && last.id === id && now - last.time < 340;
+  };
 
-  // Artboard boundary clipping toggle
-  const [clipArtboardBounds, setClipArtboardBounds] = useState<boolean>(false);
+  // Dragging an unlocked reference image
+  const referenceDragRef = useRef<{ id: string; grab: Point; origin: Point } | null>(null);
+
+  // Guide interactions — dragged either from a ruler or on the canvas
+  const guideDragRef = useRef<{ id: string; axis: 'h' | 'v' } | null>(null);
+  /** Mirrored into state so the guide being moved can be highlighted */
+  const [draggingGuideId, setDraggingGuideId] = useState<string | null>(null);
+  const guideDragStartRef = useRef<number | null>(null);
+  const [rulerDraft, setRulerDraft] = useState<{ axis: 'h' | 'v'; position: number } | null>(null);
+  const rulerAxisRef = useRef<'h' | 'v' | null>(null);
 
   // Convert client screen coordinates to canvas coordinate space
-  const screenToCanvas = useCallback(
+  const rawCanvasPoint = useCallback(
     (clientX: number, clientY: number): Point => {
       if (!svgRef.current) return { x: 0, y: 0 };
       const rect = svgRef.current.getBoundingClientRect();
-      const rawX = (clientX - rect.left - view.panX) / view.zoom;
-      const rawY = (clientY - rect.top - view.panY) / view.zoom;
-
-      let pt: Point = { x: rawX, y: rawY };
-      if (gridSnapEnabled) {
-        pt = snapToGrid(pt, gridSize);
-      }
-      return pt;
+      return {
+        x: (clientX - rect.left - view.panX) / view.zoom,
+        y: (clientY - rect.top - view.panY) / view.zoom,
+      };
     },
-    [view, gridSnapEnabled, gridSize]
+    [view]
+  );
+
+  const screenToCanvas = useCallback(
+    (clientX: number, clientY: number): Point => {
+      const raw = rawCanvasPoint(clientX, clientY);
+      if (!gridSnapEnabled) return raw;
+      return {
+        x: Math.round(raw.x / gridSpacingX) * gridSpacingX,
+        y: Math.round(raw.y / gridSpacingY) * gridSpacingY,
+      };
+    },
+    [rawCanvasPoint, gridSnapEnabled, gridSpacingX, gridSpacingY]
   );
 
   // Visible paths
@@ -278,6 +335,12 @@ export const Canvas: React.FC<CanvasProps> = ({
     lastPointerPosRef.current = canvasPt;
     smoothedPressureRef.current = 0.5;
 
+    // Eyedropper: sample the artwork under the finger and hand it back
+    if (eyedropperActive) {
+      onSamplePoint?.(rawCanvasPoint(e.clientX, e.clientY));
+      return;
+    }
+
     // Pan Tool or Middle Mouse Button
     if (effectiveTool === 'hand' || e.button === 1) {
       if (!isPanZoomLocked) {
@@ -303,10 +366,11 @@ export const Canvas: React.FC<CanvasProps> = ({
           points: [newPoint],
           closed: false,
           fill: fillColor,
-          fillOpacity: 1,
+          fillOpacity,
+          ...(fillGradient ? { fillGradient } : {}),
           stroke: strokeColor,
           strokeWidth,
-          strokeOpacity: 1,
+          strokeOpacity,
           strokeCap: 'round',
           strokeJoin: 'round',
           pressureProfile: 'uniform',
@@ -437,13 +501,19 @@ export const Canvas: React.FC<CanvasProps> = ({
       }
     }
 
+    // Direct select on empty canvas: clear selection, never marquee
+    if (effectiveTool === 'direct-select') {
+      onSelectionChange({
+        selectedPathIds: [],
+        selectedAnchorIndex: null,
+        selectedHandleType: null,
+      });
+      return;
+    }
+
     // Vector Typography Tool Logic
     if (effectiveTool === 'text') {
-      setTextInputModal({
-        open: true,
-        point: canvasPt,
-        text: 'Pentix Vector',
-      });
+      onRequestText?.(canvasPt);
       return;
     }
 
@@ -516,6 +586,38 @@ export const Canvas: React.FC<CanvasProps> = ({
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (activePointersRef.current.has(e.pointerId)) {
       activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    // Guide being dragged on the canvas
+    if (guideDragRef.current) {
+      const raw = rawCanvasPoint(e.clientX, e.clientY);
+      const guide = guides.find((g) => g.id === guideDragRef.current!.id);
+      if (guide && !guide.locked) {
+        const snapped = gridSnapEnabled
+          ? guide.axis === 'v'
+            ? Math.round(raw.x / gridSpacingX) * gridSpacingX
+            : Math.round(raw.y / gridSpacingY) * gridSpacingY
+          : guide.axis === 'v'
+            ? raw.x
+            : raw.y;
+        onUpdateGuide(guide.id, snapped);
+      }
+      return;
+    }
+
+    // Unlocked reference images can be repositioned under the artwork
+    if (referenceDragRef.current) {
+      const drag = referenceDragRef.current;
+      const pt = screenToCanvas(e.clientX, e.clientY);
+      const target = referenceImages.find((r) => r.id === drag.id);
+      if (target && onUpdateReference) {
+        onUpdateReference({
+          ...target,
+          x: drag.origin.x + (pt.x - drag.grab.x),
+          y: drag.origin.y + (pt.y - drag.grab.y),
+        });
+      }
+      return;
     }
 
     // 2-Finger Pinch Zoom & Pan
@@ -738,18 +840,27 @@ export const Canvas: React.FC<CanvasProps> = ({
 
       const now = performance.now();
       const dt = Math.max(1, now - lastPointerTimeRef.current);
-      const dist = distance(lastPointerPosRef.current, canvasPt);
-      const velocity = dist / dt;
+      const distanceMoved = distance(lastPointerPosRef.current, canvasPt);
+      const velocity = distanceMoved / dt;
 
-      let targetPressure = 0.5;
-      if (e.pointerType === 'pen' && e.pressure > 0) {
+      // Skip micro-samples so long strokes stay light on mobile
+      const minStep = Math.max(0.9, 1.5 / view.zoom);
+      if (distanceMoved < minStep) return;
+
+      const source = pressureConfig.source;
+      let targetPressure: number;
+      if (source === 'fixed') {
+        targetPressure = 0.62;
+      } else if (source === 'stylus-or-touch' && e.pointerType === 'pen' && e.pressure > 0) {
         targetPressure = e.pressure;
       } else {
         const speedFactor = Math.min(1.5, Math.max(0.1, velocity));
         targetPressure = 1 - speedFactor / 1.8;
       }
 
-      smoothedPressureRef.current = smoothedPressureRef.current * 0.7 + targetPressure * 0.3;
+      const smoothing = Math.min(0.92, Math.max(0, pressureConfig.smoothing));
+      smoothedPressureRef.current =
+        smoothedPressureRef.current * smoothing + targetPressure * (1 - smoothing);
 
       const newPoint: AnchorPoint = {
         id: `${currentBrushPath.id}-${currentBrushPath.points.length}`,
@@ -902,6 +1013,16 @@ export const Canvas: React.FC<CanvasProps> = ({
     setIsPointerDown(false);
     setMarqueeBox(null);
     setActiveSmartGuides([]);
+    referenceDragRef.current = null;
+    if (guideDragRef.current) {
+      const moved = guideDragStartRef.current;
+      const guide = guides.find((g) => g.id === guideDragRef.current!.id);
+      guideDragRef.current = null;
+      guideDragStartRef.current = null;
+      setDraggingGuideId(null);
+      // Only a guide that actually moved becomes an undo step
+      if (moved !== null && guide && guide.position !== moved) onCommitGuides?.();
+    }
 
     // Adobe Illustrator Shape Builder: Commit Merge or Erase upon drag/click release
     if (draggingTarget?.type === 'shape-builder-drag') {
@@ -927,52 +1048,60 @@ export const Canvas: React.FC<CanvasProps> = ({
       return;
     }
 
-    // Finalize Shape creation
+    // Finalize Shape creation — only a real drag commits a shape, so a tap
+    // on the canvas can never drop an accidental object
     if (effectiveTool === 'shape' && draggingTarget?.type === 'shape-preview' && dragStartPoint && currentPointerPoint) {
-      let startPt = dragStartPoint;
-      let endPt = currentPointerPoint;
+      const startPt = dragStartPoint;
+      const endPt = currentPointerPoint;
       const dx = endPt.x - startPt.x;
       const dy = endPt.y - startPt.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist < 12) {
-        const defaultRadius = 70;
-        startPt = { x: dragStartPoint.x - defaultRadius, y: dragStartPoint.y - defaultRadius };
-        endPt = { x: dragStartPoint.x + defaultRadius, y: dragStartPoint.y + defaultRadius };
-      } else if (modifiers.shift) {
-        const size = Math.max(Math.abs(dx), Math.abs(dy));
-        endPt = {
-          x: startPt.x + Math.sign(dx || 1) * size,
-          y: startPt.y + Math.sign(dy || 1) * size,
+      // Smaller than 8 screen pixels: treat it as a tap, not a draw
+      if (dist * view.zoom >= 8) {
+        let a = startPt;
+        let b = endPt;
+        if (modifiers.shift) {
+          const size = Math.max(Math.abs(dx), Math.abs(dy));
+          b = {
+            x: a.x + Math.sign(dx || 1) * size,
+            y: a.y + Math.sign(dy || 1) * size,
+          };
+        }
+
+        const shapeOptions: ShapeOptions = {
+          kind: shapeKind,
+          sides: shapeSides,
+          cornerRadius: 24,
         };
+
+        const newShape = {
+          ...generateShapePath(
+            a.x,
+            a.y,
+            b.x,
+            b.y,
+            shapeOptions,
+            `shape-${Date.now()}`,
+            { fill: fillColor, stroke: strokeColor, strokeWidth }
+          ),
+          fillOpacity,
+          strokeOpacity,
+          ...(fillGradient ? { fillGradient } : {}),
+        };
+
+        onAddPath(newShape);
+        onSelectionChange({
+          selectedPathIds: [newShape.id],
+          selectedAnchorIndex: null,
+          selectedHandleType: null,
+        });
+        onCommitHistory();
       }
-
-      const shapeOptions: ShapeOptions = {
-        kind: shapeKind,
-        sides: shapeSides,
-        cornerRadius: 24,
-      };
-
-      const newShape = generateShapePath(
-        startPt.x,
-        startPt.y,
-        endPt.x,
-        endPt.y,
-        shapeOptions,
-        `shape-${Date.now()}`,
-        { fill: fillColor, stroke: strokeColor, strokeWidth }
-      );
-
-      onAddPath(newShape);
-      onSelectionChange({
-        selectedPathIds: [newShape.id],
-        selectedAnchorIndex: null,
-        selectedHandleType: null,
-      });
-      onCommitHistory();
     }
 
     // Finalize Brush Stroke (Reliable commit with single-tap dot support)
+    let committedStroke = false;
     if (effectiveTool === 'pressure-brush' && (brushStrokeRef.current || activePathInProgress)) {
       const strokeToCommit = brushStrokeRef.current || activePathInProgress;
       if (strokeToCommit && strokeToCommit.points.length > 0) {
@@ -989,12 +1118,14 @@ export const Canvas: React.FC<CanvasProps> = ({
         }
         onAddPath(strokeToCommit);
         onCommitHistory();
+        committedStroke = true;
       }
       brushStrokeRef.current = null;
       setActivePathInProgress(null);
     }
 
     if (
+      !committedStroke &&
       draggingTarget &&
       draggingTarget.type !== 'pan' &&
       draggingTarget.type !== 'shape-preview' &&
@@ -1006,28 +1137,36 @@ export const Canvas: React.FC<CanvasProps> = ({
     setDraggingTarget(null);
   };
 
-  // Zoom with Wheel
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    if (isPanZoomLocked) return;
-    const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-    const newZoom = Math.min(5, Math.max(0.2, view.zoom * zoomFactor));
+  // Wheel zoom. Registered natively so preventDefault works (React's wheel
+  // listener is passive and silently drops it).
+  const viewStateRef = useRef(view);
+  viewStateRef.current = view;
+  const viewChangeRef = useRef(onViewChange);
+  viewChangeRef.current = onViewChange;
 
-    if (!svgRef.current) return;
-    const rect = svgRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    const newPanX = mouseX - (mouseX - view.panX) * (newZoom / view.zoom);
-    const newPanY = mouseY - (mouseY - view.panY) * (newZoom / view.zoom);
-
-    onViewChange({
-      ...view,
-      zoom: newZoom,
-      panX: newPanX,
-      panY: newPanY,
-    });
-  };
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      if (isPanZoomLocked) return;
+      const current = viewStateRef.current;
+      const zoomFactor = event.deltaY < 0 ? 1.1 : 0.9;
+      const newZoom = Math.min(5, Math.max(0.2, current.zoom * zoomFactor));
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const mouseX = event.clientX - rect.left;
+      const mouseY = event.clientY - rect.top;
+      viewChangeRef.current({
+        ...current,
+        zoom: newZoom,
+        panX: mouseX - (mouseX - current.panX) * (newZoom / current.zoom),
+        panY: mouseY - (mouseY - current.panY) * (newZoom / current.zoom),
+      });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [isPanZoomLocked]);
 
   // Shape Builder selection
   const handleShapeBuilderToggle = (path: VectorPath, e: React.MouseEvent | React.PointerEvent) => {
@@ -1052,18 +1191,356 @@ export const Canvas: React.FC<CanvasProps> = ({
     });
   };
 
-  // Render Grid
+  // Render Grid — a general alignment system: one spacing per axis, one lock,
+  // one snap toggle. Editing aid only; it lives outside the layer tree.
   const renderGrid = () => {
     if (!gridVisible) return null;
+    const stroke = Math.max(0.5, 1 / view.zoom);
     return (
-      <g className="canvas-grid pointer-events-none opacity-20">
+      <g className="canvas-grid pointer-events-none" opacity={gridOpacity}>
         <defs>
-          <pattern id="pentix-grid" width={gridSize} height={gridSize} patternUnits="userSpaceOnUse">
-            <path d={`M ${gridSize} 0 L 0 0 0 ${gridSize}`} fill="none" stroke="#64748B" strokeWidth="0.8" />
+          <pattern
+            id="pentix-grid"
+            width={gridSpacingX}
+            height={gridSpacingY}
+            patternUnits="userSpaceOnUse"
+          >
+            <path
+              d={`M ${gridSpacingX} 0 L 0 0 0 ${gridSpacingY}`}
+              fill="none"
+              stroke={CANVAS.grid}
+              strokeWidth={stroke}
+            />
           </pattern>
         </defs>
         <rect width={view.width} height={view.height} fill="url(#pentix-grid)" />
       </g>
+    );
+  };
+
+  const gradientFill = (path: VectorPath): string | null =>
+    path.fillGradient && path.fillGradient.stops.length >= 2
+      ? `url(#${gradientIdFor(path.id)})`
+      : null;
+
+  const gradientDefNodes = allPaths
+    .filter((p) => gradientFill(p))
+    .map((p) => {
+      const g = p.fillGradient!;
+      const id = gradientIdFor(p.id);
+      const coords = gradientCoords(g);
+      return g.type === 'radial' ? (
+        <radialGradient
+          key={id}
+          id={id}
+          cx={(coords as { cx: number }).cx}
+          cy={(coords as { cy: number }).cy}
+          r={(coords as { r: number }).r}
+        >
+          {[...g.stops]
+            .sort((a, b) => a.offset - b.offset)
+            .map((st, i) => (
+              <stop key={i} offset={st.offset} stopColor={st.color} stopOpacity={st.opacity} />
+            ))}
+        </radialGradient>
+      ) : (
+        <linearGradient
+          key={id}
+          id={id}
+          x1={(coords as { x1: number }).x1}
+          y1={(coords as { y1: number }).y1}
+          x2={(coords as { x2: number }).x2}
+          y2={(coords as { y2: number }).y2}
+        >
+          {[...g.stops]
+            .sort((a, b) => a.offset - b.offset)
+            .map((st, i) => (
+              <stop key={i} offset={st.offset} stopColor={st.color} stopOpacity={st.opacity} />
+            ))}
+        </linearGradient>
+      );
+    });
+
+  /* --------------------------- Rulers & guides --------------------------- */
+  const [boxSize, setBoxSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const measure = () => setBoxSize({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  /** Major tick step that keeps labels at least ~64 screen px apart. */
+  const niceStep = (target: number) => {
+    const pow = Math.pow(10, Math.floor(Math.log10(Math.max(1, target))));
+    const n = target / pow;
+    const m = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+    return m * pow;
+  };
+
+  const startRulerDrag = (axis: 'h' | 'v') => (e: React.PointerEvent) => {
+    const el = e.currentTarget as HTMLElement;
+    try {
+      el.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    rulerAxisRef.current = axis;
+    const raw = rawCanvasPoint(e.clientX, e.clientY);
+    setRulerDraft({ axis, position: axis === 'v' ? raw.x : raw.y });
+    e.stopPropagation();
+  };
+
+  const moveRulerDrag = (e: React.PointerEvent) => {
+    const axis = rulerAxisRef.current;
+    if (!axis) return;
+    const raw = rawCanvasPoint(e.clientX, e.clientY);
+    const spacing = axis === 'v' ? gridSpacingX : gridSpacingY;
+    const value = axis === 'v' ? raw.x : raw.y;
+    setRulerDraft({
+      axis,
+      position: gridSnapEnabled ? Math.round(value / spacing) * spacing : value,
+    });
+    e.stopPropagation();
+  };
+
+  const endRulerDrag = (e: React.PointerEvent) => {
+    const axis = rulerAxisRef.current;
+    rulerAxisRef.current = null;
+    setRulerDraft(null);
+    if (!axis) return;
+    const raw = rawCanvasPoint(e.clientX, e.clientY);
+    const spacing = axis === 'v' ? gridSpacingX : gridSpacingY;
+    const value = axis === 'v' ? raw.x : raw.y;
+    const position = gridSnapEnabled ? Math.round(value / spacing) * spacing : value;
+    const inside =
+      axis === 'v' ? position >= 0 && position <= view.width : position >= 0 && position <= view.height;
+    // A tap on the ruler creates nothing: the pointer has to leave the ruler
+    // strip first, and the guide has to land on the artboard
+    const draggedOff = axis === 'v' ? e.clientY > RULER_SIZE : e.clientX > RULER_SIZE;
+    if (inside && draggedOff) onAddGuide(axis, position);
+    e.stopPropagation();
+  };
+
+  const renderGuides = () => {
+    if (!guides.length && !rulerDraft) return null;
+    const over = 32 / view.zoom;
+    const items: { key: string; axis: 'h' | 'v'; position: number; locked: boolean; draft?: boolean }[] = [
+      ...guides.map((g) => ({ key: g.id, axis: g.axis, position: g.position, locked: g.locked })),
+      ...(rulerDraft
+        ? [{ key: '__draft', axis: rulerDraft.axis, position: rulerDraft.position, locked: false, draft: true }]
+        : []),
+    ];
+    return (
+      <g className="guides-layer">
+        {items.map((g) => {
+          const coords =
+            g.axis === 'v'
+              ? { x1: g.position, y1: -over, x2: g.position, y2: view.height + over }
+              : { x1: -over, y1: g.position, x2: view.width + over, y2: g.position };
+          return (
+            <g key={g.key}>
+              {!g.draft && (
+                <line
+                  {...coords}
+                  stroke="transparent"
+                  strokeWidth={12 / view.zoom}
+                  className={g.locked ? '' : 'cursor-move'}
+                  style={{ pointerEvents: g.locked ? 'none' : 'stroke' }}
+                  onPointerDown={(e) => {
+                    if (g.locked) return;
+                    e.stopPropagation();
+                    try {
+                      (e.target as Element).setPointerCapture?.(e.pointerId);
+                    } catch {
+                      /* ignore */
+                    }
+                    guideDragRef.current = {
+                      id: g.key,
+                      axis: g.axis,
+                    };
+                    guideDragStartRef.current = g.position;
+                    setDraggingGuideId(g.key);
+                  }}
+                />
+              )}
+              {(() => {
+                const isActive = !!g.draft || g.key === draggingGuideId;
+                const stroke = isActive ? CANVAS.accent : g.locked ? '#8A919B' : '#FF9F45';
+                const px = currentPointerPoint?.x ?? view.width / 2;
+                const py = currentPointerPoint?.y ?? view.height / 2;
+                const label = `${g.axis === 'v' ? 'X' : 'Y'} ${Math.round(g.position)} px`;
+                const bw = (label.length * 5.6 + 12) / view.zoom;
+                const bh = 15 / view.zoom;
+                const bx = g.axis === 'v' ? g.position + 9 / view.zoom : px;
+                const by = g.axis === 'v' ? py : g.position - 9 / view.zoom;
+                return (
+                  <>
+                    <line
+                      {...coords}
+                      stroke={stroke}
+                      strokeWidth={(isActive ? 1.8 : 1) / view.zoom}
+                      strokeDasharray={g.draft ? '6 5' : g.locked ? '6 4' : 'none'}
+                      opacity={isActive ? 1 : g.locked ? 0.55 : 0.95}
+                      className="pointer-events-none"
+                    />
+                    {isActive && (
+                      <g
+                        transform={`translate(${bx}, ${by})`}
+                        className="pointer-events-none"
+                      >
+                        <rect
+                          x={g.axis === 'v' ? 0 : -bw / 2}
+                          y={-bh / 2}
+                          width={bw}
+                          height={bh}
+                          rx={3 / view.zoom}
+                          fill={CANVAS.accent}
+                        />
+                        <text
+                          x={g.axis === 'v' ? bw / 2 : 0}
+                          y={3.4 / view.zoom}
+                          textAnchor="middle"
+                          fontSize={9 / view.zoom}
+                          fontFamily="monospace"
+                          fontWeight="bold"
+                          fill={CANVAS.ink}
+                        >
+                          {label}
+                        </text>
+                      </g>
+                    )}
+                  </>
+                );
+              })()}
+            </g>
+          );
+        })}
+      </g>
+    );
+  };
+
+  const renderRulers = () => {
+    if (!rulersVisible || boxSize.w === 0) return null;
+    const strip = RULER_SIZE;
+    const step = niceStep(72 / view.zoom);
+    const minor = step / 5;
+
+    const ticks: { axis: 'h' | 'v'; pos: number; major: boolean; label?: number }[] = [];
+
+    // Horizontal (top) strip
+    const x0 = Math.floor((-view.panX / view.zoom) / minor) * minor;
+    const x1 = (boxSize.w - view.panX) / view.zoom;
+    for (let i = Math.floor(x0 / minor); i * minor <= x1 + minor; i++) {
+      const world = i * minor;
+      const screen = world * view.zoom + view.panX;
+      if (screen < -20 || screen > boxSize.w + 20) continue;
+      const major = i % 5 === 0;
+      ticks.push({ axis: 'h', pos: screen, major, label: major ? Math.round(world) : undefined });
+    }
+
+    // Vertical (left) strip
+    const y0 = Math.floor((-view.panY / view.zoom) / minor) * minor;
+    const y1 = (boxSize.h - view.panY) / view.zoom;
+    for (let i = Math.floor(y0 / minor); i * minor <= y1 + minor; i++) {
+      const world = i * minor;
+      const screen = world * view.zoom + view.panY;
+      if (screen < -20 || screen > boxSize.h + 20) continue;
+      const major = i % 5 === 0;
+      ticks.push({ axis: 'v', pos: screen, major, label: major ? Math.round(world) : undefined });
+    }
+
+    return (
+      <>
+        {/* Top ruler — drag down onto the canvas to pull out a vertical guide */}
+        <div
+          className="absolute left-0 right-0 top-0 z-10 touch-none select-none border-b border-line bg-ink-1/95 backdrop-blur"
+          style={{ height: strip }}
+          onPointerDown={startRulerDrag('v')}
+          onPointerMove={moveRulerDrag}
+          onPointerUp={endRulerDrag}
+          onPointerCancel={endRulerDrag}
+        >
+          <svg width="100%" height={strip} className="block">
+            {ticks
+              .filter((t) => t.axis === 'h')
+              .map((t, i) => (
+                <g key={`h-${i}`}>
+                  <line
+                    x1={t.pos}
+                    y1={t.major ? 4 : 10}
+                    x2={t.pos}
+                    y2={strip}
+                    stroke={t.major ? '#8A919B' : '#4B5158'}
+                    strokeWidth={1}
+                  />
+                  {t.label !== undefined && t.pos < boxSize.w - 26 && (
+                    <text
+                      x={t.pos + 3}
+                      y={9}
+                      fontSize={8}
+                      fontFamily="monospace"
+                      fill="#8A919B"
+                    >
+                      {t.label}
+                    </text>
+                  )}
+                </g>
+              ))}
+          </svg>
+        </div>
+
+        {/* Left ruler — drag right onto the canvas for a horizontal guide */}
+        <div
+          className="absolute left-0 top-0 bottom-0 z-10 w-[18px] touch-none select-none border-r border-line bg-ink-1/95 backdrop-blur"
+          onPointerDown={startRulerDrag('h')}
+          onPointerMove={moveRulerDrag}
+          onPointerUp={endRulerDrag}
+          onPointerCancel={endRulerDrag}
+        >
+          <svg width={strip} height="100%" className="block">
+            {ticks
+              .filter((t) => t.axis === 'v')
+              .map((t, i) => (
+                <g key={`v-${i}`}>
+                  <line
+                    x1={t.major ? 4 : 10}
+                    y1={t.pos}
+                    x2={strip}
+                    y2={t.pos}
+                    stroke={t.major ? '#8A919B' : '#4B5158'}
+                    strokeWidth={1}
+                  />
+                  {t.label !== undefined && t.pos < boxSize.h - 26 && (
+                    <text
+                      x={9}
+                      y={t.pos + 3}
+                      fontSize={8}
+                      fontFamily="monospace"
+                      fill="#8A919B"
+                      transform={`rotate(-90 9 ${t.pos + 3})`}
+                      textAnchor="end"
+                    >
+                      {t.label}
+                    </text>
+                  )}
+                </g>
+              ))}
+          </svg>
+        </div>
+
+        {/* Corner where the two rulers meet */}
+        <div
+          className="absolute left-0 top-0 z-20 h-[18px] w-[18px] border-b border-r border-line bg-ink-2"
+        />
+      </>
     );
   };
 
@@ -1083,50 +1560,10 @@ export const Canvas: React.FC<CanvasProps> = ({
     return 'cursor-default';
   };
 
-  const handleConfirmText = () => {
-    if (!textInputModal) return;
-    const phrase = textInputModal.text.trim();
-    if (!phrase) {
-      setTextInputModal(null);
-      return;
-    }
-
-    const newPath: VectorPath = {
-      id: `text-${Date.now()}`,
-      name: `Text "${phrase.slice(0, 10)}"`,
-      points: [
-        { id: `p0-${Date.now()}`, x: textInputModal.point.x, y: textInputModal.point.y, type: 'corner' },
-      ],
-      closed: false,
-      fill: fillColor && fillColor !== 'none' ? fillColor : '#00E5FF',
-      fillOpacity: 1,
-      stroke: 'none',
-      strokeWidth: 0,
-      strokeOpacity: 0,
-      strokeCap: 'round',
-      strokeJoin: 'round',
-      pressureProfile: 'uniform',
-      text: phrase,
-      fontSize: 52,
-      fontFamily: 'Impact, sans-serif',
-      fontWeight: 'bold',
-    };
-
-    onAddPath(newPath);
-    onSelectionChange({
-      selectedPathIds: [newPath.id],
-      selectedAnchorIndex: null,
-      selectedHandleType: null,
-    });
-    onCommitHistory();
-    setTextInputModal(null);
-  };
-
   return (
     <div
       ref={containerRef}
-      onWheel={handleWheel}
-      className="relative w-full h-full bg-[#070b14] overflow-hidden select-none touch-none"
+      className="relative h-full w-full touch-none select-none overflow-hidden bg-ink-0"
     >
       <svg
         ref={svgRef}
@@ -1141,11 +1578,11 @@ export const Canvas: React.FC<CanvasProps> = ({
         <defs>
           {/* Adobe Illustrator Shape Builder Diagonal Stipple Hatch for Merge (+) */}
           <pattern id="sb-stipple-merge" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <line x1="0" y1="0" x2="0" y2="8" stroke="#00E5FF" strokeWidth="2.8" opacity="0.75" />
+            <line x1="0" y1="0" x2="0" y2="8" stroke={CANVAS.accent} strokeWidth="2.8" opacity="0.75" />
           </pattern>
           {/* Adobe Illustrator Shape Builder Diagonal Stipple Hatch for Erase (-) */}
           <pattern id="sb-stipple-erase" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <line x1="0" y1="0" x2="0" y2="8" stroke="#EF4444" strokeWidth="2.8" opacity="0.85" />
+            <line x1="0" y1="0" x2="0" y2="8" stroke={CANVAS.erase} strokeWidth="2.8" opacity="0.85" />
           </pattern>
           {/* Artboard Shadow */}
           <filter id="artboard-shadow" x="-5%" y="-5%" width="115%" height="115%">
@@ -1155,6 +1592,8 @@ export const Canvas: React.FC<CanvasProps> = ({
           <clipPath id="artboard-bounds-clip">
             <rect x="0" y="0" width={view.width} height={view.height} />
           </clipPath>
+          {/* Gradient paints for fills */}
+          {gradientDefNodes}
         </defs>
 
         <g transform={`translate(${view.panX}, ${view.panY}) scale(${view.zoom})`}>
@@ -1164,18 +1603,18 @@ export const Canvas: React.FC<CanvasProps> = ({
             y={0}
             width={view.width}
             height={view.height}
-            fill="#0c1220"
-            stroke="#334155"
+            fill={artboardColor}
+            stroke={CANVAS.artboardEdge}
             strokeWidth={1.5 / view.zoom}
             filter="url(#artboard-shadow)"
           />
 
           {/* Artboard Corner Registration Brackets */}
           <g className="artboard-corner-brackets pointer-events-none opacity-50">
-            <path d="M -12 0 L 0 0 L 0 -12" stroke="#00E5FF" strokeWidth={1.5 / view.zoom} fill="none" />
-            <path d={`M ${view.width + 12} 0 L ${view.width} 0 L ${view.width} -12`} stroke="#00E5FF" strokeWidth={1.5 / view.zoom} fill="none" />
-            <path d={`M -12 ${view.height} L 0 ${view.height} L 0 ${view.height + 12}`} stroke="#00E5FF" strokeWidth={1.5 / view.zoom} fill="none" />
-            <path d={`M ${view.width + 12} ${view.height} L ${view.width} ${view.height} L ${view.width} ${view.height + 12}`} stroke="#00E5FF" strokeWidth={1.5 / view.zoom} fill="none" />
+            <path d="M -12 0 L 0 0 L 0 -12" stroke={CANVAS.accent} strokeWidth={1.5 / view.zoom} fill="none" />
+            <path d={`M ${view.width + 12} 0 L ${view.width} 0 L ${view.width} -12`} stroke={CANVAS.accent} strokeWidth={1.5 / view.zoom} fill="none" />
+            <path d={`M -12 ${view.height} L 0 ${view.height} L 0 ${view.height + 12}`} stroke={CANVAS.accent} strokeWidth={1.5 / view.zoom} fill="none" />
+            <path d={`M ${view.width + 12} ${view.height} L ${view.width} ${view.height} L ${view.width} ${view.height + 12}`} stroke={CANVAS.accent} strokeWidth={1.5 / view.zoom} fill="none" />
           </g>
 
           {/* Artboard Header Badge */}
@@ -1186,8 +1625,8 @@ export const Canvas: React.FC<CanvasProps> = ({
               width={160 / view.zoom}
               height={18 / view.zoom}
               rx={4 / view.zoom}
-              fill="#0F172A"
-              stroke="#334155"
+              fill={CANVAS.ink}
+              stroke={CANVAS.artboardEdge}
               strokeWidth={1 / view.zoom}
             />
             <text
@@ -1206,7 +1645,7 @@ export const Canvas: React.FC<CanvasProps> = ({
           {renderGrid()}
 
           {/* Render All Committed Layers & Paths (Optional Clipping to Artboard Bounds) */}
-          <g clipPath={clipArtboardBounds ? 'url(#artboard-bounds-clip)' : undefined}>
+          <g clipPath={clipArtboard ? 'url(#artboard-bounds-clip)' : undefined}>
             {/* Reference Sketch Background Images for Pen Tracing */}
             {referenceImages.map((img) => {
               if (!img.visible) return null;
@@ -1221,6 +1660,21 @@ export const Canvas: React.FC<CanvasProps> = ({
                   opacity={img.opacity}
                   className={img.locked ? 'pointer-events-none' : 'cursor-move'}
                   preserveAspectRatio="none"
+                  onPointerDown={(e) => {
+                    if (img.locked || !onUpdateReference) return;
+                    e.stopPropagation();
+                    const pt = screenToCanvas(e.clientX, e.clientY);
+                    referenceDragRef.current = {
+                      id: img.id,
+                      grab: pt,
+                      origin: { x: img.x, y: img.y },
+                    };
+                    try {
+                      (e.target as Element).setPointerCapture?.(e.pointerId);
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
                 />
               );
             })}
@@ -1286,7 +1740,10 @@ export const Canvas: React.FC<CanvasProps> = ({
                         <text
                           x={pt.x}
                           y={pt.y}
-                          fill={path.fill && path.fill !== 'none' ? path.fill : '#00E5FF'}
+                          fill={
+                            gradientFill(path) ??
+                            (path.fill && path.fill !== 'none' ? path.fill : CANVAS.accent)
+                          }
                           fillOpacity={path.fillOpacity ?? 1}
                           stroke={path.stroke !== 'none' ? path.stroke : undefined}
                           strokeWidth={path.strokeWidth}
@@ -1308,13 +1765,34 @@ export const Canvas: React.FC<CanvasProps> = ({
                       <path
                         key={path.id}
                         d={ribbonD}
-                        fill={path.stroke || '#00E5FF'}
+                        fill={path.stroke || CANVAS.accent}
                         opacity={path.strokeOpacity}
                         className={effectiveTool === 'select' ? 'cursor-move' : 'cursor-pointer'}
                         onPointerDown={(e) => {
                           if (isShapeBuilder) {
                             handleShapeBuilderToggle(path, e);
+                          } else if (effectiveTool === 'direct-select') {
+                            e.stopPropagation();
+                            const already = selection.selectedPathIds.includes(path.id);
+                            onSelectionChange({
+                              selectedPathIds:
+                                modifiers.shift && !already
+                                  ? [...selection.selectedPathIds, path.id]
+                                  : [path.id],
+                              selectedAnchorIndex: null,
+                              selectedHandleType: null,
+                            });
                           } else if (effectiveTool === 'select') {
+                            if (registerTap(path.id) && onToolSwitch) {
+                              e.stopPropagation();
+                              onSelectionChange({
+                                selectedPathIds: [path.id],
+                                selectedAnchorIndex: null,
+                                selectedHandleType: null,
+                              });
+                              onToolSwitch('direct-select');
+                              return;
+                            }
                             const isAlready = selection.selectedPathIds.includes(path.id);
                             let newSelected: string[];
                             if (modifiers.shift || modifiers.ctrl) {
@@ -1348,17 +1826,40 @@ export const Canvas: React.FC<CanvasProps> = ({
 
                   return (
                     <g key={path.id}>
-                      {/* Generous touch hitbox */}
+                      {/* Generous touch hitbox. Closed shapes also catch taps inside
+                          their fill, so the object you see on top is the one you
+                          select — interior taps used to fall through to objects behind. */}
                       <path
                         d={pathD}
-                        fill="none"
+                        fill={path.closed ? 'transparent' : 'none'}
                         stroke="transparent"
                         strokeWidth={Math.max(34, path.strokeWidth * 3) / view.zoom}
                         className={effectiveTool === 'select' ? 'cursor-move' : 'cursor-pointer'}
                         onPointerDown={(e) => {
                           if (isShapeBuilder) {
                             handleShapeBuilderToggle(path, e);
+                          } else if (effectiveTool === 'direct-select') {
+                            e.stopPropagation();
+                            const already = selection.selectedPathIds.includes(path.id);
+                            onSelectionChange({
+                              selectedPathIds:
+                                modifiers.shift && !already
+                                  ? [...selection.selectedPathIds, path.id]
+                                  : [path.id],
+                              selectedAnchorIndex: null,
+                              selectedHandleType: null,
+                            });
                           } else if (effectiveTool === 'select') {
+                            if (registerTap(path.id) && onToolSwitch) {
+                              e.stopPropagation();
+                              onSelectionChange({
+                                selectedPathIds: [path.id],
+                                selectedAnchorIndex: null,
+                                selectedHandleType: null,
+                              });
+                              onToolSwitch('direct-select');
+                              return;
+                            }
                             const isAlready = selection.selectedPathIds.includes(path.id);
                             let newSelected: string[];
                             if (modifiers.shift || modifiers.ctrl) {
@@ -1391,7 +1892,11 @@ export const Canvas: React.FC<CanvasProps> = ({
                       {/* Visible rendered path */}
                       <path
                         d={pathD}
-                        fill={path.closed && path.fill !== 'none' ? path.fill : 'none'}
+                        fill={
+                          path.closed
+                            ? gradientFill(path) ?? (path.fill !== 'none' ? path.fill : 'none')
+                            : 'none'
+                        }
                         fillOpacity={path.fillOpacity}
                         stroke={path.stroke !== 'none' ? path.stroke : 'transparent'}
                         strokeWidth={path.strokeWidth}
@@ -1399,9 +1904,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         strokeLinecap={path.strokeCap}
                         strokeLinejoin={path.strokeJoin}
                         className={`pointer-events-none ${
-                          isShapeBuilder && isSelected
-                            ? 'stroke-cyan-400 stroke-[3] filter drop-shadow-[0_0_10px_rgba(0,229,255,0.8)]'
-                            : ''
+                          isShapeBuilder && isSelected ? 'stroke-accent stroke-[3]' : ''
                         }`}
                       />
 
@@ -1410,7 +1913,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         <path
                           d={pathD}
                           fill="none"
-                          stroke={isShapeBuilder ? '#00E5FF' : '#38BDF8'}
+                          stroke={CANVAS.accent}
                           strokeWidth={2 / view.zoom}
                           strokeDasharray={path.closed ? 'none' : '4 4'}
                           className="pointer-events-none"
@@ -1450,7 +1953,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         y1={activePathInProgress.points[activePathInProgress.points.length - 1].y}
                         x2={currentPointerPoint.x}
                         y2={currentPointerPoint.y}
-                        stroke="#00E5FF"
+                        stroke={CANVAS.accent}
                         strokeWidth={1.5 / view.zoom}
                         strokeDasharray="4 4"
                         className="opacity-70"
@@ -1462,14 +1965,14 @@ export const Canvas: React.FC<CanvasProps> = ({
                               cx={activePathInProgress.points[0].x}
                               cy={activePathInProgress.points[0].y}
                               r={12 / view.zoom}
-                              fill="rgba(0, 229, 255, 0.25)"
-                              stroke="#00E5FF"
+                              fill="rgba(205, 255, 92, 0.25)"
+                              stroke={CANVAS.accent}
                               strokeWidth={2 / view.zoom}
                             />
                             <text
                               x={activePathInProgress.points[0].x + 16 / view.zoom}
                               y={activePathInProgress.points[0].y - 8 / view.zoom}
-                              fill="#00E5FF"
+                              fill={CANVAS.accent}
                               fontSize={11 / view.zoom}
                               fontWeight="bold"
                             >
@@ -1493,8 +1996,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                 y={selectedBBox.minY}
                 width={selectedBBox.width}
                 height={selectedBBox.height}
-                fill="rgba(0, 229, 255, 0.04)"
-                stroke="#00E5FF"
+                fill="rgba(205, 255, 92, 0.05)"
+                stroke={CANVAS.accent}
                 strokeWidth={1.5 / view.zoom}
                 strokeDasharray="4 4"
                 className="cursor-move"
@@ -1513,7 +2016,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                 y1={selectedBBox.minY}
                 x2={selectedBBox.centerX}
                 y2={selectedBBox.minY - 26 / view.zoom}
-                stroke="#00E5FF"
+                stroke={CANVAS.accent}
                 strokeWidth={1.5 / view.zoom}
                 strokeDasharray="2 2"
                 className="pointer-events-none opacity-80"
@@ -1544,7 +2047,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                 cy={selectedBBox.minY - 26 / view.zoom}
                 r={7 / view.zoom}
                 fill="#F59E0B"
-                stroke="#0F172A"
+                stroke={CANVAS.ink}
                 strokeWidth={2 / view.zoom}
                 className="pointer-events-none shadow-md"
               />
@@ -1583,7 +2086,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                     cy={h.y}
                     r={6 / view.zoom}
                     fill="#FFFFFF"
-                    stroke="#00E5FF"
+                    stroke={CANVAS.accent}
                     strokeWidth={2 / view.zoom}
                     className="pointer-events-none shadow-md"
                   />
@@ -1599,8 +2102,8 @@ export const Canvas: React.FC<CanvasProps> = ({
               y={Math.min(marqueeBox.start.y, marqueeBox.current.y)}
               width={Math.abs(marqueeBox.current.x - marqueeBox.start.x)}
               height={Math.abs(marqueeBox.current.y - marqueeBox.start.y)}
-              fill="rgba(0, 229, 255, 0.15)"
-              stroke="#00E5FF"
+              fill="rgba(205, 255, 92, 0.12)"
+              stroke={CANVAS.accent}
               strokeWidth={1.5 / view.zoom}
               strokeDasharray="4 4"
               className="pointer-events-none"
@@ -1621,8 +2124,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                     {/* Interactive Sub-region boundary & background hitbox */}
                     <path
                       d={region.pathD}
-                      fill={isActive ? (isErase ? 'rgba(239, 68, 68, 0.22)' : 'rgba(0, 229, 255, 0.22)') : 'rgba(255, 255, 255, 0.001)'}
-                      stroke={isActive ? (isErase ? '#EF4444' : '#00E5FF') : 'transparent'}
+                      fill={isActive ? (isErase ? 'rgba(255, 107, 107, 0.2)' : 'rgba(205, 255, 92, 0.18)') : 'rgba(255, 255, 255, 0.001)'}
+                      stroke={isActive ? (isErase ? CANVAS.erase : CANVAS.accent) : 'transparent'}
                       strokeWidth={(isActive ? 2.5 : 0) / view.zoom}
                       strokeDasharray={undefined}
                       opacity={isActive ? 1 : 0}
@@ -1659,7 +2162,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                 <polyline
                   points={sbDragPoints.map((p) => `${p.x},${p.y}`).join(' ')}
                   fill="none"
-                  stroke={modifiers.alt || sbMode === 'erase' ? '#EF4444' : '#00E5FF'}
+                  stroke={modifiers.alt || sbMode === 'erase' ? CANVAS.erase : CANVAS.accent}
                   strokeWidth={3.5 / view.zoom}
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -1677,15 +2180,15 @@ export const Canvas: React.FC<CanvasProps> = ({
                     cx={0}
                     cy={0}
                     r={9 / view.zoom}
-                    fill={modifiers.alt || sbMode === 'erase' ? '#EF4444' : '#00E5FF'}
-                    stroke="#0F172A"
+                    fill={modifiers.alt || sbMode === 'erase' ? CANVAS.erase : CANVAS.accent}
+                    stroke={CANVAS.ink}
                     strokeWidth={1.5 / view.zoom}
                   />
                   <text
                     x={0}
                     y={3.5 / view.zoom}
                     textAnchor="middle"
-                    fill="#0F172A"
+                    fill={CANVAS.ink}
                     fontSize={11 / view.zoom}
                     fontWeight="bold"
                     fontFamily="system-ui, sans-serif"
@@ -1721,7 +2224,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                               y1={pt.y}
                               x2={pt.handleIn.x}
                               y2={pt.handleIn.y}
-                              stroke="#00E5FF"
+                              stroke={CANVAS.accent}
                               strokeWidth={1.5 / view.zoom}
                               className="pointer-events-none"
                             />
@@ -1749,8 +2252,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                               cx={pt.handleIn.x}
                               cy={pt.handleIn.y}
                               r={5 / view.zoom}
-                              fill="#00E5FF"
-                              stroke="#0f172a"
+                              fill={CANVAS.accent}
+                              stroke={CANVAS.ink}
                               strokeWidth={1.5 / view.zoom}
                               className="pointer-events-none"
                             />
@@ -1765,7 +2268,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                               y1={pt.y}
                               x2={pt.handleOut.x}
                               y2={pt.handleOut.y}
-                              stroke="#00E5FF"
+                              stroke={CANVAS.accent}
                               strokeWidth={1.5 / view.zoom}
                               className="pointer-events-none"
                             />
@@ -1793,8 +2296,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                               cx={pt.handleOut.x}
                               cy={pt.handleOut.y}
                               r={5 / view.zoom}
-                              fill="#00E5FF"
-                              stroke="#0f172a"
+                              fill={CANVAS.accent}
+                              stroke={CANVAS.ink}
                               strokeWidth={1.5 / view.zoom}
                               className="pointer-events-none"
                             />
@@ -1857,8 +2360,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                           y={pt.y - 5 / view.zoom}
                           width={10 / view.zoom}
                           height={10 / view.zoom}
-                          fill={isAnchorSelected ? '#FFB800' : '#FFFFFF'}
-                          stroke="#0F172A"
+                          fill={isAnchorSelected ? CANVAS.nodeActive : CANVAS.node}
+                          stroke={CANVAS.ink}
                           strokeWidth={2 / view.zoom}
                           className="pointer-events-none shadow-md"
                         />
@@ -1868,6 +2371,9 @@ export const Canvas: React.FC<CanvasProps> = ({
                 </g>
               );
             })}
+
+          {/* Guides — editing aids, drawn above the artwork, never exported */}
+          {renderGuides()}
 
           {/* Shape Preview */}
           {effectiveTool === 'shape' && isPointerDown && dragStartPoint && currentPointerPoint && (
@@ -1924,7 +2430,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         y1={guide.start}
                         x2={guide.coordinate}
                         y2={guide.end}
-                        stroke="#070B14"
+                        stroke={CANVAS.page}
                         strokeWidth={3 / view.zoom}
                         strokeOpacity={0.6}
                       />
@@ -1934,7 +2440,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         y1={guide.coordinate}
                         x2={guide.end}
                         y2={guide.coordinate}
-                        stroke="#070B14"
+                        stroke={CANVAS.page}
                         strokeWidth={3 / view.zoom}
                         strokeOpacity={0.6}
                       />
@@ -1947,7 +2453,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         y1={guide.start}
                         x2={guide.coordinate}
                         y2={guide.end}
-                        stroke="#00E5FF"
+                        stroke={CANVAS.accent}
                         strokeWidth={4 / view.zoom}
                         strokeOpacity={0.25}
                       />
@@ -1957,7 +2463,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         y1={guide.coordinate}
                         x2={guide.end}
                         y2={guide.coordinate}
-                        stroke="#00E5FF"
+                        stroke={CANVAS.accent}
                         strokeWidth={4 / view.zoom}
                         strokeOpacity={0.25}
                       />
@@ -1970,7 +2476,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         y1={guide.start}
                         x2={guide.coordinate}
                         y2={guide.end}
-                        stroke="#00E5FF"
+                        stroke={CANVAS.accent}
                         strokeWidth={1 / view.zoom}
                         strokeDasharray={`${6 / view.zoom} ${4 / view.zoom}`}
                       />
@@ -1980,7 +2486,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         y1={guide.coordinate}
                         x2={guide.end}
                         y2={guide.coordinate}
-                        stroke="#00E5FF"
+                        stroke={CANVAS.accent}
                         strokeWidth={1 / view.zoom}
                         strokeDasharray={`${6 / view.zoom} ${4 / view.zoom}`}
                       />
@@ -1994,7 +2500,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         width={guide.targetBBox.width}
                         height={guide.targetBBox.height}
                         fill="none"
-                        stroke="#00E5FF"
+                        stroke={CANVAS.accent}
                         strokeWidth={1 / view.zoom}
                         strokeDasharray={`${3 / view.zoom} ${3 / view.zoom}`}
                         strokeOpacity={0.5}
@@ -2009,7 +2515,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                           y1={guide.start}
                           x2={guide.coordinate + 4 / view.zoom}
                           y2={guide.start}
-                          stroke="#00E5FF"
+                          stroke={CANVAS.accent}
                           strokeWidth={1.5 / view.zoom}
                         />
                         <line
@@ -2017,7 +2523,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                           y1={guide.end}
                           x2={guide.coordinate + 4 / view.zoom}
                           y2={guide.end}
-                          stroke="#00E5FF"
+                          stroke={CANVAS.accent}
                           strokeWidth={1.5 / view.zoom}
                         />
                       </>
@@ -2028,7 +2534,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                           y1={guide.coordinate - 4 / view.zoom}
                           x2={guide.start}
                           y2={guide.coordinate + 4 / view.zoom}
-                          stroke="#00E5FF"
+                          stroke={CANVAS.accent}
                           strokeWidth={1.5 / view.zoom}
                         />
                         <line
@@ -2036,7 +2542,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                           y1={guide.coordinate - 4 / view.zoom}
                           x2={guide.end}
                           y2={guide.coordinate + 4 / view.zoom}
-                          stroke="#00E5FF"
+                          stroke={CANVAS.accent}
                           strokeWidth={1.5 / view.zoom}
                         />
                       </>
@@ -2058,15 +2564,15 @@ export const Canvas: React.FC<CanvasProps> = ({
                             width={badgeWidth}
                             height={badgeHeight}
                             rx={3 / view.zoom}
-                            fill="#0F172A"
-                            stroke="#00E5FF"
+                            fill={CANVAS.ink}
+                            stroke={CANVAS.accent}
                             strokeWidth={1 / view.zoom}
                             opacity={0.92}
                           />
                           <text
                             x={0}
                             y={3.5 / view.zoom}
-                            fill="#00E5FF"
+                            fill={CANVAS.accent}
                             fontSize={8.5 / view.zoom}
                             fontWeight="bold"
                             fontFamily="monospace"
@@ -2085,151 +2591,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         </g>
       </svg>
 
-      {/* Floating Canvas Badges & HUD */}
-      {/* Shape Builder Mode HUD (Merge / Erase) for Mobile & Desktop parity */}
-      {tool === 'shape-builder' && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-1.5 pointer-events-auto">
-          <div className="flex items-center p-1 bg-slate-900/95 backdrop-blur-md border border-cyan-500/40 rounded-full shadow-2xl">
-            <button
-              type="button"
-              onClick={() => setSbMode('merge')}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 ${
-                sbMode === 'merge' && !modifiers.alt
-                  ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 shadow-md shadow-cyan-500/30'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              <span className="font-mono text-sm leading-none font-bold">+</span>
-              <span>Merge</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setSbMode('erase')}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 ${
-                sbMode === 'erase' || modifiers.alt
-                  ? 'bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-md shadow-red-500/30'
-                  : 'text-slate-300 hover:text-red-400 hover:bg-slate-800'
-              }`}
-            >
-              <span className="font-mono text-sm leading-none font-bold">−</span>
-              <span>Erase (Alt)</span>
-            </button>
-          </div>
-
-          <span className="text-[10px] text-cyan-300/80 font-mono tracking-tight bg-slate-950/80 px-2.5 py-0.5 rounded-md border border-slate-800 shadow-sm">
-            {atomicRegions.length > 0
-              ? `Drag across to merge • Tap in erase to delete (${atomicRegions.length} regions)`
-              : 'Draw or select 2+ overlapping shapes to build'}
-          </span>
-        </div>
-      )}
-
-      {isPanZoomLocked && (
-        <button
-          type="button"
-          onClick={onToggleLockPanZoom}
-          className="hidden sm:flex absolute top-3 left-1/2 -translate-x-1/2 z-20 px-3 py-1 bg-amber-500 text-slate-950 font-bold text-xs rounded-full shadow-xl items-center gap-1.5 cursor-pointer active:scale-95 transition-transform"
-          title="Click to Unlock Canvas Pan & Zoom"
-        >
-          <Lock size={12} />
-          <span>View Locked &bull; Tap to Unlock</span>
-        </button>
-      )}
-
-      {onToggleSmartGuides && (
-        <button
-          type="button"
-          onClick={onToggleSmartGuides}
-          className={`hidden sm:flex absolute top-3 ${onOpenLayers ? 'right-28' : 'right-3'} z-20 px-2.5 py-1.5 rounded-xl backdrop-blur-md border shadow-xl items-center gap-1.5 text-xs font-bold transition-all active:scale-95 ${
-            smartGuidesEnabled
-              ? 'bg-slate-900/90 border-cyan-500/50 text-cyan-300 hover:text-white hover:bg-slate-800'
-              : 'bg-slate-900/70 border-slate-700/60 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-          }`}
-          title={smartGuidesEnabled ? 'Smart Guides: Active (Tap to Disable)' : 'Smart Guides: Disabled (Tap to Enable)'}
-        >
-          <Magnet size={13} className={smartGuidesEnabled ? 'text-cyan-400' : 'text-slate-500'} />
-          <span className="hidden sm:inline">Guides</span>
-          <span className={`w-2 h-2 rounded-full ${smartGuidesEnabled ? 'bg-cyan-400 shadow-[0_0_6px_#00E5FF]' : 'bg-slate-600'}`} />
-        </button>
-      )}
-
-      {onOpenLayers && (
-        <button
-          type="button"
-          onClick={onOpenLayers}
-          className="hidden sm:flex absolute top-3 right-3 z-20 px-2.5 py-1.5 rounded-xl bg-slate-900/90 backdrop-blur-md border border-cyan-500/50 text-cyan-300 hover:text-white hover:bg-slate-800 shadow-xl items-center gap-1.5 text-xs font-bold transition-all active:scale-95"
-          title="Show Layers Panel"
-        >
-          <LayersIcon size={14} className="text-cyan-400" />
-          <span>Layers</span>
-          <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 flex items-center justify-center text-[10px] font-mono font-bold">
-            {layers.length}
-          </span>
-        </button>
-      )}
-
-      {/* Artboard Bounds Clipping Toggle */}
-      <button
-        type="button"
-        onClick={() => setClipArtboardBounds(!clipArtboardBounds)}
-        className={`hidden sm:flex absolute top-3 ${onToggleSmartGuides ? (onOpenLayers ? 'right-52' : 'right-28') : 'right-3'} z-20 px-2.5 py-1.5 rounded-xl backdrop-blur-md border shadow-xl items-center gap-1.5 text-xs font-bold transition-all active:scale-95 ${
-          clipArtboardBounds
-            ? 'bg-slate-900/90 border-cyan-500/50 text-cyan-300 hover:text-white hover:bg-slate-800'
-            : 'bg-slate-900/70 border-slate-700/60 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-        }`}
-        title={clipArtboardBounds ? 'Artboard Bounds: Clipped (Click to show overflow)' : 'Artboard Bounds: Infinite (Click to clip to artboard)'}
-      >
-        <span>Bounds: {clipArtboardBounds ? 'Clip' : 'Full'}</span>
-      </button>
-
-      {/* Vector Typography Modal */}
-      {textInputModal?.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-4 shadow-2xl w-full max-w-sm flex flex-col gap-3 animate-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-              <span className="text-xs font-bold text-cyan-400 uppercase tracking-wider">Vector Typography</span>
-              <button
-                type="button"
-                onClick={() => setTextInputModal(null)}
-                className="text-slate-400 hover:text-white text-xs font-bold px-2 py-0.5 rounded-md hover:bg-slate-800"
-              >
-                ✕
-              </button>
-            </div>
-            <div>
-              <label className="text-[11px] text-slate-300 font-medium block mb-1">Enter Text Phrase</label>
-              <input
-                type="text"
-                autoFocus
-                value={textInputModal.text}
-                onChange={(e) => setTextInputModal({ ...textInputModal, text: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleConfirmText();
-                }}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-bold text-sm focus:border-cyan-500 focus:outline-none"
-                placeholder="e.g. BRAND LOGO"
-              />
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setTextInputModal(null)}
-                className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold hover:bg-slate-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmText}
-                className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 font-bold text-xs shadow-md shadow-cyan-500/30 hover:from-cyan-400 hover:to-blue-500 active:scale-95 transition-transform"
-              >
-                Create Vector Text
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {renderRulers()}
     </div>
   );
 };

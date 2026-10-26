@@ -15,6 +15,28 @@ export interface AnchorPoint {
   pressure?: number;  // 0.0 to 1.0 (touch pressure or speed-derived)
 }
 
+export interface GradientStop {
+  offset: number; // 0..1 along the gradient
+  color: string;  // hex
+  opacity: number; // 0..1
+}
+
+export interface GradientDef {
+  type: 'linear' | 'radial';
+  /** Degrees, measured clockwise from the +x axis (screen space) */
+  angle: number;
+  stops: GradientStop[];
+}
+
+/** Ruler guide — an editing aid, never exported with artwork */
+export interface Guide {
+  id: string;
+  axis: 'h' | 'v';
+  /** World-space coordinate along the artboard */
+  position: number;
+  locked: boolean;
+}
+
 export type StrokeCap = 'round' | 'butt' | 'square';
 export type StrokeJoin = 'round' | 'miter' | 'bevel';
 export type PressureProfile = 'uniform' | 'tapered' | 'dynamic-touch' | 'calligraphy';
@@ -26,6 +48,8 @@ export interface VectorPath {
   closed: boolean;
   fill: string;
   fillOpacity: number;
+  /** Optional gradient paint for the fill; when set it wins over `fill` */
+  fillGradient?: GradientDef;
   stroke: string;
   strokeWidth: number;
   strokeOpacity: number;
@@ -51,8 +75,7 @@ export type ToolType =
   | 'select'          // Move and transform paths
   | 'direct-select'   // Move individual anchor points or handles
   | 'pen'             // Illustrator bezier pen tool
-  | 'shape-builder'   // Adobe Illustrator interactive Shape Builder tool
-  | 'pathfinder'      // Boolean operations panel & actions (Unite, Minus, Intersect, Exclude, Divide)
+  | 'shape-builder'   // Interactive shape builder (Unite / Erase across regions)
   | 'shape'           // Rectangle, Circle, Polygon, Star
   | 'pressure-brush'  // Dynamic touch/stylus pressure vector stroke
   | 'text'            // Vector Typography tool

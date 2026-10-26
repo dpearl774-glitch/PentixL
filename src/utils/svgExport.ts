@@ -1,5 +1,12 @@
 import { Layer, PressureConfig, VectorPath } from '../types/vector';
+import { CANVAS } from '../theme';
 import { pointsToSvgPath, generateVariableStrokePolygon } from './bezier';
+import { gradientMarkup } from './gradients';
+
+/** Gradient paint id used by both the editor and the exported markup. */
+export function gradientIdFor(pathId: string): string {
+  return `pentix-grad-${pathId}`;
+}
 
 export interface SvgExportOptions {
   width: number;
@@ -8,6 +15,13 @@ export interface SvgExportOptions {
   backgroundColor: string;
   prettify?: boolean;
 }
+
+const escapeXml = (value: string): string =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 
 /**
  * Generates an SVG string representation of all visible layers
@@ -27,6 +41,23 @@ export function generateSvgCode(
     content += `  <rect width="100%" height="100%" fill="${backgroundColor}" />\n`;
   }
 
+  // Gradient paint definitions (fill paints only — editing aids such as grids
+  // and guides live outside the layer tree and never reach this function).
+  const gradientDefs: string[] = [];
+  for (const layer of layers) {
+    if (!layer.visible) continue;
+    for (const path of layer.paths) {
+      if (path.fillGradient && path.fillGradient.stops.length >= 2) {
+        gradientDefs.push(
+          `  ${gradientMarkup(path.fillGradient, gradientIdFor(path.id))}`
+        );
+      }
+    }
+  }
+  if (gradientDefs.length) {
+    content += `  <defs>\n${gradientDefs.join('\n')}\n  </defs>\n`;
+  }
+
   for (const layer of layers) {
     if (!layer.visible) continue;
 
@@ -35,11 +66,39 @@ export function generateSvgCode(
     for (const path of layer.paths) {
       if (path.points.length === 0) continue;
 
+      // Live text objects export as <text> so the string stays editable
+      if (path.text) {
+        const origin = path.points[0];
+        const fillValue =
+          path.fillGradient && path.fillGradient.stops.length >= 2
+            ? `url(#${gradientIdFor(path.id)})`
+            : path.fill === 'none'
+              ? 'none'
+              : path.fill;
+        const attrs = [
+          `x="${origin.x.toFixed(2)}"`,
+          `y="${origin.y.toFixed(2)}"`,
+          `font-family="${escapeXml(path.fontFamily || 'sans-serif')}"`,
+          `font-size="${path.fontSize || 64}"`,
+          `font-weight="${path.fontWeight || 'bold'}"`,
+          `fill="${fillValue}"`,
+          `fill-opacity="${(path.fillOpacity ?? 1).toFixed(2)}"`,
+          path.stroke !== 'none' && path.strokeWidth > 0
+            ? `stroke="${path.stroke}" stroke-width="${path.strokeWidth}"`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' ');
+        content += `    <text id="path-${path.id}" ${attrs}>${escapeXml(path.text)}</text>\n`;
+        continue;
+      }
+
       // Check if path uses variable pressure profile
       if (path.pressureProfile !== 'uniform') {
         const ribbonD = generateVariableStrokePolygon(path.points, pressureConfig);
         if (ribbonD) {
-          content += `    <path d="${ribbonD}" fill="${path.stroke || '#00E5FF'}" opacity="${path.strokeOpacity.toFixed(2)}" />\n`;
+          const ribbonFill = path.stroke && path.stroke !== 'none' ? path.stroke : CANVAS.accent;
+          content += `    <path d="${ribbonD}" fill="${ribbonFill}" opacity="${path.strokeOpacity.toFixed(2)}" />\n`;
           continue;
         }
       }
@@ -47,9 +106,12 @@ export function generateSvgCode(
       const d = pointsToSvgPath(path.points, path.closed);
       if (!d) continue;
 
-      const fillAttr = path.closed && path.fill !== 'none'
-        ? `fill="${path.fill}" fill-opacity="${path.fillOpacity.toFixed(2)}"`
-        : `fill="none"`;
+      const fillAttr =
+        path.closed && path.fillGradient && path.fillGradient.stops.length >= 2
+          ? `fill="url(#${gradientIdFor(path.id)})" fill-opacity="${path.fillOpacity.toFixed(2)}"`
+          : path.closed && path.fill !== 'none'
+            ? `fill="${path.fill}" fill-opacity="${path.fillOpacity.toFixed(2)}"`
+            : `fill="none"`;
 
       const strokeAttr = path.stroke !== 'none' && path.strokeWidth > 0
         ? `stroke="${path.stroke}" stroke-width="${path.strokeWidth}" stroke-opacity="${path.strokeOpacity.toFixed(2)}" stroke-linecap="${path.strokeCap}" stroke-linejoin="${path.strokeJoin}"`
