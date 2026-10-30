@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Copy, Download, Check, FileCode2, Image as ImageIcon } from 'lucide-react';
-import { Layer, PressureConfig } from '../types/vector';
+import { Layer, PressureConfig, VectorPath } from '../types/vector';
 import { downloadSvg, exportToPng, generateSvgCode } from '../utils/svgExport';
+import { computePathsBoundingBox } from '../utils/transform';
 import { Button, SectionLabel, Sheet } from './ui/primitives';
 
 interface ExportSheetProps {
@@ -14,7 +15,18 @@ interface ExportSheetProps {
   projectName: string;
   /** Artboard colour used when the export keeps its background */
   backgroundColor: string;
+  /** Currently selected objects, offered as a crop-to-selection export */
+  selectedPaths: VectorPath[];
 }
+
+type Scope = 'artboard' | 'selection';
+type Mono = 'off' | 'black' | 'white';
+
+const MONO_COLOR: Record<Mono, string | undefined> = {
+  off: undefined,
+  black: '#000000',
+  white: '#FFFFFF',
+};
 
 export const ExportSheet: React.FC<ExportSheetProps> = ({
   open,
@@ -25,26 +37,78 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
   pressureConfig,
   projectName,
   backgroundColor,
+  selectedPaths,
 }) => {
   const [tab, setTab] = useState<'svg' | 'png'>('svg');
   const [transparent, setTransparent] = useState(true);
   const [scale, setScale] = useState(2);
+  const [mono, setMono] = useState<Mono>('off');
+  const [scope, setScope] = useState<Scope>('artboard');
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  const hasSelection = selectedPaths.length > 0;
+  const activeScope: Scope = hasSelection ? scope : 'artboard';
+
+  // Selection export crops to the selected artwork plus a small breathing gap,
+  // which is what a logo mark handed to someone else actually needs.
+  const selectedIds = useMemo(
+    () => new Set(selectedPaths.map((p) => p.id)),
+    [selectedPaths]
+  );
+
+  const crop = useMemo(() => {
+    if (activeScope !== 'selection' || !hasSelection) return null;
+    const box = computePathsBoundingBox(selectedPaths);
+    if (!box) return null;
+    const pad = Math.max(2, Math.round(Math.max(box.width, box.height) * 0.04));
+    return {
+      x: box.minX - pad,
+      y: box.minY - pad,
+      width: box.width + pad * 2,
+      height: box.height + pad * 2,
+    };
+  }, [activeScope, hasSelection, selectedPaths]);
+
+  const exportLayers = useMemo(
+    () =>
+      activeScope === 'selection' && hasSelection
+        ? layers.map((layer) => ({
+            ...layer,
+            paths: layer.paths.filter((p) => selectedIds.has(p.id)),
+          }))
+        : layers,
+    [activeScope, hasSelection, layers, selectedIds]
+  );
+
+  const outWidth = crop ? Math.round(crop.width) : canvasWidth;
+  const outHeight = crop ? Math.round(crop.height) : canvasHeight;
+  const monoColor = MONO_COLOR[mono];
 
   const svg = useMemo(
     () =>
       generateSvgCode(
-        layers,
+        exportLayers,
         {
-          width: canvasWidth,
-          height: canvasHeight,
+          width: outWidth,
+          height: outHeight,
           includeBackground: !transparent,
           backgroundColor,
+          monoColor,
+          crop: crop ?? undefined,
         },
         pressureConfig
       ),
-    [layers, canvasWidth, canvasHeight, transparent, pressureConfig, backgroundColor]
+    [
+      exportLayers,
+      outWidth,
+      outHeight,
+      transparent,
+      backgroundColor,
+      monoColor,
+      crop,
+      pressureConfig,
+    ]
   );
 
   const previewSrc = useMemo(
@@ -54,6 +118,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
 
   const slug =
     projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'pentix';
+  const suffix = `${activeScope === 'selection' ? '-mark' : ''}${mono !== 'off' ? '-mono' : ''}`;
 
   const copy = async () => {
     try {
@@ -68,7 +133,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
   const savePng = async () => {
     setBusy(true);
     try {
-      await exportToPng(svg, canvasWidth, canvasHeight, scale, `${slug}-${scale}x.png`);
+      await exportToPng(svg, outWidth, outHeight, scale, `${slug}${suffix}-${scale}x.png`);
     } finally {
       setBusy(false);
     }
@@ -80,7 +145,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
       onClose={onClose}
       title="Export"
       eyebrow="Output"
-      subtitle={`${canvasWidth} × ${canvasHeight} px artboard`}
+      subtitle={`${outWidth} × ${outHeight} px${crop ? ' · cropped to selection' : ' artboard'}`}
       size="md"
     >
       <div className="flex flex-col gap-4">
@@ -117,6 +182,67 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
           >
             <ImageIcon size={15} /> PNG
           </button>
+        </div>
+
+        {/* Scope — only offered when something is selected */}
+        {hasSelection && (
+          <div className="flex flex-col gap-1.5">
+            <SectionLabel>Include</SectionLabel>
+            <div className="grid grid-cols-2 gap-1.5">
+              {(
+                [
+                  ['artboard', 'Whole artboard'],
+                  ['selection', `Selection · ${selectedPaths.length}`],
+                ] as [Scope, string][]
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setScope(value)}
+                  className={`press h-9 truncate rounded-xl border px-2 text-[12px] font-semibold ${
+                    activeScope === value
+                      ? 'border-accent bg-accent/10 text-accent'
+                      : 'border-line bg-ink-2 text-dim'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* One colour */}
+        <div className="flex flex-col gap-1.5">
+          <SectionLabel>Colour</SectionLabel>
+          <div className="grid grid-cols-3 gap-1.5">
+            {(
+              [
+                ['off', 'Full colour'],
+                ['black', 'Black'],
+                ['white', 'White'],
+              ] as [Mono, string][]
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setMono(value)}
+                className={`press flex h-9 items-center justify-center gap-1.5 truncate rounded-xl border px-2 text-[12px] font-semibold ${
+                  mono === value
+                    ? 'border-accent bg-accent/10 text-accent'
+                    : 'border-line bg-ink-2 text-dim'
+                }`}
+              >
+                {value !== 'off' && (
+                  <span
+                    className="h-3 w-3 shrink-0 rounded-full border border-line-strong"
+                    style={{ backgroundColor: value === 'black' ? '#000' : '#fff' }}
+                  />
+                )}
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex items-center justify-between rounded-xl border border-line bg-ink-0 px-3 py-2.5">
@@ -157,7 +283,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
               </Button>
               <Button
                 variant="primary"
-                onClick={() => downloadSvg(svg, `${slug}.svg`)}
+                onClick={() => downloadSvg(svg, `${slug}${suffix}.svg`)}
               >
                 <Download size={14} /> Download
               </Button>
@@ -180,7 +306,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
                     {s}×
                   </div>
                   <div className="font-mono text-[10px] text-mute">
-                    {canvasWidth * s} × {canvasHeight * s}
+                    {outWidth * s} × {outHeight * s}
                   </div>
                 </button>
               ))}

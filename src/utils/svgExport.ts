@@ -1,6 +1,6 @@
 import { Layer, PressureConfig, VectorPath } from '../types/vector';
 import { CANVAS } from '../theme';
-import { pointsToSvgPath, generateVariableStrokePolygon } from './bezier';
+import { pathToSvgD, generateVariableStrokePolygon } from './bezier';
 import { gradientMarkup } from './gradients';
 
 /** Gradient paint id used by both the editor and the exported markup. */
@@ -14,6 +14,12 @@ export interface SvgExportOptions {
   includeBackground: boolean;
   backgroundColor: string;
   prettify?: boolean;
+  /** Paints every fill and stroke in one flat colour — the one-colour logo */
+  monoColor?: string;
+  /** Export only these object ids, in their normal paint order */
+  pathIds?: string[];
+  /** Crops the viewBox to a region (selection-only export) */
+  crop?: { x: number; y: number; width: number; height: number };
 }
 
 const escapeXml = (value: string): string =>
@@ -23,34 +29,44 @@ const escapeXml = (value: string): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
+const isVisible = (path: VectorPath): boolean => path.visible !== false;
+
 /**
- * Generates an SVG string representation of all visible layers
+ * Generates an SVG string representation of all visible layers.
+ * Grid, rulers and guides live outside this tree and can never reach it.
  */
 export function generateSvgCode(
   layers: Layer[],
   options: SvgExportOptions,
   pressureConfig: PressureConfig
 ): string {
-  const { width, height, includeBackground, backgroundColor } = options;
+  const { width, height, includeBackground, backgroundColor, monoColor, pathIds, crop } = options;
+  const onlyIds = pathIds ? new Set(pathIds) : null;
+
+  const viewX = crop ? crop.x : 0;
+  const viewY = crop ? crop.y : 0;
+  const viewW = crop ? crop.width : width;
+  const viewH = crop ? crop.height : height;
 
   let content = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-  content += `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">\n`;
+  content += `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewX} ${viewY} ${viewW} ${viewH}" width="${viewW}" height="${viewH}">\n`;
   content += `  <!-- Created with Pentix Mobile Vector Logo Studio -->\n`;
 
   if (includeBackground && backgroundColor && backgroundColor !== 'transparent') {
-    content += `  <rect width="100%" height="100%" fill="${backgroundColor}" />\n`;
+    content += `  <rect x="${viewX}" y="${viewY}" width="${viewW}" height="${viewH}" fill="${backgroundColor}" />\n`;
   }
 
-  // Gradient paint definitions (fill paints only — editing aids such as grids
-  // and guides live outside the layer tree and never reach this function).
+  // A one-colour export is flattened paint, so gradients are left out entirely.
   const gradientDefs: string[] = [];
-  for (const layer of layers) {
-    if (!layer.visible) continue;
-    for (const path of layer.paths) {
-      if (path.fillGradient && path.fillGradient.stops.length >= 2) {
-        gradientDefs.push(
-          `  ${gradientMarkup(path.fillGradient, gradientIdFor(path.id))}`
-        );
+  if (!monoColor) {
+    for (const layer of layers) {
+      if (!layer.visible) continue;
+      for (const path of layer.paths) {
+        if (!isVisible(path)) continue;
+        if (onlyIds && !onlyIds.has(path.id)) continue;
+        if (path.fillGradient && path.fillGradient.stops.length >= 2) {
+          gradientDefs.push(`  ${gradientMarkup(path.fillGradient, gradientIdFor(path.id))}`);
+        }
       }
     }
   }
@@ -64,13 +80,18 @@ export function generateSvgCode(
     content += `  <g id="layer-${layer.id}" opacity="${layer.opacity.toFixed(2)}">\n`;
 
     for (const path of layer.paths) {
+      if (!isVisible(path)) continue;
+      if (onlyIds && !onlyIds.has(path.id)) continue;
       if (path.points.length === 0) continue;
+
+      const objectAlpha = path.opacity ?? 1;
 
       // Live text objects export as <text> so the string stays editable
       if (path.text) {
         const origin = path.points[0];
-        const fillValue =
-          path.fillGradient && path.fillGradient.stops.length >= 2
+        const fillValue = monoColor
+          ? monoColor
+          : path.fillGradient && path.fillGradient.stops.length >= 2
             ? `url(#${gradientIdFor(path.id)})`
             : path.fill === 'none'
               ? 'none'
@@ -82,9 +103,9 @@ export function generateSvgCode(
           `font-size="${path.fontSize || 64}"`,
           `font-weight="${path.fontWeight || 'bold'}"`,
           `fill="${fillValue}"`,
-          `fill-opacity="${(path.fillOpacity ?? 1).toFixed(2)}"`,
+          `fill-opacity="${(monoColor ? 1 : (path.fillOpacity ?? 1) * objectAlpha).toFixed(2)}"`,
           path.stroke !== 'none' && path.strokeWidth > 0
-            ? `stroke="${path.stroke}" stroke-width="${path.strokeWidth}"`
+            ? `stroke="${monoColor ?? path.stroke}" stroke-width="${path.strokeWidth}"`
             : '',
         ]
           .filter(Boolean)
@@ -97,27 +118,36 @@ export function generateSvgCode(
       if (path.pressureProfile !== 'uniform') {
         const ribbonD = generateVariableStrokePolygon(path.points, pressureConfig);
         if (ribbonD) {
-          const ribbonFill = path.stroke && path.stroke !== 'none' ? path.stroke : CANVAS.accent;
-          content += `    <path d="${ribbonD}" fill="${ribbonFill}" opacity="${path.strokeOpacity.toFixed(2)}" />\n`;
+          const ribbonFill = monoColor
+            ? monoColor
+            : path.stroke && path.stroke !== 'none'
+              ? path.stroke
+              : CANVAS.accent;
+          const ribbonAlpha = monoColor ? 1 : path.strokeOpacity * objectAlpha;
+          content += `    <path d="${ribbonD}" fill="${ribbonFill}" opacity="${ribbonAlpha.toFixed(2)}" />\n`;
           continue;
         }
       }
 
-      const d = pointsToSvgPath(path.points, path.closed);
+      const d = pathToSvgD(path);
       if (!d) continue;
 
-      const fillAttr =
-        path.closed && path.fillGradient && path.fillGradient.stops.length >= 2
-          ? `fill="url(#${gradientIdFor(path.id)})" fill-opacity="${path.fillOpacity.toFixed(2)}"`
+      const fillAttr = monoColor
+        ? path.closed
+          ? `fill="${monoColor}" fill-opacity="1"`
+          : `fill="none"`
+        : path.closed && path.fillGradient && path.fillGradient.stops.length >= 2
+          ? `fill="url(#${gradientIdFor(path.id)})" fill-opacity="${(path.fillOpacity * objectAlpha).toFixed(2)}"`
           : path.closed && path.fill !== 'none'
-            ? `fill="${path.fill}" fill-opacity="${path.fillOpacity.toFixed(2)}"`
+            ? `fill="${path.fill}" fill-opacity="${(path.fillOpacity * objectAlpha).toFixed(2)}"`
             : `fill="none"`;
 
-      const strokeAttr = path.stroke !== 'none' && path.strokeWidth > 0
-        ? `stroke="${path.stroke}" stroke-width="${path.strokeWidth}" stroke-opacity="${path.strokeOpacity.toFixed(2)}" stroke-linecap="${path.strokeCap}" stroke-linejoin="${path.strokeJoin}"`
-        : `stroke="none"`;
+      const strokeAttr =
+        path.stroke !== 'none' && path.strokeWidth > 0
+          ? `stroke="${monoColor ?? path.stroke}" stroke-width="${path.strokeWidth}" stroke-opacity="${(monoColor ? 1 : path.strokeOpacity * objectAlpha).toFixed(2)}" stroke-linecap="${path.strokeCap}" stroke-linejoin="${path.strokeJoin}"`
+          : `stroke="none"`;
 
-      content += `    <path id="path-${path.id}" d="${d}" ${fillAttr} ${strokeAttr} />\n`;
+      content += `    <path id="path-${path.id}" d="${d}" fill-rule="evenodd" ${fillAttr} ${strokeAttr} />\n`;
     }
 
     content += `  </g>\n`;

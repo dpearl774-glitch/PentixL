@@ -1,7 +1,8 @@
 import { AnchorPoint, Point, VectorPath } from '../types/vector';
+import { fitBezierPath } from './curveFit';
 
 /**
- * Computes perpendicular distance from point p to line segment (a, b)
+ * Computes perpendicular distance from point p to the segment (a, b)
  */
 function perpendicularDistance(p: Point, a: Point, b: Point): number {
   const dx = b.x - a.x;
@@ -48,183 +49,465 @@ export function simplifyPoints(points: Point[], tolerance: number): Point[] {
 }
 
 /**
- * Fits smooth Catmull-Rom Bezier handles onto closed polygon points.
- * Retains sharp corners where the interior angle is sharp (> 85 degrees deflection).
+ * Douglas-Peucker for a closed ring. Closing the ring first lets the splitter
+ * treat the seam as the one point it is instead of an arbitrary corner.
  */
-export function fitSmoothBezierCurves(
-  rawPoints: Point[],
-  idPrefix: string,
-  closed: boolean = true
-): AnchorPoint[] {
-  const n = rawPoints.length;
-  if (n < 2) {
-    return rawPoints.map((pt, i) => ({
-      id: `${idPrefix}-${i}`,
-      x: pt.x,
-      y: pt.y,
-      type: 'corner' as const,
-    }));
-  }
-
-  const result: AnchorPoint[] = [];
-
-  for (let i = 0; i < n; i++) {
-    const curr = rawPoints[i];
-    const prev = rawPoints[(i - 1 + n) % n];
-    const next = rawPoints[(i + 1) % n];
-
-    // Inward and outward segment vectors
-    const vIn = { x: curr.x - prev.x, y: curr.y - prev.y };
-    const vOut = { x: next.x - curr.x, y: next.y - curr.y };
-
-    const lenIn = Math.hypot(vIn.x, vIn.y);
-    const lenOut = Math.hypot(vOut.x, vOut.y);
-
-    // If segment is too short or at endpoints of open path, make corner
-    if (lenIn < 0.001 || lenOut < 0.001 || (!closed && (i === 0 || i === n - 1))) {
-      result.push({
-        id: `${idPrefix}-${i}`,
-        x: curr.x,
-        y: curr.y,
-        type: 'corner',
-      });
-      continue;
-    }
-
-    // Dot product to determine angle deflection
-    const dot = (vIn.x * vOut.x + vIn.y * vOut.y) / (lenIn * lenOut);
-    const angleDeflection = Math.acos(Math.max(-1, Math.min(1, dot))); // 0 is straight line, PI is U-turn
-
-    // Sharp turn (> 85 degrees deflection) should remain crisp corner
-    if (angleDeflection > 1.48) {
-      result.push({
-        id: `${idPrefix}-${i}`,
-        x: curr.x,
-        y: curr.y,
-        type: 'corner',
-      });
-      continue;
-    }
-
-    // Tangent vector through current point using Catmull-Rom
-    const tangent = {
-      x: (next.x - prev.x) / 2,
-      y: (next.y - prev.y) / 2,
-    };
-
-    const tanLen = Math.hypot(tangent.x, tangent.y);
-    if (tanLen < 0.001) {
-      result.push({
-        id: `${idPrefix}-${i}`,
-        x: curr.x,
-        y: curr.y,
-        type: 'corner',
-      });
-      continue;
-    }
-
-    // Scale tangent handles proportionally to segment lengths
-    const handleScale = 0.333;
-    const hInScale = Math.min(handleScale, (lenIn / tanLen) * handleScale);
-    const hOutScale = Math.min(handleScale, (lenOut / tanLen) * handleScale);
-
-    result.push({
-      id: `${idPrefix}-${i}`,
-      x: curr.x,
-      y: curr.y,
-      type: 'smooth',
-      handleIn: {
-        x: curr.x - tangent.x * hInScale,
-        y: curr.y - tangent.y * hInScale,
-      },
-      handleOut: {
-        x: curr.x + tangent.x * hOutScale,
-        y: curr.y + tangent.y * hOutScale,
-      },
-    });
-  }
-
-  return result;
+function simplifyClosedLoop(points: Point[], tolerance: number): Point[] {
+  if (points.length <= 4) return points.slice();
+  const closed = simplifyPoints(points.concat([points[0]]), tolerance);
+  return closed.slice(0, -1);
 }
 
 /**
- * Traces contours of a binarized 2D grid using 2D boundary following / marching squares.
+ * Drops redundant vertices left behind by Douglas-Peucker: near-duplicate
+ * points and vertices that are both within `tolerance` of the line joining
+ * their neighbours *and* part of a straight run (deflection below
+ * `maxDeflection` radians).
+ *
+ * The deflection guard is what makes it corner-safe. A 90° corner whose
+ * neighbours are one unit away sits only 0.707 from their chord, so distance
+ * alone would eat every sharp corner of a pixel-scale outline. Requiring the
+ * vertex to also be nearly straight means corners, cusps and stair-step jogs
+ * always survive, while the long near-collinear runs that make traced output
+ * uneditable collapse away.
  */
-export function traceBinaryGridContours(
-  grid: Uint8Array,
-  width: number,
-  height: number,
-  minContourLength: number = 8
-): Point[][] {
-  const visited = new Uint8Array(width * height);
-  const contours: Point[][] = [];
+export function decimateContour(
+  points: Point[],
+  tolerance: number,
+  closed = true,
+  maxDeflection = 0.4
+): Point[] {
+  if (tolerance <= 0 || points.length <= (closed ? 4 : 3)) return points;
 
-  const getPixel = (x: number, y: number) => {
-    if (x < 0 || x >= width || y < 0 || y >= height) return 0;
-    return grid[y * width + x];
-  };
+  const minCount = closed ? 3 : 2;
+  const pts = points.slice();
 
-  // 8 directions (clockwise from right)
-  const dx = [1, 1, 0, -1, -1, -1, 0, 1];
-  const dy = [0, 1, 1, 1, 0, -1, -1, -1];
+  // 1. Near-duplicate consecutive points (quantised outlines are full of them)
+  for (let i = 0; i < pts.length - 1 && pts.length > minCount; i++) {
+    const nxt = pts[i + 1];
+    if (Math.hypot(nxt.x - pts[i].x, nxt.y - pts[i].y) < tolerance * 0.5) {
+      pts.splice(i + 1, 1);
+      i--;
+    }
+  }
 
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      const idx = y * width + x;
-      // Find unvisited black pixel next to white pixel (boundary)
-      if (grid[idx] === 1 && visited[idx] === 0) {
-        let isBoundary = false;
-        for (let d = 0; d < 8; d += 2) {
-          if (getPixel(x + dx[d], y + dy[d]) === 0) {
-            isBoundary = true;
-            break;
-          }
-        }
+  // 2. Greedy straight-run removal
+  const cosLimit = Math.cos(maxDeflection);
+  let passes = 0;
+  let changed = true;
+  while (changed && pts.length > minCount && passes++ < 100) {
+    changed = false;
+    for (let i = 0; i < pts.length && pts.length > minCount; ) {
+      if (!closed && (i === 0 || i === pts.length - 1)) {
+        i++;
+        continue;
+      }
+      const prev = pts[(i - 1 + pts.length) % pts.length];
+      const next = pts[(i + 1) % pts.length];
+      const p = pts[i];
 
-        if (!isBoundary) continue;
+      const ux = p.x - prev.x;
+      const uy = p.y - prev.y;
+      const vx = next.x - p.x;
+      const vy = next.y - p.y;
+      const lu = Math.hypot(ux, uy);
+      const lv = Math.hypot(vx, vy);
 
-        // Trace contour using Moore neighborhood
-        const contour: Point[] = [];
-        let cx = x;
-        let cy = y;
-        let dir = 7;
-        let steps = 0;
-        const maxSteps = width * height;
+      // Degenerate segment: p duplicates a neighbour, so it carries nothing
+      const degenerate = lu < 1e-6 || lv < 1e-6;
+      const straight =
+        degenerate || (ux * vx + uy * vy) / (lu * lv) >= cosLimit;
 
-        do {
-          contour.push({ x: cx, y: cy });
-          visited[cy * width + cx] = 1;
-
-          // Look for next boundary neighbor
-          let foundNext = false;
-          const searchStart = (dir + 5) % 8; // backtrack direction
-
-          for (let i = 0; i < 8; i++) {
-            const checkDir = (searchStart + i) % 8;
-            const nx = cx + dx[checkDir];
-            const ny = cy + dy[checkDir];
-
-            if (getPixel(nx, ny) === 1) {
-              cx = nx;
-              cy = ny;
-              dir = checkDir;
-              foundNext = true;
-              break;
-            }
-          }
-
-          if (!foundNext) break;
-          steps++;
-        } while ((cx !== x || cy !== y) && steps < maxSteps);
-
-        if (contour.length >= minContourLength) {
-          contours.push(contour);
-        }
+      if (straight && perpendicularDistance(p, prev, next) <= tolerance) {
+        pts.splice(i, 1);
+        changed = true;
+        // stay on this index so the re-linked neighbour pair is tested too
+        if (i >= pts.length) break;
+      } else {
+        i++;
       }
     }
   }
 
-  return contours;
+  return pts;
+}
+
+/**
+ * Reduces a closed ring: Douglas-Peucker first, then the corner-safe decimation
+ * pass. Shared by the tracer and by the Simplify action on existing paths.
+ */
+export function simplifyRing(points: Point[], tolerance: number): Point[] {
+  if (tolerance <= 0 || points.length < 4) return points.slice();
+  return decimateContour(simplifyClosedLoop(points, tolerance), tolerance, true);
+}
+
+/**
+ * Fits corners and curves onto a polygon, placing an anchor only where the
+ * outline actually bends. Tracing used to produce one anchor per surviving
+ * raster vertex; the fitter below returns curve endpoints and true corners,
+ * with fitted handles on the smooth nodes so the shape is unchanged.
+ */
+export function fitSmoothBezierCurves(
+  rawPoints: Point[],
+  idPrefix: string,
+  closed: boolean = true,
+  tolerance?: number
+): AnchorPoint[] {
+  return fitBezierPath(rawPoints, { idPrefix, closed, tolerance });
+}
+
+/* ------------------------------------------------------------------------ *
+ * Iso-contours
+ *
+ * Tracing a hard-edged pixel mask can only ever follow the pixel grid, so a
+ * 300px-wide glyph arrives as a staircase of hundreds of anchors that then has
+ * to be "smoothed" back into the shape it was. Marching squares against the
+ * anti-aliased coverage field puts every vertex wherever the glyph edge
+ * actually is — roughly a third of a pixel — so the same outline survives with
+ * a dozen anchors instead of hundreds, and counters (the bowls of o, p, a, b)
+ * come out as their own closed rings instead of being welded into the
+ * silhouette.
+ * ------------------------------------------------------------------------ */
+
+interface Ring {
+  points: Point[];
+  /** A grid point known to sit inside the enclosed region (for nesting tests) */
+  sample: Point;
+}
+
+function signedArea(points: Point[]): number {
+  let area = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    area += a.x * b.y - b.x * a.y;
+  }
+  return area / 2;
+}
+
+function pointInPolygon(pt: Point, poly: Point[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i];
+    const b = poly[j];
+    const crosses =
+      a.y > pt.y !== b.y > pt.y &&
+      pt.x < ((b.x - a.x) * (pt.y - a.y)) / (b.y - a.y) + a.x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Extracts the iso-lines of `field` (values >= iso are foreground) as closed
+ * rings with sub-pixel vertex positions. The field is padded with zeros so
+ * every ring closes even when the subject touches the image border.
+ */
+function marchIsoRings(
+  field: Float32Array,
+  width: number,
+  height: number,
+  iso: number
+): Ring[] {
+  if (width < 2 || height < 2) return [];
+
+  const W = width + 2;
+  const H = height + 2;
+  const edgeCount = W * H * 2;
+
+  const pointX = new Float32Array(edgeCount);
+  const pointY = new Float32Array(edgeCount);
+  const sampleX = new Float32Array(edgeCount);
+  const sampleY = new Float32Array(edgeCount);
+  /** bit 1 = vertex computed, bit 2 = sample computed */
+  const flags = new Uint8Array(edgeCount);
+  const adjA = new Int32Array(edgeCount).fill(-1);
+  const adjB = new Int32Array(edgeCount).fill(-1);
+  const visited = new Uint8Array(edgeCount);
+
+  const at = (x: number, y: number): number =>
+    x < 1 || y < 1 || x > width || y > height ? 0 : field[(y - 1) * width + (x - 1)];
+
+  const vertex = (id: number): void => {
+    if (flags[id] & 1) return;
+    flags[id] |= 1;
+    const cell = id >> 1;
+    const ex = cell % W;
+    const ey = (cell - ex) / W;
+    const a = at(ex, ey);
+    const b = id & 1 ? at(ex, ey + 1) : at(ex + 1, ey);
+    const d = b - a;
+    const t = Math.abs(d) < 1e-9 ? 0.5 : Math.min(1, Math.max(0, (iso - a) / d));
+    if (id & 1) {
+      pointX[id] = ex;
+      pointY[id] = ey + t;
+    } else {
+      pointX[id] = ex + t;
+      pointY[id] = ey;
+    }
+  };
+
+  for (let y = 0; y < H - 1; y++) {
+    for (let x = 0; x < W - 1; x++) {
+      const tl = at(x, y) >= iso;
+      const tr = at(x + 1, y) >= iso;
+      const br = at(x + 1, y + 1) >= iso;
+      const bl = at(x, y + 1) >= iso;
+
+      const k = (tl ? 1 : 0) | (tr ? 2 : 0) | (br ? 4 : 0) | (bl ? 8 : 0);
+      if (k === 0 || k === 15) continue;
+
+      const cell = y * W + x;
+      const eTop = cell * 2;
+      const eLeft = cell * 2 + 1;
+      const eRight = (cell + 1) * 2 + 1;
+      const eBottom = (cell + W) * 2;
+
+      const inside = [tl, tr, br, bl];
+
+      const link = (e1: number, e2: number): void => {
+        vertex(e1);
+        vertex(e2);
+        if (adjA[e1] < 0) adjA[e1] = e2;
+        else adjB[e1] = e2;
+        if (adjA[e2] < 0) adjA[e2] = e1;
+        else adjB[e2] = e1;
+
+        if (!(flags[e1] & 2)) {
+          flags[e1] |= 2;
+          // Nearest inside corner: a grid point that is unambiguously inside the
+          // region this segment borders. Used later to nest counters.
+          const mx = (pointX[e1] + pointX[e2]) / 2;
+          const my = (pointY[e1] + pointY[e2]) / 2;
+          let bx = x;
+          let by = y;
+          let bd = Infinity;
+          for (let c = 0; c < 4; c++) {
+            if (!inside[c]) continue;
+            const cx = c === 1 || c === 2 ? x + 1 : x;
+            const cy = c >= 2 ? y + 1 : y;
+            const d = (cx - mx) * (cx - mx) + (cy - my) * (cy - my);
+            if (d < bd) {
+              bd = d;
+              bx = cx;
+              by = cy;
+            }
+          }
+          sampleX[e1] = bx;
+          sampleY[e1] = by;
+        }
+      };
+
+      switch (k) {
+        case 1:
+          link(eLeft, eTop);
+          break;
+        case 2:
+          link(eTop, eRight);
+          break;
+        case 3:
+          link(eLeft, eRight);
+          break;
+        case 4:
+          link(eRight, eBottom);
+          break;
+        case 5:
+          link(eLeft, eTop);
+          link(eRight, eBottom);
+          break;
+        case 6:
+          link(eTop, eBottom);
+          break;
+        case 7:
+          link(eLeft, eBottom);
+          break;
+        case 8:
+          link(eBottom, eLeft);
+          break;
+        case 9:
+          link(eTop, eBottom);
+          break;
+        case 10:
+          link(eTop, eRight);
+          link(eBottom, eLeft);
+          break;
+        case 11:
+          link(eRight, eBottom);
+          break;
+        case 12:
+          link(eRight, eLeft);
+          break;
+        case 13:
+          link(eTop, eRight);
+          break;
+        case 14:
+          link(eLeft, eTop);
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  const rings: Ring[] = [];
+
+  for (let start = 0; start < edgeCount; start++) {
+    if (!(flags[start] & 1) || visited[start] || adjA[start] < 0) continue;
+
+    const points: Point[] = [];
+    // Padded grid coordinate p sits at pixel index p-1, whose centre is p-0.5.
+    const sample = { x: sampleX[start] - 0.5, y: sampleY[start] - 0.5 };
+    let prev = -1;
+    let cur = start;
+    let closed = false;
+
+    for (let step = 0; step < edgeCount; step++) {
+      points.push({ x: pointX[cur] - 0.5, y: pointY[cur] - 0.5 });
+      visited[cur] = 1;
+
+      const n1 = adjA[cur];
+      const n2 = adjB[cur];
+      let next = -1;
+      if (n1 >= 0 && n1 !== prev && !visited[n1]) next = n1;
+      else if (n2 >= 0 && n2 !== prev && !visited[n2]) next = n2;
+      else if (n1 === start || n2 === start) {
+        closed = true;
+        break;
+      } else break;
+
+      prev = cur;
+      cur = next;
+      if (cur === start) {
+        closed = true;
+        break;
+      }
+    }
+
+    if (closed && points.length >= 3) rings.push({ points, sample });
+  }
+
+  return rings;
+}
+
+export interface TracedRegion {
+  /** Outer outline in image coordinates */
+  points: Point[];
+  /** Counters (letter bowls, logo cut-outs) belonging to this outline */
+  holes: Point[][];
+}
+
+/**
+ * Turns a coverage field into nested outlines + counters, simplified so the
+ * result is editable rather than a wall of anchors.
+ */
+export function traceFieldRegions(
+  field: Float32Array,
+  width: number,
+  height: number,
+  options: { iso?: number; simplify?: number; minArea?: number } = {}
+): TracedRegion[] {
+  const { iso = 0.5, simplify = 1, minArea = 8 } = options;
+
+  const rings = marchIsoRings(field, width, height, iso);
+  if (!rings.length) return [];
+
+  const tolerance = Math.max(0, simplify);
+  // Only thin the raw contour. The curve fitter downstream is what reduces the
+  // anchor count, and it needs a truthful polyline to fit against.
+  const preTolerance = Math.max(0.3, tolerance * 0.5);
+
+  const shapes = rings
+    .map((ring) => {
+      const simplified = simplifyRing(ring.points, preTolerance);
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const p of simplified) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      return {
+        points: simplified,
+        sample: ring.sample,
+        area: Math.abs(signedArea(simplified)),
+        minX,
+        minY,
+        maxX,
+        maxY,
+      };
+    })
+    .filter((s) => s.points.length >= 3 && s.area >= minArea);
+
+  if (!shapes.length) return [];
+
+  // Nesting depth decides outline vs counter. A ring's sample point is inside
+  // the region it encloses, so counting how many larger rings contain it gives
+  // its depth; even depth is solid, odd depth is a hole.
+  const depth = new Array<number>(shapes.length).fill(0);
+  const parent = new Array<number>(shapes.length).fill(-1);
+
+  for (let i = 0; i < shapes.length; i++) {
+    const s = shapes[i];
+    for (let j = 0; j < shapes.length; j++) {
+      if (i === j) continue;
+      const o = shapes[j];
+      if (o.area <= s.area) continue;
+      if (
+        s.sample.x < o.minX ||
+        s.sample.x > o.maxX ||
+        s.sample.y < o.minY ||
+        s.sample.y > o.maxY
+      )
+        continue;
+      if (!pointInPolygon(s.sample, o.points)) continue;
+      depth[i]++;
+      if (parent[i] < 0 || o.area < shapes[parent[i]].area) parent[i] = j;
+    }
+  }
+
+  const regions: TracedRegion[] = [];
+  const regionOf = new Map<number, number>();
+
+  for (let i = 0; i < shapes.length; i++) {
+    if (depth[i] % 2 !== 0) continue;
+    regionOf.set(i, regions.length);
+    regions.push({ points: shapes[i].points, holes: [] });
+  }
+
+  for (let i = 0; i < shapes.length; i++) {
+    if (depth[i] % 2 === 0) continue;
+    const owner = regionOf.get(parent[i]);
+    if (owner !== undefined) regions[owner].holes.push(shapes[i].points);
+  }
+
+  return regions;
+}
+
+/**
+ * Builds a 0..1 coverage field from pixel data. Using the anti-aliased
+ * luminance rather than a hard threshold is what gives the contour extractor
+ * sub-pixel positions.
+ */
+export function buildCoverageField(
+  imageData: ImageData,
+  threshold = 128,
+  invert = false
+): Float32Array {
+  const { width, height, data } = imageData;
+  const field = new Float32Array(width * height);
+  for (let i = 0; i < width * height; i++) {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    const a = data[i * 4 + 3];
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    const coverage = (1 - lum) * (a / 255);
+    field[i] = invert ? 1 - coverage : coverage;
+  }
+  return field;
 }
 
 /**
@@ -235,8 +518,10 @@ export function traceImageToVectorPaths(
   options: {
     threshold?: number;       // 0 to 255 (default 128)
     invert?: boolean;
-    simplification?: number;  // Douglas-Peucker tolerance (default 2)
-    minArea?: number;
+    simplification?: number;  // vertex tolerance in raster pixels (default 1)
+    minArea?: number;         // smallest enclosed area worth keeping, px²
+    /** Keep counters (the inside of o, p, a) as real holes */
+    includeHoles?: boolean;
     fillColor?: string;
     strokeColor?: string;
     strokeWidth?: number;
@@ -246,52 +531,42 @@ export function traceImageToVectorPaths(
   const {
     threshold = 128,
     invert = false,
-    simplification = 2,
-    minArea = 16,
-    fillColor = '#CDFF5C',
-    strokeColor = '#CDFF5C',
+    simplification = 1,
+    minArea = 8,
+    includeHoles = true,
+    fillColor = '#4C8DFF',
+    strokeColor = '#4C8DFF',
     strokeWidth = 2,
     namePrefix = 'Traced Shape',
   } = options;
 
-  const { width, height, data } = imageData;
-  const grid = new Uint8Array(width * height);
+  const { width, height } = imageData;
 
-  for (let i = 0; i < width * height; i++) {
-    const r = data[i * 4];
-    const g = data[i * 4 + 1];
-    const b = data[i * 4 + 2];
-    const a = data[i * 4 + 3];
+  const field = buildCoverageField(imageData, threshold, invert);
+  // The iso-level is where coverage equals the chosen threshold; inverting the
+  // field mirrors it, so mirror the level too.
+  const iso = invert ? threshold / 255 : 1 - threshold / 255;
 
-    // Luminance
-    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-    // Binarize
-    let isForeground = false;
-    if (a < 50) {
-      isForeground = false; // transparent is background
-    } else {
-      isForeground = lum < threshold; // dark pixels are foreground silhouette
-    }
+  const regions = traceFieldRegions(field, width, height, {
+    iso,
+    simplify: simplification,
+    minArea,
+  });
 
-    if (invert) isForeground = !isForeground;
-    grid[i] = isForeground ? 1 : 0;
-  }
+  const fitTolerance = Math.max(0.6, simplification);
 
-  const rawContours = traceBinaryGridContours(grid, width, height, minArea);
-  const paths: VectorPath[] = [];
+  return regions.map((region, idx) => {
+    const holes = includeHoles
+      ? region.holes.map((hole, holeIdx) =>
+          fitSmoothBezierCurves(hole, `traced-${idx}-hole-${holeIdx}`, true, fitTolerance)
+        )
+      : [];
 
-  rawContours.forEach((rawPoints, idx) => {
-    // Simplify polygon
-    const simplified = simplifyPoints(rawPoints, simplification);
-    if (simplified.length < 3) return;
-
-    // Convert into smooth Bezier curves
-    const bezierPoints = fitSmoothBezierCurves(simplified, `traced-${idx}`, true);
-
-    paths.push({
+    return {
       id: `traced-path-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
       name: `${namePrefix} ${idx + 1}`,
-      points: bezierPoints,
+      points: fitSmoothBezierCurves(region.points, `traced-${idx}`, true, fitTolerance),
+      ...(holes.length > 0 ? { holes } : {}),
       closed: true,
       fill: fillColor,
       fillOpacity: 1,
@@ -301,10 +576,8 @@ export function traceImageToVectorPaths(
       strokeCap: 'round',
       strokeJoin: 'round',
       pressureProfile: 'uniform',
-    });
+    } as VectorPath;
   });
-
-  return paths;
 }
 
 /**
@@ -330,7 +603,7 @@ export function expandTextToVectorPaths(
     fontSize = 72,
     fontFamily = 'Plus Jakarta Sans, sans-serif',
     fontWeight = 'bold',
-    fillColor = '#CDFF5C',
+    fillColor = '#4C8DFF',
     strokeColor = '#E8EAED',
     strokeWidth = 2,
     originX = 100,
@@ -348,13 +621,26 @@ export function expandTextToVectorPaths(
   ctx.font = fontSpec;
   const metrics = ctx.measureText(text);
 
-  const textWidth = Math.ceil(metrics.width) + 40;
-  const textHeight = Math.ceil(fontSize * 1.6) + 40;
+  const pad = 24;
+  // Supersample so tight joins and thin strokes keep their shape, but cap the
+  // raster area: a long line of text at 3× would otherwise allocate a field of
+  // tens of megabytes on a phone.
+  const probeWidth = Math.ceil(metrics.width) + pad * 2;
+  const probeHeight = Math.ceil(
+    (metrics.actualBoundingBoxAscent || fontSize * 0.8) +
+      (metrics.actualBoundingBoxDescent || fontSize * 0.25)
+  ) + pad * 2;
+  const scale = Math.max(
+    1.5,
+    Math.min(3, Math.sqrt(2_500_000 / Math.max(1, probeWidth * probeHeight)))
+  );
+  const ascent = metrics.actualBoundingBoxAscent || fontSize * 0.8;
+  const descent = metrics.actualBoundingBoxDescent || fontSize * 0.25;
+  const textWidth = Math.ceil(metrics.width) + pad * 2;
+  const textHeight = Math.ceil(ascent + descent) + pad * 2;
 
-  // Use 2x supersampling for high fidelity curve contours
-  const scale = 2;
-  canvas.width = textWidth * scale;
-  canvas.height = textHeight * scale;
+  canvas.width = Math.ceil(textWidth * scale);
+  canvas.height = Math.ceil(textHeight * scale);
 
   ctx.scale(scale, scale);
   ctx.fillStyle = '#FFFFFF';
@@ -362,30 +648,47 @@ export function expandTextToVectorPaths(
 
   ctx.font = fontSpec;
   ctx.fillStyle = '#000000';
-  ctx.textBaseline = 'middle';
+  // The live text draws its baseline at the path's origin, so draw this one on
+  // the same baseline and the outline lands exactly where the text was.
+  ctx.textBaseline = 'alphabetic';
   ctx.textAlign = 'left';
-  ctx.fillText(text, 20, textHeight / 2);
+  ctx.fillText(text, pad, pad + ascent);
 
   const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const tracedPaths = traceImageToVectorPaths(imgData, {
     threshold: 128,
-    simplification: 1.2,
-    minArea: 10,
+    // ~0.6 artboard units. Enough to ignore the anti-aliasing ripple, not enough
+    // to round off a stem, a terminal or a 20-radius counter.
+    simplification: 0.62 * scale,
+    minArea: 6,
+    includeHoles: true,
     fillColor,
     strokeColor,
     strokeWidth,
     namePrefix: `Glyph "${text}"`,
   });
 
-  // Scale down 2x and translate to origin
+  const mapPoint = (pt: AnchorPoint): AnchorPoint => ({
+    ...pt,
+    x: pt.x / scale + originX - pad,
+    y: pt.y / scale + originY - (pad + ascent),
+    handleIn: pt.handleIn
+      ? {
+          x: pt.handleIn.x / scale + originX - pad,
+          y: pt.handleIn.y / scale + originY - (pad + ascent),
+        }
+      : undefined,
+    handleOut: pt.handleOut
+      ? {
+          x: pt.handleOut.x / scale + originX - pad,
+          y: pt.handleOut.y / scale + originY - (pad + ascent),
+        }
+      : undefined,
+  });
+
   return tracedPaths.map((p) => ({
     ...p,
-    points: p.points.map((pt) => ({
-      ...pt,
-      x: pt.x / scale + originX - 20,
-      y: pt.y / scale + originY - textHeight / 2,
-      handleIn: pt.handleIn ? { x: pt.handleIn.x / scale + originX - 20, y: pt.handleIn.y / scale + originY - textHeight / 2 } : undefined,
-      handleOut: pt.handleOut ? { x: pt.handleOut.x / scale + originX - 20, y: pt.handleOut.y / scale + originY - textHeight / 2 } : undefined,
-    })),
+    points: p.points.map(mapPoint),
+    ...(p.holes ? { holes: p.holes.map((hole) => hole.map(mapPoint)) } : {}),
   }));
 }

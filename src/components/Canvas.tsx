@@ -24,12 +24,16 @@ import {
   snapAngle,
   createSymmetricHandles,
   generateVariableStrokePolygon,
+  insertPointOnSegment,
+  nearestPointOnSegment,
+  pathToSvgD,
 } from '../utils/bezier';
 import { generateShapePath } from '../utils/shapeGenerator';
 import {
   computePathsBoundingBox,
   scalePaths,
   rotatePaths,
+  translatePaths,
   BoundingBox,
   HandleType,
 } from '../utils/transform';
@@ -46,8 +50,59 @@ import {
   executeShapeBuilderErase,
   SubRegion,
 } from '../utils/shapeBuilderRegions';
+import { PrecisionPad } from './PrecisionPad';
 
 const RULER_SIZE = 18;
+
+/** Pointer id used for the synthetic presses the precision pad sends. */
+const PAD_POINTER_ID = 8301;
+
+const PadGlyph: React.FC = () => (
+  <svg
+    width={11}
+    height={11}
+    viewBox="0 0 12 12"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.4"
+    strokeLinecap="round"
+  >
+    <circle cx="6" cy="6" r="2.6" />
+    <path d="M6 0.6v2.4M6 9v2.4M0.6 6h2.4M9 6h2.4" />
+  </svg>
+);
+
+/** Radius, in canvas units, of the hit target around an anchor node. */
+const ANCHOR_HIT_RADIUS = 22;
+
+/**
+ * Nearest point on a path's outline to `pt`, within `threshold` canvas units.
+ * Returns the index a node would be inserted at, so the + marker on the canvas
+ * always points at the same spot a tap would use.
+ */
+const segmentInsertAt = (
+  path: VectorPath,
+  pt: Point,
+  threshold: number
+): { segmentIndex: number; t: number; point: Point } | null => {
+  if (path.points.length < 2) return null;
+
+  const count = path.points.length;
+  const segments = path.closed ? count : count - 1;
+  let bestDist = threshold;
+  let best: { segmentIndex: number; t: number; point: Point } | null = null;
+
+  for (let i = 0; i < segments; i++) {
+    const hit = nearestPointOnSegment(path, i, pt);
+    if (!hit) continue;
+    if (hit.distance < bestDist) {
+      bestDist = hit.distance;
+      best = { segmentIndex: i, t: hit.t, point: hit.point };
+    }
+  }
+
+  return best;
+};
 
 interface CanvasProps {
   view: CanvasView;
@@ -75,6 +130,8 @@ interface CanvasProps {
   onUpdateGuide: (id: string, position: number) => void;
   /** Called once when a guide drag ends, so the move becomes one undo step */
   onCommitGuides?: () => void;
+  /** One global lock that freezes every guide and stops new ones */
+  guidesLocked?: boolean;
   /** Gradient paint for newly created fills, when the gradient style is active */
   fillGradient?: GradientDef | null;
   fillOpacity?: number;
@@ -96,7 +153,13 @@ interface CanvasProps {
   sbMode?: 'merge' | 'erase';
   clipArtboard?: boolean;
   onRequestText?: (point: Point) => void;
+  /** Opens the type editor for an existing text object */
+  onEditText?: (path: VectorPath) => void;
   onToolSwitch?: (tool: ToolType) => void;
+  /** While the nudge pad is open the selection rectangle steps out of the way */
+  hideTransformBox?: boolean;
+  /** The precision pad is optional; when off, its launcher is hidden */
+  showPrecisionPad?: boolean;
 }
 
 export const Canvas: React.FC<CanvasProps> = ({
@@ -143,7 +206,11 @@ export const Canvas: React.FC<CanvasProps> = ({
   sbMode = 'merge',
   clipArtboard = false,
   onRequestText,
+  onEditText,
+  guidesLocked = false,
   onToolSwitch,
+  hideTransformBox = false,
+  showPrecisionPad = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -210,6 +277,22 @@ export const Canvas: React.FC<CanvasProps> = ({
   const [rulerDraft, setRulerDraft] = useState<{ axis: 'h' | 'v'; position: number } | null>(null);
   const rulerAxisRef = useRef<'h' | 'v' | null>(null);
 
+  // Precision pad: crosshair position (container-relative px) and the element
+  // the current synthetic press landed on
+  const [padOpen, setPadOpen] = useState(false);
+  const [padCursor, setPadCursor] = useState<Point | null>(null);
+  const padCursorRef = useRef<Point | null>(null);
+  const padTargetRef = useRef<Element | null>(null);
+  /** True from a synthetic press until its release */
+  const padPressRef = useRef(false);
+  /** True while the pad is open, when the canvas refuses direct touch */
+  const padOpenRef = useRef(false);
+  /** Two real fingers tracked by the pad's guard, for pan and pinch-zoom */
+  const guardPointersRef = useRef<Map<number, Point>>(new Map());
+  const guardPinchRef = useRef<{ dist: number; zoom: number; panX: number; panY: number } | null>(
+    null
+  );
+
   // Convert client screen coordinates to canvas coordinate space
   const rawCanvasPoint = useCallback(
     (clientX: number, clientY: number): Point => {
@@ -235,9 +318,201 @@ export const Canvas: React.FC<CanvasProps> = ({
     [rawCanvasPoint, gridSnapEnabled, gridSpacingX, gridSpacingY]
   );
 
+  /* ------------------------------------------------------------------ *
+   * Precision pad
+   *
+   * A trackpad between the thumb clusters steers a crosshair, so the finger
+   * never sits on the node. Its gestures are replayed as real pointer events
+   * at the crosshair, which means every tool behaves exactly as it does under
+   * a fingertip — there is no second copy of the hit-testing to keep in sync.
+   * ------------------------------------------------------------------ */
+  /** Topmost artwork element at a screen point, ignoring the editor's overlays */
+  const padHitElement = (clientX: number, clientY: number): Element | null => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    for (const node of document.elementsFromPoint(clientX, clientY)) {
+      if (node === svg || svg.contains(node)) return node;
+    }
+    return svg;
+  };
+
+  const padClientPoint = (): Point | null => {
+    const el = containerRef.current;
+    const cur = padCursorRef.current;
+    if (!el || !cur) return null;
+    const rect = el.getBoundingClientRect();
+    return { x: rect.left + cur.x, y: rect.top + cur.y };
+  };
+
+  const movePadCursor = (dx: number, dy: number) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const cur = padCursorRef.current ?? { x: el.clientWidth / 2, y: el.clientHeight / 2 };
+    const next = {
+      x: Math.min(Math.max(cur.x + dx, 1), Math.max(1, el.clientWidth - 1)),
+      y: Math.min(Math.max(cur.y + dy, 1), Math.max(1, el.clientHeight - 1)),
+    };
+    padCursorRef.current = next;
+    setPadCursor(next);
+
+    // Keep the + / − node markers following the crosshair, not the finger
+    const rect = el.getBoundingClientRect();
+    setCurrentPointerPoint(screenToCanvas(rect.left + next.x, rect.top + next.y));
+  };
+
+  const dispatchPadPointer = (type: 'pointerdown' | 'pointermove' | 'pointerup') => {
+    const pt = padClientPoint();
+    if (!pt) return;
+
+    // A press picks its own target; moves and the release follow it, falling
+    // back to the canvas if that element has since been re-rendered away.
+    const target =
+      type === 'pointerdown'
+        ? padHitElement(pt.x, pt.y)
+        : padTargetRef.current?.isConnected
+          ? padTargetRef.current
+          : svgRef.current;
+    if (!target) return;
+    if (type === 'pointerdown') {
+      padTargetRef.current = target;
+      padPressRef.current = true;
+    }
+
+    target.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clientX: pt.x,
+        clientY: pt.y,
+        pointerId: PAD_POINTER_ID,
+        pointerType: 'mouse',
+        isPrimary: true,
+        button: 0,
+        buttons: type === 'pointerup' ? 0 : 1,
+      })
+    );
+
+    if (type === 'pointerup') {
+      padTargetRef.current = null;
+      padPressRef.current = false;
+    }
+  };
+
+  /** Wheel or two-finger scroll over the pad: pan, or zoom with ⌘/ctrl held. */
+  const handlePadWheel = (dx: number, dy: number, zoomIntent: boolean) => {
+    if (isPanZoomLocked) return;
+    if (!zoomIntent) {
+      onViewChange({ ...view, panX: view.panX - dx, panY: view.panY - dy });
+      return;
+    }
+    const rect = svgRef.current?.getBoundingClientRect();
+    const pt = padClientPoint();
+    if (!rect || !pt) return;
+    // Anchor the zoom on the crosshair so the node being worked on stays put.
+    const cx = pt.x - rect.left;
+    const cy = pt.y - rect.top;
+    const ratio = Math.exp(-dy * 0.0018);
+    const zoom = Math.min(5, Math.max(0.2, view.zoom * ratio));
+    onViewChange({
+      ...view,
+      zoom,
+      panX: cx - (cx - view.panX) * (zoom / view.zoom),
+      panY: cy - (cy - view.panY) * (zoom / view.zoom),
+    });
+  };
+
+  const openPad = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const start = { x: el.clientWidth / 2, y: el.clientHeight / 2 };
+    padCursorRef.current = start;
+    padOpenRef.current = true;
+    setPadCursor(start);
+    setCurrentPointerPoint(screenToCanvas(rect.left + start.x, rect.top + start.y));
+    setPadOpen(true);
+  };
+
+  const closePad = () => {
+    padOpenRef.current = false;
+    setPadOpen(false);
+    setPadCursor(null);
+    padCursorRef.current = null;
+    padTargetRef.current = null;
+    padPressRef.current = false;
+    guardPointersRef.current.clear();
+    guardPinchRef.current = null;
+  };
+
+  /* ------------------------------------------------------------------ *
+   * Pad guard
+   *
+   * While the pad is open the artwork must not react to a finger, but two
+   * fingers still need to pan and zoom. One finger is swallowed by the guard
+   * layer; two are measured here with the same maths the canvas uses, so the
+   * gesture feels identical to the one outside the pad.
+   * ------------------------------------------------------------------ */
+  const handlePadGuardDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* the gesture still tracks inside the layer */
+    }
+    guardPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (guardPointersRef.current.size === 2 && !isPanZoomLocked) {
+      const [a, b] = Array.from(guardPointersRef.current.values());
+      guardPinchRef.current = {
+        dist: distance(a, b),
+        zoom: view.zoom,
+        panX: view.panX,
+        panY: view.panY,
+      };
+    }
+  };
+
+  const handlePadGuardMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!guardPointersRef.current.has(e.pointerId)) return;
+    guardPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    const pinch = guardPinchRef.current;
+    if (!pinch || guardPointersRef.current.size !== 2 || pinch.dist === 0) return;
+
+    const pts = Array.from(guardPointersRef.current.values());
+    const ratio = distance(pts[0], pts[1]) / pinch.dist;
+    if (!Number.isFinite(ratio)) return;
+
+    const zoom = Math.min(5, Math.max(0.2, pinch.zoom * ratio));
+    const rect = svgRef.current?.getBoundingClientRect();
+    const midX = (pts[0].x + pts[1].x) / 2 - (rect?.left ?? 0);
+    const midY = (pts[0].y + pts[1].y) / 2 - (rect?.top ?? 0);
+
+    onViewChange({
+      ...view,
+      zoom,
+      panX: midX - (midX - pinch.panX) * (zoom / pinch.zoom),
+      panY: midY - (midY - pinch.panY) * (zoom / pinch.zoom),
+    });
+  };
+
+  const handlePadGuardUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    guardPointersRef.current.delete(e.pointerId);
+    if (guardPointersRef.current.size < 2) guardPinchRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+  };
+
   // Visible paths
   const currentLayer = layers.find((l) => l.id === activeLayerId) || layers[0];
-  const allPaths = layers.flatMap((l) => (l.visible ? l.paths : []));
+  // Hidden objects stop existing for selection, snapping and transforms
+  const allPaths = layers.flatMap((l) =>
+    l.visible ? l.paths.filter((p) => p.visible !== false) : []
+  );
 
   // Determine effective tool based on Modifier (Ctrl key toggles Direct Select)
   const effectiveTool: ToolType = modifiers.ctrl ? 'direct-select' : tool;
@@ -245,6 +520,20 @@ export const Canvas: React.FC<CanvasProps> = ({
   // Selected paths for transformation
   const selectedPaths = allPaths.filter((p) => selection.selectedPathIds.includes(p.id));
   const selectedBBox = computePathsBoundingBox(selectedPaths);
+
+  /**
+   * Shift constrains the next pen anchor to the nearest 45° ray from the last
+   * one, which pulls the node off your finger. That is the point of the
+   * constraint, but it is invisible until the node has already landed — so
+   * preview exactly where it will go.
+   */
+  const penSnapPreview = React.useMemo(() => {
+    if (effectiveTool !== 'pen' || !modifiers.shift) return null;
+    if (!activePathInProgress || !currentPointerPoint) return null;
+    const from = activePathInProgress.points[activePathInProgress.points.length - 1];
+    if (!from) return null;
+    return { from, snapped: snapAngle(from, currentPointerPoint) };
+  }, [effectiveTool, modifiers.shift, activePathInProgress, currentPointerPoint]);
 
   // Adobe Illustrator Shape Builder: Participating Paths & Planar Atomic Decomposition
   const participatingPaths = React.useMemo(() => {
@@ -297,8 +586,103 @@ export const Canvas: React.FC<CanvasProps> = ({
     setDraggingTarget(target);
   };
 
+  /** While set, taps near the outline select instead of inserting a node. */
+  const insertBlockedUntilRef = useRef(0);
+
+  /**
+   * Adds a node where the pointer is, splitting the segment so the outline does
+   * not move. The new node is handed to the drag, so pulling its handles works
+   * immediately — and the same call serves the + badge and a plain tap.
+   */
+  const insertNodeAt = (
+    path: VectorPath,
+    hit: { segmentIndex: number; t: number; point?: Point },
+    e?: React.PointerEvent
+  ) => {
+    // Right after a delete the same tap must not put the node straight back
+    if (performance.now() < insertBlockedUntilRef.current) return;
+
+    // Inserting beside an existing node stacks a second node on top of the
+    // first, which reads as "the node won't delete" — select it instead.
+    if (hit.point) {
+      const tapped = hit.point;
+      const near = path.points.findIndex(
+        (p) =>
+          Math.hypot(p.x - tapped.x, p.y - tapped.y) <= ANCHOR_HIT_RADIUS / view.zoom
+      );
+      if (near >= 0) {
+        onSelectionChange({
+          selectedPathIds: [path.id],
+          selectedAnchorIndex: near,
+          selectedHandleType: null,
+        });
+        return;
+      }
+    }
+
+    const result = insertPointOnSegment(
+      path,
+      hit.segmentIndex,
+      hit.t,
+      `${path.id}-node-${Date.now()}`
+    );
+    if (!result) return;
+
+    const updated: VectorPath = { ...path, points: result.points };
+    onUpdatePath(updated);
+    onSelectionChange({
+      selectedPathIds: [updated.id],
+      selectedAnchorIndex: result.index,
+      selectedHandleType: null,
+    });
+    onCommitHistory();
+
+    if (e) {
+      const node = result.points[result.index];
+      startDragOperation(e, {
+        type: 'anchor',
+        pathId: updated.id,
+        pointIndex: result.index,
+        initialPoint: { x: node.x, y: node.y },
+      });
+    }
+  };
+
+  /**
+   * Removes one anchor. A path that would be left with fewer than two nodes is
+   * removed with it, so a delete never looks like it did nothing.
+   */
+  const deleteNodeAt = (path: VectorPath, index: number) => {
+    if (!path.points[index]) return;
+    insertBlockedUntilRef.current = performance.now() + 420;
+
+    if (path.points.length <= 2) {
+      if (onReplacePaths) onReplacePaths([path.id], []);
+      else onUpdatePath({ ...path, points: path.points.slice(1) });
+      onSelectionChange({
+        selectedPathIds: [],
+        selectedAnchorIndex: null,
+        selectedHandleType: null,
+      });
+    } else {
+      onUpdatePath({ ...path, points: path.points.filter((_, i) => i !== index) });
+      onSelectionChange({
+        selectedPathIds: [path.id],
+        selectedAnchorIndex: null,
+        selectedHandleType: null,
+      });
+    }
+    onCommitHistory();
+  };
+
   // Pointer Down Handler
   const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    // With the pad open the canvas is not a drawing surface, and a pad press
+    // owns it until it lifts: a stray touch must not become a node, a stroke,
+    // a pinch, a pan or a second selection
+    if (padOpenRef.current && e.pointerId !== PAD_POINTER_ID) return;
+    if (padPressRef.current && e.pointerId !== PAD_POINTER_ID) return;
+
     activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     // Handle 2-Finger Pinch / Pan
@@ -410,7 +794,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         // Add new anchor point to path
         const newIdx = activePathInProgress.points.length;
         let ptPos = canvasPt;
-        if (modifiers.shift) {
+        if (modifiers.shift && newIdx > 0) {
           const prevPt = activePathInProgress.points[newIdx - 1];
           ptPos = snapAngle(prevPt, ptPos);
         }
@@ -445,59 +829,11 @@ export const Canvas: React.FC<CanvasProps> = ({
     // Direct Select: Click on an existing path's segment to INSERT a new anchor node!
     if (effectiveTool === 'direct-select' && selection.selectedPathIds.length > 0) {
       const activePath = allPaths.find((p) => p.id === selection.selectedPathIds[0]);
-      if (activePath && activePath.points.length >= 2) {
-        const threshold = 14 / view.zoom;
-        const count = activePath.points.length;
-        const segmentsCount = activePath.closed ? count : count - 1;
-        let bestDist = threshold;
-        let insertIdx = -1;
-        let insertPoint: Point | null = null;
+      const hit = activePath ? segmentInsertAt(activePath, canvasPt, 14 / view.zoom) : null;
 
-        for (let i = 0; i < segmentsCount; i++) {
-          const a = activePath.points[i];
-          const b = activePath.points[(i + 1) % count];
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
-          const lenSq = dx * dx + dy * dy;
-          if (lenSq === 0) continue;
-
-          const t = Math.max(0.05, Math.min(0.95, ((canvasPt.x - a.x) * dx + (canvasPt.y - a.y) * dy) / lenSq));
-          const projX = a.x + t * dx;
-          const projY = a.y + t * dy;
-          const dist = Math.hypot(canvasPt.x - projX, canvasPt.y - projY);
-
-          if (dist < bestDist) {
-            bestDist = dist;
-            insertIdx = i + 1;
-            insertPoint = { x: projX, y: projY };
-          }
-        }
-
-        if (insertIdx !== -1 && insertPoint) {
-          const newAnchor: AnchorPoint = {
-            id: `${activePath.id}-node-${Date.now()}`,
-            x: insertPoint.x,
-            y: insertPoint.y,
-            type: 'smooth',
-          };
-          const newPoints = [...activePath.points];
-          newPoints.splice(insertIdx, 0, newAnchor);
-          const updatedPath = { ...activePath, points: newPoints };
-          onUpdatePath(updatedPath);
-          onSelectionChange({
-            selectedPathIds: [updatedPath.id],
-            selectedAnchorIndex: insertIdx,
-            selectedHandleType: null,
-          });
-          onCommitHistory();
-          setDraggingTarget({
-            type: 'anchor',
-            pathId: updatedPath.id,
-            pointIndex: insertIdx,
-            initialPoint: insertPoint,
-          });
-          return;
-        }
+      if (activePath && hit) {
+        insertNodeAt(activePath, hit, e);
+        return;
       }
     }
 
@@ -584,6 +920,8 @@ export const Canvas: React.FC<CanvasProps> = ({
 
   // Pointer Move Handler
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (padPressRef.current && e.pointerId !== PAD_POINTER_ID) return;
+
     if (activePointersRef.current.has(e.pointerId)) {
       activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
@@ -984,22 +1322,19 @@ export const Canvas: React.FC<CanvasProps> = ({
         if (activeSmartGuides.length > 0) setActiveSmartGuides([]);
       }
 
-      draggingTarget.initialSelectedPaths.forEach((path) => {
-        const shiftedPoints = path.points.map((pt) => ({
-          ...pt,
-          x: pt.x + dx,
-          y: pt.y + dy,
-          handleIn: pt.handleIn ? { x: pt.handleIn.x + dx, y: pt.handleIn.y + dy } : undefined,
-          handleOut: pt.handleOut ? { x: pt.handleOut.x + dx, y: pt.handleOut.y + dy } : undefined,
-        }));
-        onUpdatePath({ ...path, points: shiftedPoints });
-      });
+      // Counters travel with their outline: without this a traced logo leaves a
+      // letter bowl or a logo cut-out behind when the group is dragged.
+      for (const path of translatePaths(draggingTarget.initialSelectedPaths, dx, dy)) {
+        onUpdatePath(path);
+      }
       return;
     }
   };
 
   // Pointer Up Handler
   const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (padPressRef.current && e.pointerId !== PAD_POINTER_ID) return;
+
     activePointersRef.current.delete(e.pointerId);
 
     if (activePointersRef.current.size < 2) {
@@ -1286,6 +1621,11 @@ export const Canvas: React.FC<CanvasProps> = ({
   };
 
   const startRulerDrag = (axis: 'h' | 'v') => (e: React.PointerEvent) => {
+    // A locked grid of guides is frozen: no new ones can be pulled out.
+    if (guidesLocked) {
+      e.stopPropagation();
+      return;
+    }
     const el = e.currentTarget as HTMLElement;
     try {
       el.setPointerCapture(e.pointerId);
@@ -1333,7 +1673,12 @@ export const Canvas: React.FC<CanvasProps> = ({
     if (!guides.length && !rulerDraft) return null;
     const over = 32 / view.zoom;
     const items: { key: string; axis: 'h' | 'v'; position: number; locked: boolean; draft?: boolean }[] = [
-      ...guides.map((g) => ({ key: g.id, axis: g.axis, position: g.position, locked: g.locked })),
+      ...guides.map((g) => ({
+        key: g.id,
+        axis: g.axis,
+        position: g.position,
+        locked: guidesLocked || g.locked,
+      })),
       ...(rulerDraft
         ? [{ key: '__draft', axis: rulerDraft.axis, position: rulerDraft.position, locked: false, draft: true }]
         : []),
@@ -1550,6 +1895,74 @@ export const Canvas: React.FC<CanvasProps> = ({
     ...(activePathInProgress ? [activePathInProgress] : []),
   ];
 
+  /* ------------------------------------------------------------------ *
+   * Node markers
+   *
+   * Only two things follow the pointer, and neither redraws the artwork:
+   *   · +  the point on the outline where a tap inserts a node
+   *   · −  the node a tap removes
+   * Nodes keep their normal size and colour while the finger moves.
+   * ------------------------------------------------------------------ */
+  const nodeTargetPath =
+    selection.selectedPathIds.length > 0
+      ? allPaths.find((p) => p.id === selection.selectedPathIds[0]) ?? null
+      : null;
+
+  /** Where a tap would insert a node on the selected path */
+  const addNodeHint = (() => {
+    if (effectiveTool !== 'direct-select' || !currentPointerPoint || !nodeTargetPath) return null;
+
+    // A tap that lands on a node selects it instead of inserting, so the +
+    // stays hidden inside the node's own hit target
+    const onNode = nodeTargetPath.points.some(
+      (p) =>
+        Math.hypot(p.x - currentPointerPoint.x, p.y - currentPointerPoint.y) <=
+        ANCHOR_HIT_RADIUS / view.zoom
+    );
+
+    return onNode ? null : segmentInsertAt(nodeTargetPath, currentPointerPoint, 14 / view.zoom);
+  })();
+
+  const deleteNodeArmed =
+    !!nodeTargetPath &&
+    nodeTargetPath.points.length >= 2 &&
+    (modifiers.alt || (effectiveTool === 'pen' && !activePathInProgress));
+
+  /** The node a tap would remove */
+  const deleteNodeHintIndex = (() => {
+    if (!deleteNodeArmed || !currentPointerPoint || !nodeTargetPath) return null;
+
+    const reach = ANCHOR_HIT_RADIUS / view.zoom;
+    let bestIndex: number | null = null;
+    let bestDistance = Infinity;
+
+    for (let i = 0; i < nodeTargetPath.points.length; i++) {
+      const p = nodeTargetPath.points[i];
+      const d = Math.hypot(p.x - currentPointerPoint.x, p.y - currentPointerPoint.y);
+      if (d <= reach && d < bestDistance) {
+        bestDistance = d;
+        bestIndex = i;
+      }
+    }
+
+    return bestIndex;
+  })();
+
+  /* --------------------------- Precision pad --------------------------- */
+  const padAvailable = (effectiveTool === 'pen' || effectiveTool === 'direct-select') && showPrecisionPad;
+
+  useEffect(() => {
+    if (padAvailable) return;
+    padOpenRef.current = false;
+    setPadOpen(false);
+    setPadCursor(null);
+    padCursorRef.current = null;
+    padTargetRef.current = null;
+    padPressRef.current = false;
+    guardPointersRef.current.clear();
+    guardPinchRef.current = null;
+  }, [padAvailable]);
+
   const getCanvasCursor = () => {
     if (effectiveTool === 'hand') return 'cursor-grab active:cursor-grabbing';
     if (effectiveTool === 'pen') return 'cursor-crosshair';
@@ -1685,6 +2098,7 @@ export const Canvas: React.FC<CanvasProps> = ({
             return (
               <g key={layer.id} opacity={layer.opacity}>
                 {layer.paths.map((path) => {
+                  if (path.visible === false) return null;
                   const isSelected = selection.selectedPathIds.includes(path.id);
                   const isShapeBuilder = tool === 'shape-builder';
 
@@ -1696,12 +2110,13 @@ export const Canvas: React.FC<CanvasProps> = ({
                     const pt = path.points[0] || { x: 50, y: 50 };
 
                     return (
-                      <g key={path.id}>
+                      <g key={path.id} opacity={path.opacity ?? 1}>
                         {/* Text Hitbox */}
                         <text
                           x={pt.x}
                           y={pt.y}
                           fill="transparent"
+                          pointerEvents={path.locked ? 'none' : undefined}
                           stroke="transparent"
                           strokeWidth={20 / view.zoom}
                           fontSize={fontSize}
@@ -1709,6 +2124,33 @@ export const Canvas: React.FC<CanvasProps> = ({
                           fontWeight={fontWeight}
                           className={effectiveTool === 'select' ? 'cursor-move' : 'cursor-pointer'}
                           onPointerDown={(e) => {
+                            // The type tool taps an existing label to re-edit it.
+                            if (effectiveTool === 'text' && onEditText) {
+                              e.stopPropagation();
+                              onSelectionChange({
+                                selectedPathIds: [path.id],
+                                selectedAnchorIndex: null,
+                                selectedHandleType: null,
+                              });
+                              onEditText(path);
+                              return;
+                            }
+                            // Second tap on the same label opens the editor instead
+                            // of dragging it across the artboard.
+                            if (
+                              effectiveTool === 'select' &&
+                              onEditText &&
+                              registerTap(`text:${path.id}`)
+                            ) {
+                              e.stopPropagation();
+                              onSelectionChange({
+                                selectedPathIds: [path.id],
+                                selectedAnchorIndex: null,
+                                selectedHandleType: null,
+                              });
+                              onEditText(path);
+                              return;
+                            }
                             if (effectiveTool === 'select') {
                               const isAlready = selection.selectedPathIds.includes(path.id);
                               let newSelected = modifiers.shift || modifiers.ctrl
@@ -1766,12 +2208,31 @@ export const Canvas: React.FC<CanvasProps> = ({
                         key={path.id}
                         d={ribbonD}
                         fill={path.stroke || CANVAS.accent}
-                        opacity={path.strokeOpacity}
+                        opacity={path.strokeOpacity * (path.opacity ?? 1)}
+                        pointerEvents={path.locked ? 'none' : undefined}
                         className={effectiveTool === 'select' ? 'cursor-move' : 'cursor-pointer'}
                         onPointerDown={(e) => {
                           if (isShapeBuilder) {
                             handleShapeBuilderToggle(path, e);
                           } else if (effectiveTool === 'direct-select') {
+                            // A tap on the outline of the path being edited adds a
+                            // node there. This handler is what the tap actually
+                            // reaches, so the insert has to live here too.
+                            if (
+                              selection.selectedPathIds.length === 1 &&
+                              selection.selectedPathIds[0] === path.id
+                            ) {
+                              const hit = segmentInsertAt(
+                                path,
+                                screenToCanvas(e.clientX, e.clientY),
+                                14 / view.zoom
+                              );
+                              if (hit) {
+                                e.stopPropagation();
+                                insertNodeAt(path, hit, e);
+                                return;
+                              }
+                            }
                             e.stopPropagation();
                             const already = selection.selectedPathIds.includes(path.id);
                             onSelectionChange({
@@ -1821,11 +2282,11 @@ export const Canvas: React.FC<CanvasProps> = ({
                     );
                   }
 
-                  const pathD = pointsToSvgPath(path.points, path.closed);
+                  const pathD = pathToSvgD(path);
                   if (!pathD) return null;
 
                   return (
-                    <g key={path.id}>
+                    <g key={path.id} opacity={path.opacity ?? 1}>
                       {/* Generous touch hitbox. Closed shapes also catch taps inside
                           their fill, so the object you see on top is the one you
                           select — interior taps used to fall through to objects behind. */}
@@ -1833,12 +2294,31 @@ export const Canvas: React.FC<CanvasProps> = ({
                         d={pathD}
                         fill={path.closed ? 'transparent' : 'none'}
                         stroke="transparent"
+                        pointerEvents={path.locked ? 'none' : undefined}
                         strokeWidth={Math.max(34, path.strokeWidth * 3) / view.zoom}
                         className={effectiveTool === 'select' ? 'cursor-move' : 'cursor-pointer'}
                         onPointerDown={(e) => {
                           if (isShapeBuilder) {
                             handleShapeBuilderToggle(path, e);
                           } else if (effectiveTool === 'direct-select') {
+                            // A tap on the outline of the path being edited adds a
+                            // node there. This handler is what the tap actually
+                            // reaches, so the insert has to live here too.
+                            if (
+                              selection.selectedPathIds.length === 1 &&
+                              selection.selectedPathIds[0] === path.id
+                            ) {
+                              const hit = segmentInsertAt(
+                                path,
+                                screenToCanvas(e.clientX, e.clientY),
+                                14 / view.zoom
+                              );
+                              if (hit) {
+                                e.stopPropagation();
+                                insertNodeAt(path, hit, e);
+                                return;
+                              }
+                            }
                             e.stopPropagation();
                             const already = selection.selectedPathIds.includes(path.id);
                             onSelectionChange({
@@ -1898,6 +2378,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                             : 'none'
                         }
                         fillOpacity={path.fillOpacity}
+                        fillRule="evenodd"
                         stroke={path.stroke !== 'none' ? path.stroke : 'transparent'}
                         strokeWidth={path.strokeWidth}
                         strokeOpacity={path.strokeOpacity}
@@ -1958,6 +2439,50 @@ export const Canvas: React.FC<CanvasProps> = ({
                         strokeDasharray="4 4"
                         className="opacity-70"
                       />
+
+                      {/* Shift constraint: rail, landing ring, finger crosshair */}
+                      {penSnapPreview && (
+                        <g className="pen-snap-preview">
+                          <line
+                            x1={penSnapPreview.from.x}
+                            y1={penSnapPreview.from.y}
+                            x2={penSnapPreview.snapped.x}
+                            y2={penSnapPreview.snapped.y}
+                            stroke={CANVAS.accent}
+                            strokeWidth={1.5 / view.zoom}
+                            strokeDasharray="2 3"
+                            className="opacity-90"
+                          />
+                          <circle
+                            cx={penSnapPreview.snapped.x}
+                            cy={penSnapPreview.snapped.y}
+                            r={7 / view.zoom}
+                            fill="none"
+                            stroke={CANVAS.accent}
+                            strokeWidth={2 / view.zoom}
+                          />
+                          <circle
+                            cx={penSnapPreview.snapped.x}
+                            cy={penSnapPreview.snapped.y}
+                            r={2 / view.zoom}
+                            fill={CANVAS.accent}
+                          />
+                          <g stroke={CANVAS.grid} strokeWidth={1.5 / view.zoom}>
+                            <line
+                              x1={currentPointerPoint.x - 5 / view.zoom}
+                              y1={currentPointerPoint.y}
+                              x2={currentPointerPoint.x + 5 / view.zoom}
+                              y2={currentPointerPoint.y}
+                            />
+                            <line
+                              x1={currentPointerPoint.x}
+                              y1={currentPointerPoint.y - 5 / view.zoom}
+                              x2={currentPointerPoint.x}
+                              y2={currentPointerPoint.y + 5 / view.zoom}
+                            />
+                          </g>
+                        </g>
+                      )}
                       {activePathInProgress.points.length >= 2 &&
                         distance(currentPointerPoint, activePathInProgress.points[0]) < 28 / view.zoom && (
                           <g className="close-path-cue">
@@ -1988,7 +2513,10 @@ export const Canvas: React.FC<CanvasProps> = ({
           )}
 
           {/* ================= TRANSFORM BOUNDING BOX WITH 8 STRETCHING NODES ================= */}
-          {effectiveTool === 'select' && selectedBBox && selectedPaths.length > 0 && (
+          {effectiveTool === 'select' &&
+            selectedBBox &&
+            selectedPaths.length > 0 &&
+            !hideTransformBox && (
             <g className="transform-bounding-box">
               {/* Outer Bounding Box Rectangle (drag to move all selected paths) */}
               <rect
@@ -2092,7 +2620,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                   />
                 </g>
               ))}
-            </g>
+
+                          </g>
           )}
 
           {/* Marquee Selection Dragging Box */}
@@ -2231,27 +2760,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                             <circle
                               cx={pt.handleIn.x}
                               cy={pt.handleIn.y}
-                              r={20 / view.zoom}
-                              fill="transparent"
-                              className="cursor-pointer"
-                              onPointerDown={(e) => {
-                                onSelectionChange({
-                                  selectedPathIds: [path.id],
-                                  selectedAnchorIndex: idx,
-                                  selectedHandleType: 'in',
-                                });
-                                startDragOperation(e, {
-                                  type: 'handle-in',
-                                  pathId: path.id,
-                                  pointIndex: idx,
-                                  initialPoint: pt.handleIn,
-                                });
-                              }}
-                            />
-                            <circle
-                              cx={pt.handleIn.x}
-                              cy={pt.handleIn.y}
-                              r={5 / view.zoom}
+                              r={7 / view.zoom}
                               fill={CANVAS.accent}
                               stroke={CANVAS.ink}
                               strokeWidth={1.5 / view.zoom}
@@ -2275,27 +2784,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                             <circle
                               cx={pt.handleOut.x}
                               cy={pt.handleOut.y}
-                              r={20 / view.zoom}
-                              fill="transparent"
-                              className="cursor-pointer"
-                              onPointerDown={(e) => {
-                                onSelectionChange({
-                                  selectedPathIds: [path.id],
-                                  selectedAnchorIndex: idx,
-                                  selectedHandleType: 'out',
-                                });
-                                startDragOperation(e, {
-                                  type: 'handle-out',
-                                  pathId: path.id,
-                                  pointIndex: idx,
-                                  initialPoint: pt.handleOut,
-                                });
-                              }}
-                            />
-                            <circle
-                              cx={pt.handleOut.x}
-                              cy={pt.handleOut.y}
-                              r={5 / view.zoom}
+                              r={7 / view.zoom}
                               fill={CANVAS.accent}
                               stroke={CANVAS.ink}
                               strokeWidth={1.5 / view.zoom}
@@ -2327,16 +2816,9 @@ export const Canvas: React.FC<CanvasProps> = ({
                             }
 
                             // Alt + click OR clicking existing anchor with Pen tool when not creating: Delete Anchor Node!
-                            if ((modifiers.alt || (effectiveTool === 'pen' && !activePathInProgress)) && path.points.length > 2) {
+                            if (modifiers.alt || (effectiveTool === 'pen' && !activePathInProgress)) {
                               e.stopPropagation();
-                              const newPoints = path.points.filter((_, i) => i !== idx);
-                              onUpdatePath({ ...path, points: newPoints });
-                              onSelectionChange({
-                                selectedPathIds: [path.id],
-                                selectedAnchorIndex: null,
-                                selectedHandleType: null,
-                              });
-                              onCommitHistory();
+                              deleteNodeAt(path, idx);
                               return;
                             }
 
@@ -2354,6 +2836,66 @@ export const Canvas: React.FC<CanvasProps> = ({
                           }}
                         />
 
+                        {/* Curve handles are grabbed from here, after the anchor
+                            hitbox, so a handle sitting close to its node still
+                            catches the finger instead of losing to the node */}
+                        {pt.handleIn && (
+                          <circle
+                            cx={pt.handleIn.x}
+                            cy={pt.handleIn.y}
+                            r={26 / view.zoom}
+                            fill="transparent"
+                            className="cursor-pointer"
+                            onPointerDown={(e) => {
+                              // A handle sitting over its node used to swallow the
+                              // delete gesture; keep delete on the node itself.
+                              if (modifiers.alt) {
+                                e.stopPropagation();
+                                deleteNodeAt(path, idx);
+                                return;
+                              }
+                              onSelectionChange({
+                                selectedPathIds: [path.id],
+                                selectedAnchorIndex: idx,
+                                selectedHandleType: 'in',
+                              });
+                              startDragOperation(e, {
+                                type: 'handle-in',
+                                pathId: path.id,
+                                pointIndex: idx,
+                                initialPoint: pt.handleIn,
+                              });
+                            }}
+                          />
+                        )}
+                        {pt.handleOut && (
+                          <circle
+                            cx={pt.handleOut.x}
+                            cy={pt.handleOut.y}
+                            r={26 / view.zoom}
+                            fill="transparent"
+                            className="cursor-pointer"
+                            onPointerDown={(e) => {
+                              if (modifiers.alt) {
+                                e.stopPropagation();
+                                deleteNodeAt(path, idx);
+                                return;
+                              }
+                              onSelectionChange({
+                                selectedPathIds: [path.id],
+                                selectedAnchorIndex: idx,
+                                selectedHandleType: 'out',
+                              });
+                              startDragOperation(e, {
+                                type: 'handle-out',
+                                pathId: path.id,
+                                pointIndex: idx,
+                                initialPoint: pt.handleOut,
+                              });
+                            }}
+                          />
+                        )}
+
                         {/* Anchor Node (Clean static square, NO pulsing animation) */}
                         <rect
                           x={pt.x - 5 / view.zoom}
@@ -2365,12 +2907,86 @@ export const Canvas: React.FC<CanvasProps> = ({
                           strokeWidth={2 / view.zoom}
                           className="pointer-events-none shadow-md"
                         />
+
+                        {/* The node a tap removes — the badge is also the button */}
+                        {nodeTargetPath?.id === path.id && deleteNodeHintIndex === idx && (
+                          <g
+                            transform={`translate(${pt.x + 11 / view.zoom}, ${pt.y - 11 / view.zoom})`}
+                          >
+                            <circle
+                              r={20 / view.zoom}
+                              fill="transparent"
+                              className="cursor-pointer"
+                              onPointerDown={(e) => {
+                                e.stopPropagation();
+                                deleteNodeAt(path, idx);
+                              }}
+                            />
+                            <circle
+                              r={7.5 / view.zoom}
+                              fill={CANVAS.erase}
+                              stroke={CANVAS.ink}
+                              strokeWidth={1.25 / view.zoom}
+                              className="pointer-events-none"
+                            />
+                            <text
+                              y={2.8 / view.zoom}
+                              textAnchor="middle"
+                              dominantBaseline="middle"
+                              fill={CANVAS.ink}
+                              fontSize={9 / view.zoom}
+                              fontWeight="bold"
+                              fontFamily="system-ui, sans-serif"
+                            >
+                              −
+                            </text>
+                          </g>
+                        )}
                       </g>
                     );
                   })}
                 </g>
               );
             })}
+
+          {/* The point a tap adds a node to — the badge is also the button */}
+          {addNodeHint && nodeTargetPath && (
+            <g transform={`translate(${addNodeHint.point.x}, ${addNodeHint.point.y})`}>
+              <circle
+                r={16 / view.zoom}
+                fill="transparent"
+                className="cursor-pointer"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  insertNodeAt(nodeTargetPath, addNodeHint, e);
+                }}
+              />
+              <g className="pointer-events-none">
+                <circle
+                  r={11 / view.zoom}
+                  fill={CANVAS.accentSoft}
+                  stroke={CANVAS.accent}
+                  strokeWidth={2 / view.zoom}
+                />
+                <circle
+                  r={4 / view.zoom}
+                  fill={CANVAS.accent}
+                  stroke={CANVAS.ink}
+                  strokeWidth={1.25 / view.zoom}
+                />
+                <text
+                  y={-18 / view.zoom}
+                  textAnchor="middle"
+                  fill={CANVAS.accent}
+                  fontSize={14 / view.zoom}
+                  fontWeight="bold"
+                  fontFamily="system-ui, sans-serif"
+                >
+                  +
+                </text>
+              </g>
+            </g>
+          )}
 
           {/* Guides — editing aids, drawn above the artwork, never exported */}
           {renderGuides()}
@@ -2592,6 +3208,63 @@ export const Canvas: React.FC<CanvasProps> = ({
       </svg>
 
       {renderRulers()}
+
+      {/* Precision pad — crosshair over the artwork, surface between the thumbs */}
+      {padAvailable && (
+        <>
+          {/* While the pad is open, one finger stops here instead of drawing.
+              Two fingers are measured here and pan or zoom the canvas. */}
+          {padOpen && (
+            <div
+              aria-hidden
+              className="absolute inset-0 z-10 touch-none"
+              onPointerDown={handlePadGuardDown}
+              onPointerMove={handlePadGuardMove}
+              onPointerUp={handlePadGuardUp}
+              onPointerCancel={handlePadGuardUp}
+            />
+          )}
+          {padOpen && padCursor && (
+            <div
+              className="pointer-events-none absolute z-20"
+              style={{ left: padCursor.x, top: padCursor.y, transform: 'translate(-50%, -50%)' }}
+            >
+              <svg width={36} height={36} viewBox="-18 -18 36 36" className="overflow-visible">
+                <g stroke={CANVAS.ink} strokeOpacity={0.6} strokeWidth={3.2} strokeLinecap="round">
+                  <circle r={8} fill="none" />
+                  <path d="M0 -16V-10 M0 10V16 M-16 0H-10 M10 0H16" />
+                </g>
+                <g stroke={CANVAS.accent} strokeWidth={1.4} strokeLinecap="round">
+                  <circle r={8} fill="none" />
+                  <path d="M0 -16V-10 M0 10V16 M-16 0H-10 M10 0H16" />
+                </g>
+                <circle r={1.7} fill={CANVAS.accent} />
+              </svg>
+            </div>
+          )}
+
+          {padOpen ? (
+            <PrecisionPad
+              onMove={movePadCursor}
+              onPress={() => dispatchPadPointer('pointerdown')}
+              onDrag={() => dispatchPadPointer('pointermove')}
+              onRelease={() => dispatchPadPointer('pointerup')}
+              onWheel={handlePadWheel}
+              onClose={closePad}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={openPad}
+              aria-label="Open precision pad: steer a crosshair instead of covering the node with your finger"
+              className="press absolute bottom-2 left-1/2 z-20 flex h-9 -translate-x-1/2 items-center gap-1.5 rounded-full border border-line bg-ink-2/85 px-3 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-dim shadow-lg shadow-black/40 backdrop-blur"
+            >
+              <PadGlyph />
+              Pad
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 };

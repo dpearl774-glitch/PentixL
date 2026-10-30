@@ -98,7 +98,7 @@ export const ProjectsSheet: React.FC<ProjectsSheetProps> = ({
       onClose={onClose}
       title="Projects"
       eyebrow="Local library"
-      subtitle="Everything is stored on this device."
+      subtitle="Stored on this device."
       size="lg"
       action={
         <IconButton label="Import project file" size="sm" onClick={() => fileRef.current?.click()}>
@@ -126,7 +126,7 @@ export const ProjectsSheet: React.FC<ProjectsSheetProps> = ({
           icon={<LayoutTemplate size={13} />}
           onClick={() => setTab('blueprints')}
         >
-          Blueprints ({LOGO_TEMPLATES.length})
+          Grids ({LOGO_TEMPLATES.length})
         </Chip>
       </div>
 
@@ -155,8 +155,7 @@ export const ProjectsSheet: React.FC<ProjectsSheetProps> = ({
 
           {!loading && projects.length === 0 && (
             <p className="rounded-xl border border-line px-3 py-4 text-[12px] leading-relaxed text-mute">
-              No saved documents yet. Whatever you draw is saved to this device automatically, and
-              it appears here under its own name.
+              No saved documents yet. New work appears here automatically.
             </p>
           )}
 
@@ -296,7 +295,7 @@ export const ProjectsSheet: React.FC<ProjectsSheetProps> = ({
           })}
         </div>
       ) : (
-        <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+        <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
           {LOGO_TEMPLATES.map((template) => (
             <button
               key={template.id}
@@ -305,21 +304,19 @@ export const ProjectsSheet: React.FC<ProjectsSheetProps> = ({
                 onOpenTemplate(template);
                 onClose();
               }}
-              className="press flex gap-3 overflow-hidden rounded-xl border border-line bg-ink-2 p-2.5 text-left hover:border-accent/40"
+              className="press overflow-hidden rounded-xl border border-line bg-ink-2 p-1.5 text-left hover:border-accent/40"
             >
-              <span className="h-16 w-20 shrink-0 overflow-hidden rounded-lg border border-line bg-ink-0">
+              <span className="block h-[84px] w-full overflow-hidden rounded-lg border border-line bg-ink-0 [&>svg]:h-full [&>svg]:w-full">
                 <span
-                  className="block h-full w-full [&>svg]:h-full [&>svg]:w-full"
+                  className="block h-full w-full"
                   dangerouslySetInnerHTML={{ __html: generateProjectThumbnailSvg(template.layers) }}
                 />
               </span>
-              <span className="min-w-0">
-                <span className="block truncate text-[12.5px] font-semibold text-text">
-                  {template.name}
-                </span>
-                <span className="mt-0.5 block text-[11px] leading-snug text-mute">
-                  {template.description}
-                </span>
+              <span className="mt-1.5 block truncate px-0.5 text-[12px] font-semibold text-text">
+                {template.name}
+              </span>
+              <span className="block px-0.5 pb-0.5 text-[10.5px] leading-snug text-mute">
+                {template.description}
               </span>
             </button>
           ))}

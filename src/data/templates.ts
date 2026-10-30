@@ -8,202 +8,238 @@ export interface LogoTemplate {
   layers: Layer[];
 }
 
+const SIZE = 600;
+/** Guide ink — quiet enough to draw over */
+const GUIDE = '#8a919b';
+/** Accent used only for the primary axes */
+const AXIS = '#4c8dff';
+
+const line = (
+  id: string,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  color = GUIDE,
+  width = 1,
+  opacity = 0.4
+): VectorPath => ({
+  id,
+  name: id,
+  points: [
+    { id: `${id}-0`, x: x1, y: y1, type: 'corner' },
+    { id: `${id}-1`, x: x2, y: y2, type: 'corner' },
+  ],
+  closed: false,
+  fill: 'none',
+  fillOpacity: 1,
+  stroke: color,
+  strokeWidth: width,
+  strokeOpacity: opacity,
+  strokeCap: 'round',
+  strokeJoin: 'round',
+  pressureProfile: 'uniform',
+});
+
+const circle = (
+  id: string,
+  cx: number,
+  cy: number,
+  r: number,
+  color = GUIDE,
+  width = 1,
+  opacity = 0.4
+): VectorPath => {
+  const k = 0.5522847498 * r;
+  return {
+    id,
+    name: id,
+    points: [
+      {
+        id: `${id}-0`,
+        x: cx + r,
+        y: cy,
+        type: 'smooth',
+        handleIn: { x: cx + r, y: cy - k },
+        handleOut: { x: cx + r, y: cy + k },
+      },
+      {
+        id: `${id}-1`,
+        x: cx,
+        y: cy + r,
+        type: 'smooth',
+        handleIn: { x: cx + k, y: cy + r },
+        handleOut: { x: cx - k, y: cy + r },
+      },
+      {
+        id: `${id}-2`,
+        x: cx - r,
+        y: cy,
+        type: 'smooth',
+        handleIn: { x: cx - r, y: cy + k },
+        handleOut: { x: cx - r, y: cy - k },
+      },
+      {
+        id: `${id}-3`,
+        x: cx,
+        y: cy - r,
+        type: 'smooth',
+        handleIn: { x: cx - k, y: cy - r },
+        handleOut: { x: cx + k, y: cy - r },
+      },
+    ],
+    closed: true,
+    fill: 'none',
+    fillOpacity: 1,
+    stroke: color,
+    strokeWidth: width,
+    strokeOpacity: opacity,
+    strokeCap: 'round',
+    strokeJoin: 'round',
+    pressureProfile: 'uniform',
+  };
+};
+
+const layer = (id: string, name: string, paths: VectorPath[]): Layer => ({
+  id,
+  name,
+  visible: true,
+  locked: false,
+  opacity: 1,
+  paths,
+});
+
+/* ----------------------------- Golden ratio ----------------------------- */
+const goldenGrid = (): VectorPath[] => {
+  const c = SIZE / 2;
+  const paths: VectorPath[] = [];
+
+  [240, 148, 91, 56, 35].forEach((r, i) =>
+    paths.push(circle(`golden-ring-${i}`, c, c, r, GUIDE, 1, i === 0 ? 0.5 : 0.32))
+  );
+
+  // Golden-section divisions of the square
+  [0.382, 0.618].forEach((f, i) => {
+    const p = SIZE * f;
+    paths.push(line(`golden-v-${i}`, p, 0, p, SIZE, GUIDE, 1, 0.38));
+    paths.push(line(`golden-h-${i}`, 0, p, SIZE, p, GUIDE, 1, 0.38));
+  });
+
+  paths.push(line('golden-axis-v', c, 0, c, SIZE, AXIS, 1, 0.3));
+  paths.push(line('golden-axis-h', 0, c, SIZE, c, AXIS, 1, 0.3));
+
+  return paths;
+};
+
+/* ------------------------------- Modular -------------------------------- */
+const modularGrid = (columns: number): VectorPath[] => {
+  const paths: VectorPath[] = [];
+  const step = SIZE / columns;
+  const centre = SIZE / 2;
+
+  for (let i = 0; i <= columns; i++) {
+    const p = i * step;
+    if (Math.abs(p - centre) < 0.001) {
+      paths.push(line(`modular-v-${i}`, p, 0, p, SIZE, AXIS, 1, 0.32));
+      paths.push(line(`modular-h-${i}`, 0, p, SIZE, p, AXIS, 1, 0.32));
+      continue;
+    }
+    const major = Math.abs(p - SIZE / 3) < 0.001 || Math.abs(p - (SIZE * 2) / 3) < 0.001;
+    const opacity = major ? 0.45 : 0.28;
+    paths.push(line(`modular-v-${i}`, p, 0, p, SIZE, GUIDE, 1, opacity));
+    paths.push(line(`modular-h-${i}`, 0, p, SIZE, p, GUIDE, 1, opacity));
+  }
+
+  return paths;
+};
+
+/* -------------------------------- Radial -------------------------------- */
+const radialGrid = (): VectorPath[] => {
+  const c = SIZE / 2;
+  const paths: VectorPath[] = [];
+
+  [72, 145, 217, 290].forEach((r, i) =>
+    paths.push(circle(`radial-ring-${i}`, c, c, r, GUIDE, 1, i === 3 ? 0.45 : 0.3))
+  );
+
+  for (let i = 0; i < 12; i++) {
+    const a = (i * Math.PI * 2) / 12;
+    const r = 290;
+    const cardinal = i % 3 === 0;
+    paths.push(
+      line(
+        `radial-spoke-${i}`,
+        c,
+        c,
+        c + Math.cos(a) * r,
+        c + Math.sin(a) * r,
+        cardinal ? AXIS : GUIDE,
+        1,
+        cardinal ? 0.3 : 0.28
+      )
+    );
+  }
+
+  return paths;
+};
+
+/* ------------------------------- Diagonal ------------------------------- */
+const diagonalGrid = (step: number): VectorPath[] => {
+  const paths: VectorPath[] = [];
+  let index = 0;
+
+  // Lines of x - y = offset, then x + y = offset, both clipped to the square
+  for (let offset = -SIZE + step; offset < SIZE; offset += step) {
+    const startX = Math.max(0, offset);
+    const startY = Math.max(0, -offset);
+    const endX = Math.min(SIZE, SIZE + offset);
+    const endY = Math.min(SIZE, SIZE - offset);
+    paths.push(line(`diag-a-${index}`, startX, startY, endX, endY, GUIDE, 1, 0.26));
+
+    const mirrorEndX = Math.min(SIZE, SIZE - offset);
+    const mirrorEndY = Math.min(SIZE, SIZE + offset);
+    paths.push(line(`diag-b-${index}`, startX, SIZE - startY, mirrorEndX, SIZE - mirrorEndY, GUIDE, 1, 0.26));
+    index++;
+  }
+
+  paths.push(line('diag-axis-v', SIZE / 2, 0, SIZE / 2, SIZE, AXIS, 1, 0.28));
+  paths.push(line('diag-axis-h', 0, SIZE / 2, SIZE, SIZE / 2, AXIS, 1, 0.28));
+
+  return paths;
+};
+
+/**
+ * Construction grids rather than finished artwork: thin stroke-only scaffolding
+ * that sits behind the mark while you build it, and can be hidden or deleted
+ * once the geometry is in place.
+ */
 export const LOGO_TEMPLATES: LogoTemplate[] = [
   {
     id: 'golden-ratio-grid',
-    name: 'Shape Builder Golden Grid',
-    description: 'Intersecting golden ratio circles ready for merging or subtracting logo marks.',
+    name: 'Golden Ratio Grid',
+    description: 'Nested circles and golden-section divisions for balanced marks.',
     category: 'Golden Ratio',
-    layers: [
-      {
-        id: 'layer-guide-circles',
-        name: 'Golden Circles',
-        visible: true,
-        locked: false,
-        opacity: 1,
-        paths: [
-          // Circle 1 - Left
-          {
-            id: 'c-1',
-            name: 'Radius 140 (Left)',
-            points: [
-              { id: 'c1-0', x: 250, y: 160, type: 'smooth', handleIn: { x: 172.7, y: 160 }, handleOut: { x: 327.3, y: 160 } },
-              { id: 'c1-1', x: 390, y: 300, type: 'smooth', handleIn: { x: 390, y: 222.7 }, handleOut: { x: 390, y: 377.3 } },
-              { id: 'c1-2', x: 250, y: 440, type: 'smooth', handleIn: { x: 327.3, y: 440 }, handleOut: { x: 172.7, y: 440 } },
-              { id: 'c1-3', x: 110, y: 300, type: 'smooth', handleIn: { x: 110, y: 377.3 }, handleOut: { x: 110, y: 222.7 } },
-            ],
-            closed: true,
-            fill: '#CDFF5C',
-            fillOpacity: 1,
-            stroke: '#CDFF5C',
-            strokeWidth: 3,
-            strokeOpacity: 1,
-            strokeCap: 'round',
-            strokeJoin: 'round',
-            pressureProfile: 'uniform',
-          },
-          // Circle 2 - Right
-          {
-            id: 'c-2',
-            name: 'Radius 140 (Right)',
-            points: [
-              { id: 'c2-0', x: 350, y: 160, type: 'smooth', handleIn: { x: 272.7, y: 160 }, handleOut: { x: 427.3, y: 160 } },
-              { id: 'c2-1', x: 490, y: 300, type: 'smooth', handleIn: { x: 490, y: 222.7 }, handleOut: { x: 490, y: 377.3 } },
-              { id: 'c2-2', x: 350, y: 440, type: 'smooth', handleIn: { x: 427.3, y: 440 }, handleOut: { x: 272.7, y: 440 } },
-              { id: 'c2-3', x: 210, y: 300, type: 'smooth', handleIn: { x: 210, y: 377.3 }, handleOut: { x: 210, y: 222.7 } },
-            ],
-            closed: true,
-            fill: '#F2F3EE',
-            fillOpacity: 1,
-            stroke: '#F2F3EE',
-            strokeWidth: 3,
-            strokeOpacity: 1,
-            strokeCap: 'round',
-            strokeJoin: 'round',
-            pressureProfile: 'uniform',
-          },
-          // Circle 3 - Center Inner
-          {
-            id: 'c-3',
-            name: 'Center Core',
-            points: [
-              { id: 'c3-0', x: 300, y: 210, type: 'smooth', handleIn: { x: 250.3, y: 210 }, handleOut: { x: 349.7, y: 210 } },
-              { id: 'c3-1', x: 390, y: 300, type: 'smooth', handleIn: { x: 390, y: 250.3 }, handleOut: { x: 390, y: 349.7 } },
-              { id: 'c3-2', x: 300, y: 390, type: 'smooth', handleIn: { x: 349.7, y: 390 }, handleOut: { x: 250.3, y: 390 } },
-              { id: 'c3-3', x: 210, y: 300, type: 'smooth', handleIn: { x: 210, y: 349.7 }, handleOut: { x: 210, y: 250.3 } },
-            ],
-            closed: true,
-            fill: '#3A4048',
-            fillOpacity: 1,
-            stroke: '#9AA1AA',
-            strokeWidth: 3,
-            strokeOpacity: 1,
-            strokeCap: 'round',
-            strokeJoin: 'round',
-            pressureProfile: 'uniform',
-          },
-        ],
-      },
-    ],
+    layers: [layer('layer-golden', 'Golden Ratio Guides', goldenGrid())],
   },
   {
-    id: 'cyber-falcon',
-    name: 'Cyber Falcon Emblem',
-    description: 'Sharp precision aerodynamic vector wings with geometric symmetry.',
+    id: 'modular-grid',
+    name: 'Modular Grid',
+    description: 'Six-column modular grid for repeatable, consistent geometry.',
     category: 'Geometric',
-    layers: [
-      {
-        id: 'layer-falcon-wings',
-        name: 'Falcon Mark',
-        visible: true,
-        locked: false,
-        opacity: 1,
-        paths: [
-          // Left wing
-          {
-            id: 'w-left',
-            name: 'Left Wing',
-            points: [
-              { id: 'wl-0', x: 300, y: 170, type: 'corner' },
-              { id: 'wl-1', x: 130, y: 240, type: 'smooth', handleIn: { x: 190, y: 200 }, handleOut: { x: 100, y: 270 } },
-              { id: 'wl-2', x: 170, y: 330, type: 'corner' },
-              { id: 'wl-3', x: 240, y: 290, type: 'smooth', handleIn: { x: 210, y: 310 }, handleOut: { x: 260, y: 280 } },
-              { id: 'wl-4', x: 200, y: 400, type: 'corner' },
-              { id: 'wl-5', x: 300, y: 350, type: 'corner' },
-            ],
-            closed: true,
-            fill: '#CDFF5C',
-            fillOpacity: 1,
-            stroke: '#E8EAED',
-            strokeWidth: 2,
-            strokeOpacity: 1,
-            strokeCap: 'round',
-            strokeJoin: 'round',
-            pressureProfile: 'uniform',
-          },
-          // Right wing
-          {
-            id: 'w-right',
-            name: 'Right Wing',
-            points: [
-              { id: 'wr-0', x: 300, y: 170, type: 'corner' },
-              { id: 'wr-1', x: 470, y: 240, type: 'smooth', handleIn: { x: 410, y: 200 }, handleOut: { x: 500, y: 270 } },
-              { id: 'wr-2', x: 430, y: 330, type: 'corner' },
-              { id: 'wr-3', x: 360, y: 290, type: 'smooth', handleIn: { x: 390, y: 310 }, handleOut: { x: 340, y: 280 } },
-              { id: 'wr-4', x: 400, y: 400, type: 'corner' },
-              { id: 'wr-5', x: 300, y: 350, type: 'corner' },
-            ],
-            closed: true,
-            fill: '#E8EAED',
-            fillOpacity: 1,
-            stroke: '#E8EAED',
-            strokeWidth: 2,
-            strokeOpacity: 1,
-            strokeCap: 'round',
-            strokeJoin: 'round',
-            pressureProfile: 'uniform',
-          },
-          // Crown crest
-          {
-            id: 'w-crest',
-            name: 'Falcon Crest',
-            points: [
-              { id: 'wc-0', x: 300, y: 120, type: 'corner' },
-              { id: 'wc-1', x: 330, y: 165, type: 'corner' },
-              { id: 'wc-2', x: 300, y: 200, type: 'corner' },
-              { id: 'wc-3', x: 270, y: 165, type: 'corner' },
-            ],
-            closed: true,
-            fill: '#FF9F45',
-            fillOpacity: 1,
-            stroke: '#FFC15E',
-            strokeWidth: 2,
-            strokeOpacity: 1,
-            strokeCap: 'round',
-            strokeJoin: 'round',
-            pressureProfile: 'uniform',
-          },
-        ],
-      },
-    ],
+    layers: [layer('layer-modular', 'Modular Guides', modularGrid(6))],
   },
   {
-    id: 'infinity-loop',
-    name: 'Aeterna Infinity Loop',
-    description: 'Smooth harmonic continuous bezier curve with calligraphic depth.',
+    id: 'radial-grid',
+    name: 'Radial Grid',
+    description: 'Twelve spokes and four rings for circular and rotational marks.',
+    category: 'Geometric',
+    layers: [layer('layer-radial', 'Radial Guides', radialGrid())],
+  },
+  {
+    id: 'diagonal-grid',
+    name: 'Diagonal Grid',
+    description: 'A diamond lattice for angled, dynamic constructions.',
     category: 'Abstract',
-    layers: [
-      {
-        id: 'layer-loop',
-        name: 'Infinity Curves',
-        visible: true,
-        locked: false,
-        opacity: 1,
-        paths: [
-          {
-            id: 'inf-curve-1',
-            name: 'Loop Ribbon',
-            points: [
-              { id: 'p0', x: 300, y: 300, type: 'smooth', handleIn: { x: 260, y: 240 }, handleOut: { x: 340, y: 360 } },
-              { id: 'p1', x: 430, y: 370, type: 'smooth', handleIn: { x: 380, y: 400 }, handleOut: { x: 480, y: 340 } },
-              { id: 'p2', x: 480, y: 260, type: 'smooth', handleIn: { x: 500, y: 300 }, handleOut: { x: 460, y: 220 } },
-              { id: 'p3', x: 370, y: 220, type: 'smooth', handleIn: { x: 410, y: 200 }, handleOut: { x: 330, y: 240 } },
-              { id: 'p4', x: 230, y: 360, type: 'smooth', handleIn: { x: 270, y: 340 }, handleOut: { x: 190, y: 380 } },
-              { id: 'p5', x: 120, y: 340, type: 'smooth', handleIn: { x: 140, y: 390 }, handleOut: { x: 100, y: 290 } },
-              { id: 'p6', x: 160, y: 230, type: 'smooth', handleIn: { x: 110, y: 250 }, handleOut: { x: 210, y: 210 } },
-            ],
-            closed: true,
-            fill: '#CDFF5C',
-            fillOpacity: 1,
-            stroke: '#CDFF5C',
-            strokeWidth: 10,
-            strokeOpacity: 1,
-            strokeCap: 'round',
-            strokeJoin: 'round',
-            pressureProfile: 'uniform',
-          },
-        ],
-      },
-    ],
+    layers: [layer('layer-diagonal', 'Diagonal Guides', diagonalGrid(75))],
   },
 ];

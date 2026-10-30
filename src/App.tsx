@@ -8,6 +8,7 @@ import { ThumbZone } from './components/ThumbZone';
 import { Canvas } from './components/Canvas';
 import { AppMenu } from './components/AppMenu';
 import { LayersSheet } from './components/LayersSheet';
+import { ReferencesSheet } from './components/ReferencesSheet';
 import { ColorSheet } from './components/ColorSheet';
 import { ShapeSheet } from './components/ShapeSheet';
 import { ProjectsSheet } from './components/ProjectsSheet';
@@ -38,15 +39,19 @@ import {
   VectorPath,
 } from './types/vector';
 import { expandTextToVectorPaths } from './utils/contourTracer';
-import { LOGO_TEMPLATES, LogoTemplate } from './data/templates';
-import { roundPathCorners, toggleAnchorType } from './utils/bezier';
+import { LogoTemplate } from './data/templates';
+import { roundPathCorners, simplifyPath, toggleAnchorType } from './utils/bezier';
 import { BooleanOperation, executeBooleanOperation } from './utils/shapeBuilder';
-import { flipPaths } from './utils/transform';
-import { StoredProject, saveProject, seedInitialProjectsIfEmpty } from './utils/projectStorage';
+import { computePathsBoundingBox, flipPaths, translatePaths } from './utils/transform';
+import { AlignMode, DistributeAxis, alignPaths, distributePaths } from './utils/align';
+import { GridSettings, StoredProject, getProject, saveProject, seedInitialProjectsIfEmpty } from './utils/projectStorage';
 import { generateProjectThumbnailSvg } from './utils/thumbnailGenerator';
 import { referenceImageFromFile, referenceImageFromSrc } from './utils/referenceImages';
 import { defaultGradient } from './utils/gradients';
 import { gradientIdFor, generateSvgCode } from './utils/svgExport';
+import { outlineStroke } from './utils/strokeOutline';
+import { userPrefs, saveUserPrefs } from './utils/userPrefs';
+import { saveFont, loadAllFonts, deleteFont } from './utils/fontStorage';
 import { CANVAS, haptic } from './theme';
 
 type SheetName =
@@ -62,21 +67,20 @@ type SheetName =
   | 'trace'
   | 'help'
   | 'canvas'
+  | 'refs'
   | 'start';
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
-const INITIAL_TEMPLATE = LOGO_TEMPLATES[0];
-const INITIAL_LAYERS: Layer[] = clone(INITIAL_TEMPLATE.layers);
+/** A new session opens on an empty artboard — grids are opt-in from Projects. */
+const blankLayers = (): Layer[] => [
+  { id: 'layer-1', name: 'Layer 1', visible: true, locked: false, opacity: 1, paths: [] },
+];
+const INITIAL_LAYERS: Layer[] = blankLayers();
 const HISTORY_LIMIT = 80;
+/** Remembers the document so a refresh reopens it instead of a blank sheet */
+const LAST_PROJECT_KEY = 'pentix.lastProjectId';
 
-const DEFAULT_PRESSURE: PressureConfig = {
-  source: 'stylus-or-touch',
-  minWidth: 2,
-  maxWidth: 24,
-  smoothing: 0.7,
-  calligraphyAngle: 30,
-};
 
 const emptySelection: SelectionState = {
   selectedPathIds: [],
@@ -98,8 +102,8 @@ export default function App() {
   // Declared early because undo() unwinds an uncommitted stroke node by node
   const [activePathInProgress, setActivePathInProgress] = useState<VectorPath | null>(null);
 
-  const [projectId, setProjectId] = useState(`template-${INITIAL_TEMPLATE.id}`);
-  const [projectName, setProjectName] = useState(INITIAL_TEMPLATE.name);
+  const [projectId, setProjectId] = useState(`untitled-${Date.now()}`);
+  const [projectName, setProjectName] = useState('Untitled');
   const [isSaved, setIsSaved] = useState(true);
 
   /* ------------------------------------------------------------------ *
@@ -204,22 +208,22 @@ export default function App() {
   /* ------------------------------------------------------------------ *
    * Tools, modifiers, style defaults
    * ------------------------------------------------------------------ */
-  const [tool, setTool] = useState<ToolType>('select');
+  const [tool, setTool] = useState<ToolType>(userPrefs.tool);
   /** Tool the space bar momentarily replaced, so a held space can hand it back */
   const toolBeforePan = useRef<ToolType | null>(null);
-  const [shapeKind, setShapeKind] = useState<ShapeKind>('circle');
-  const [shapeSides, setShapeSides] = useState(6);
-  const [sbMode, setSbMode] = useState<'merge' | 'erase'>('merge');
+  const [shapeKind, setShapeKind] = useState<ShapeKind>(userPrefs.shapeKind);
+  const [shapeSides, setShapeSides] = useState(userPrefs.shapeSides);
+  const [sbMode, setSbMode] = useState<'merge' | 'erase'>(userPrefs.sbMode);
   const [modifiers, setModifiers] = useState<ModifierState>({ shift: false, ctrl: false, alt: false });
 
-  const [fillColor, setFillColor] = useState('#cdff5c');
-  const [strokeColor, setStrokeColor] = useState('#e8eaed');
-  const [fillOpacity, setFillOpacity] = useState(1);
-  const [strokeOpacity, setStrokeOpacity] = useState(1);
+  const [fillColor, setFillColor] = useState(userPrefs.fillColor);
+  const [strokeColor, setStrokeColor] = useState(userPrefs.strokeColor);
+  const [fillOpacity, setFillOpacity] = useState(userPrefs.fillOpacity);
+  const [strokeOpacity, setStrokeOpacity] = useState(userPrefs.strokeOpacity);
   /** Fill paint style for the next object, and the gradient editor's source */
-  const [fillType, setFillType] = useState<'solid' | 'gradient'>('solid');
+  const [fillType, setFillType] = useState<'solid' | 'gradient'>(userPrefs.fillType);
   const [fillGradient, setFillGradient] = useState<GradientDef>(() =>
-    defaultGradient('#cdff5c', '#5ce1c5')
+    defaultGradient('#4c8dff', '#5ce1c5')
   );
   /** Gradient stop the colour panel is editing (shared with the eyedropper) */
   const [activeStopIndex, setActiveStopIndex] = useState(0);
@@ -227,14 +231,14 @@ export default function App() {
   const [samplingTarget, setSamplingTarget] = useState<
     'fill' | 'stroke' | 'stop' | 'background' | null
   >(null);
-  const [strokeWidth, setStrokeWidth] = useState(2);
-  const [strokeCap, setStrokeCap] = useState<StrokeCap>('round');
-  const [strokeJoin, setStrokeJoin] = useState<StrokeJoin>('round');
-  const [pressureConfig, setPressureConfig] = useState<PressureConfig>(DEFAULT_PRESSURE);
+  const [strokeWidth, setStrokeWidth] = useState(userPrefs.strokeWidth);
+  const [strokeCap, setStrokeCap] = useState<StrokeCap>(userPrefs.strokeCap);
+  const [strokeJoin, setStrokeJoin] = useState<StrokeJoin>(userPrefs.strokeJoin);
+  const [pressureConfig, setPressureConfig] = useState<PressureConfig>(userPrefs.pressure);
 
   const [references, setReferences] = useState<ReferenceImage[]>([]);
   const [customFonts, setCustomFonts] = useState<string[]>([]);
-  const [selectedFontFamily, setSelectedFontFamily] = useState('Plus Jakarta Sans, sans-serif');
+  const [selectedFontFamily, setSelectedFontFamily] = useState(userPrefs.selectedFontFamily);
   const fontFacesRef = useRef<Map<string, FontFace>>(new Map());
 
   /* ------------------------------------------------------------------ *
@@ -244,20 +248,95 @@ export default function App() {
   const viewRef = useRef(view);
   viewRef.current = view;
 
-  const [gridVisible, setGridVisible] = useState(true);
-  const [gridSnap, setGridSnap] = useState(false);
-  const [gridSpacingX, setGridSpacingX] = useState(25);
-  const [gridSpacingY, setGridSpacingY] = useState(25);
-  const [gridOpacity, setGridOpacity] = useState(0.4);
+  const [gridVisible, setGridVisible] = useState(userPrefs.gridVisible);
+  const [gridSnap, setGridSnap] = useState(userPrefs.gridSnap);
+  const [gridSpacingX, setGridSpacingX] = useState(userPrefs.gridSpacingX);
+  const [gridSpacingY, setGridSpacingY] = useState(userPrefs.gridSpacingY);
+  const [gridOpacity, setGridOpacity] = useState(userPrefs.gridOpacity);
   /** One global lock for the whole grid system: freezes spacing + appearance */
-  const [gridLocked, setGridLocked] = useState(false);
-  const [rulersVisible, setRulersVisible] = useState(true);
+  const [gridLocked, setGridLocked] = useState(userPrefs.gridLocked);
+  const [rulersVisible, setRulersVisible] = useState(userPrefs.rulersVisible);
+  const [guidesLocked, setGuidesLocked] = useState(userPrefs.guidesLocked);
   const [guides, setGuides] = useState<Guide[]>([]);
   guidesRef.current = guides;
   const [artboardColor, setArtboardColor] = useState<string>(CANVAS.artboard);
-  const [smartGuides, setSmartGuides] = useState(true);
-  const [panZoomLocked, setPanZoomLocked] = useState(false);
-  const [clipArtboard, setClipArtboard] = useState(false);
+  const [smartGuides, setSmartGuides] = useState(userPrefs.smartGuides);
+  const [panZoomLocked, setPanZoomLocked] = useState(userPrefs.panZoomLocked);
+  const [clipArtboard, setClipArtboard] = useState(userPrefs.clipArtboard);
+  const [showTransforms, setShowTransforms] = useState(userPrefs.showTransforms);
+  /** The precision pad is a tool, never a requirement — it can be switched off */
+  const [showPrecisionPad, setShowPrecisionPad] = useState(userPrefs.precisionPad);
+
+  /* Preferences follow the workspace, so a refresh restores every toggle,
+     spacing value and paint default rather than starting from stock. */
+  const prefsTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (prefsTimer.current) window.clearTimeout(prefsTimer.current);
+    prefsTimer.current = window.setTimeout(() => {
+      saveUserPrefs({
+        gridVisible,
+        gridSnap,
+        gridSpacingX,
+        gridSpacingY,
+        gridOpacity,
+        gridLocked,
+        rulersVisible,
+        guidesLocked,
+        smartGuides,
+        panZoomLocked,
+        clipArtboard,
+        showTransforms,
+        precisionPad: showPrecisionPad,
+        tool,
+        shapeKind,
+        shapeSides,
+        sbMode,
+        fillColor,
+        strokeColor,
+        fillOpacity,
+        strokeOpacity,
+        fillType,
+        strokeWidth,
+        strokeCap,
+        strokeJoin,
+        pressure: pressureConfig,
+        selectedFontFamily,
+      });
+    }, 300);
+    return () => {
+      if (prefsTimer.current) window.clearTimeout(prefsTimer.current);
+    };
+  }, [
+    gridVisible,
+    gridSnap,
+    gridSpacingX,
+    gridSpacingY,
+    gridOpacity,
+    gridLocked,
+    rulersVisible,
+    guidesLocked,
+    smartGuides,
+    panZoomLocked,
+    clipArtboard,
+    showTransforms,
+    showPrecisionPad,
+    tool,
+    shapeKind,
+    shapeSides,
+    sbMode,
+    fillColor,
+    strokeColor,
+    fillOpacity,
+    strokeOpacity,
+    fillType,
+    strokeWidth,
+    strokeCap,
+    strokeJoin,
+    pressureConfig,
+    selectedFontFamily,
+  ]);
+  /** The nudge pad hides the selection rectangle while it is open */
+  const [nudgePadOpen, setNudgePadOpen] = useState(false);
 
   const canvasWrapRef = useRef<HTMLDivElement>(null);
 
@@ -504,19 +583,30 @@ export default function App() {
   const flipSelection = useCallback(
     (direction: 'horizontal' | 'vertical') => {
       if (!selectedPaths.length) return;
-      let sx = 0;
-      let sy = 0;
-      let n = 0;
-      selectedPaths.forEach((p) =>
-        p.points.forEach((pt) => {
-          sx += pt.x;
-          sy += pt.y;
-          n += 1;
-        })
-      );
-      if (!n) return;
-      const center = { x: sx / n, y: sy / n };
-      const flipped = flipPaths(selectedPaths, center, direction);
+
+      // Mirror about the bounds, not the anchor cloud. A traced shape carries
+      // far more anchors on one side than the other, and a density-weighted
+      // pivot slides the artwork sideways instead of flipping it in place.
+      const bounds = computePathsBoundingBox(selectedPaths);
+      let cx = bounds?.centerX ?? 0;
+      let cy = bounds?.centerY ?? 0;
+      if (!bounds) {
+        let sx = 0;
+        let sy = 0;
+        let n = 0;
+        selectedPaths.forEach((p) =>
+          p.points.forEach((pt) => {
+            sx += pt.x;
+            sy += pt.y;
+            n += 1;
+          })
+        );
+        if (!n) return;
+        cx = sx / n;
+        cy = sy / n;
+      }
+
+      const flipped = flipPaths(selectedPaths, { x: cx, y: cy }, direction);
       applyLayers((prev) =>
         prev.map((l) => ({
           ...l,
@@ -608,6 +698,54 @@ export default function App() {
     [applyLayers, selectedPaths.length, selection.selectedPathIds]
   );
 
+  /**
+   * Thins out already-drawn geometry — over-traced logos, converted glyphs and
+   * boolean results — without re-running the trace that produced it.
+   */
+  const simplifySelection = useCallback(
+    (tolerance: number) => {
+      if (!selectedPaths.length) return;
+
+      const drawable = selectedPaths.filter((p) => !p.text);
+      if (!drawable.length) {
+        notify('Convert the text to curves first');
+        return;
+      }
+
+      const ids = selection.selectedPathIds;
+      const anchorCount = (p: VectorPath) =>
+        p.points.length + (p.holes?.reduce((n, h) => n + h.length, 0) ?? 0);
+
+      let before = 0;
+      let after = 0;
+      const simplified = new Map<string, VectorPath>();
+
+      for (const path of drawable) {
+        const next = simplifyPath(path, tolerance);
+        before += anchorCount(path);
+        after += anchorCount(next);
+        if (next !== path) simplified.set(path.id, next);
+      }
+
+      if (!simplified.size) {
+        notify('No spare anchors to remove');
+        return;
+      }
+
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((p) =>
+            ids.includes(p.id) ? simplified.get(p.id) ?? p : p
+          ),
+        }))
+      );
+      commitHistory();
+      notify(`Anchors ${before} → ${after}`);
+    },
+    [applyLayers, commitHistory, notify, selectedPaths, selection.selectedPathIds]
+  );
+
   const nudge = useCallback(
     (dx: number, dy: number) => {
       if (!selection.selectedPathIds.length) return;
@@ -632,16 +770,8 @@ export default function App() {
                 };
                 return { ...p, points };
               }
-              return {
-                ...p,
-                points: p.points.map((pt) => ({
-                  ...pt,
-                  x: pt.x + dx,
-                  y: pt.y + dy,
-                  handleIn: pt.handleIn ? { x: pt.handleIn.x + dx, y: pt.handleIn.y + dy } : undefined,
-                  handleOut: pt.handleOut ? { x: pt.handleOut.x + dx, y: pt.handleOut.y + dy } : undefined,
-                })),
-              };
+              // Outline and counters move together
+              return translatePaths([p], dx, dy)[0];
             }),
           })),
         { commit: false }
@@ -950,7 +1080,7 @@ export default function App() {
           fontSize: textPath.fontSize || 64,
           fontFamily: textPath.fontFamily || 'Plus Jakarta Sans, sans-serif',
           fontWeight: textPath.fontWeight || 'bold',
-          fillColor: textPath.fill || '#cdff5c',
+          fillColor: textPath.fill || '#4c8dff',
           strokeColor: textPath.stroke !== 'none' ? textPath.stroke : 'none',
           strokeWidth: textPath.strokeWidth || 0,
         })
@@ -962,6 +1092,32 @@ export default function App() {
     }
     replacePaths(removeIds, generated);
     notify(`Text converted to ${generated.length} paths`);
+  }, [notify, replacePaths, selectedPaths]);
+
+  /** A visible stroke that can be turned into a fill, e.g. to use the shape builder */
+  const canExpandStroke = selectedPaths.some(
+    (p) => !p.text && p.stroke !== 'none' && (p.strokeWidth ?? 0) > 0
+  );
+
+  const expandStrokeSelection = useCallback(() => {
+    const targets = selectedPaths.filter(
+      (p) => !p.text && p.stroke !== 'none' && (p.strokeWidth ?? 0) > 0
+    );
+    if (!targets.length) {
+      notify('Select a stroked path first');
+      return;
+    }
+
+    const outlined: VectorPath[] = [];
+    for (const path of targets) outlined.push(...outlineStroke(path));
+
+    if (!outlined.length) {
+      notify('That stroke could not be outlined');
+      return;
+    }
+
+    replacePaths(targets.map((p) => p.id), outlined);
+    notify(`Outlined ${targets.length} stroke${targets.length > 1 ? 's' : ''}`);
   }, [notify, replacePaths, selectedPaths]);
 
   /* ------------------------------------------------------------------ *
@@ -1021,6 +1177,165 @@ export default function App() {
     [applyLayers]
   );
 
+  /** Objects reorder inside their own layer; holding an arrow jumps to an end. */
+  const movePath = useCallback(
+    (id: string, direction: 'up' | 'down' | 'front' | 'back') => {
+      applyLayers((prev) => {
+        let changed = false;
+        const next = prev.map((layer) => {
+          const index = layer.paths.findIndex((p) => p.id === id);
+          if (index < 0) return layer;
+          const last = layer.paths.length - 1;
+          const target =
+            direction === 'front'
+              ? last
+              : direction === 'back'
+                ? 0
+                : direction === 'up'
+                  ? index + 1
+                  : index - 1;
+          if (target < 0 || target > last || target === index) return layer;
+          const paths = [...layer.paths];
+          const [moved] = paths.splice(index, 1);
+          paths.splice(target, 0, moved);
+          changed = true;
+          return { ...layer, paths };
+        });
+        // Same array back when the object is already at the end, so no empty
+        // history step is pushed for a move that changes nothing.
+        return changed ? next : prev;
+      });
+    },
+    [applyLayers]
+  );
+
+  const dropFromSelection = useCallback((id: string) => {
+    setSelection((prev) =>
+      prev.selectedPathIds.includes(id)
+        ? {
+            selectedPathIds: prev.selectedPathIds.filter((x) => x !== id),
+            selectedAnchorIndex: null,
+            selectedHandleType: null,
+          }
+        : prev
+    );
+  }, []);
+
+  const setPathVisible = useCallback(
+    (id: string, visible: boolean) => {
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((p) => (p.id === id ? { ...p, visible } : p)),
+        }))
+      );
+      if (!visible) dropFromSelection(id);
+    },
+    [applyLayers, dropFromSelection]
+  );
+
+  const setPathLock = useCallback(
+    (id: string, locked: boolean) => {
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((p) => (p.id === id ? { ...p, locked } : p)),
+        }))
+      );
+      if (locked) dropFromSelection(id);
+    },
+    [applyLayers, dropFromSelection]
+  );
+
+  const setPathOpacity = useCallback(
+    (id: string, opacity: number) => {
+      applyLayers(
+        (prev) =>
+          prev.map((layer) => ({
+            ...layer,
+            paths: layer.paths.map((p) => (p.id === id ? { ...p, opacity } : p)),
+          })),
+        { commit: false }
+      );
+      commitSoon();
+    },
+    [applyLayers, commitSoon]
+  );
+
+  /* ------------------------------------------------------------------ *
+   * Align & distribute
+   * One object lines up with the artboard; several line up with each other.
+   * ------------------------------------------------------------------ */
+  const alignSelection = useCallback(
+    (mode: AlignMode) => {
+      if (!selectedPaths.length) return;
+      const artboard = {
+        minX: 0,
+        minY: 0,
+        maxX: view.width,
+        maxY: view.height,
+        width: view.width,
+        height: view.height,
+        centerX: view.width / 2,
+        centerY: view.height / 2,
+      };
+      const frame = selectedPaths.length > 1 ? computePathsBoundingBox(selectedPaths) : artboard;
+      if (!frame) return;
+      const aligned = alignPaths(selectedPaths, mode, frame);
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((p) => aligned.find((a) => a.id === p.id) ?? p),
+        }))
+      );
+      haptic(8);
+    },
+    [applyLayers, selectedPaths, view.height, view.width]
+  );
+
+  const distributeSelection = useCallback(
+    (axis: DistributeAxis) => {
+      if (selectedPaths.length < 3) {
+        notify('Select three or more objects');
+        return;
+      }
+      const spaced = distributePaths(selectedPaths, axis);
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((p) => spaced.find((a) => a.id === p.id) ?? p),
+        }))
+      );
+      haptic(8);
+    },
+    [applyLayers, notify, selectedPaths]
+  );
+
+  /** Trims the artboard to the artwork, then shifts it to a small margin. */
+  const fitArtworkToArtboard = useCallback(() => {
+    const visible = layersRef.current.flatMap((layer) =>
+      layer.visible ? layer.paths.filter((p) => p.visible !== false) : []
+    );
+    const box = computePathsBoundingBox(visible);
+    if (!box) {
+      notify('Nothing to fit yet');
+      return;
+    }
+    const pad = Math.max(8, Math.round(Math.max(box.width, box.height) * 0.06));
+    const width = Math.max(16, Math.round(box.width + pad * 2));
+    const height = Math.max(16, Math.round(box.height + pad * 2));
+    applyLayers((prev) =>
+      prev.map((layer) => ({
+        ...layer,
+        paths: layer.paths.map((p) => translatePaths([p], -box.minX + pad, -box.minY + pad)[0]),
+      }))
+    );
+    setView((prev) => ({ ...prev, width, height }));
+    setIsSaved(false);
+    window.setTimeout(fitArtboard, 0);
+    notify(`Artboard fitted to ${width} × ${height} px`);
+  }, [applyLayers, fitArtboard, notify]);
+
   /* ------------------------------------------------------------------ *
    * References
    * ------------------------------------------------------------------ */
@@ -1059,6 +1374,12 @@ export default function App() {
    * ------------------------------------------------------------------ */
   const addFont = useCallback(async (family: string, file: File) => {
     const buffer = await file.arrayBuffer();
+    // Keep the file itself, not just the name, so the typeface survives a refresh.
+    try {
+      await saveFont(family, buffer.slice(0));
+    } catch {
+      /* still usable for this session */
+    }
     const face = new FontFace(family, buffer);
     const loaded = await face.load();
     document.fonts.add(loaded);
@@ -1079,6 +1400,7 @@ export default function App() {
     }
     setCustomFonts((prev) => prev.filter((f) => f !== family));
     setSelectedFontFamily((prev) => (prev === family ? 'Plus Jakarta Sans, sans-serif' : prev));
+    void deleteFont(family);
   }, []);
 
   /* ------------------------------------------------------------------ *
@@ -1087,12 +1409,21 @@ export default function App() {
   const buildProject = useCallback(
     (overrides: Partial<StoredProject> = {}): StoredProject => {
       const now = Date.now();
+      const grid: GridSettings = {
+        visible: gridVisible,
+        snap: gridSnap,
+        spacingX: gridSpacingX,
+        spacingY: gridSpacingY,
+        opacity: gridOpacity,
+        locked: gridLocked,
+      };
       return {
         id: projectId,
         name: projectName,
         createdAt: now,
         updatedAt: now,
         layers: clone(layersRef.current),
+        guides: clone(guidesRef.current),
         references: clone(references),
         view: viewRef.current,
         thumbnailSvg: generateProjectThumbnailSvg(
@@ -1103,10 +1434,29 @@ export default function App() {
         ),
         pathsCount: layersRef.current.reduce((n, l) => n + l.paths.length, 0),
         layersCount: layersRef.current.length,
+        artboardColor: artboardColor,
+        customFonts: customFonts,
+        selectedFontFamily: selectedFontFamily,
+        grid,
+        guidesLocked,
         ...overrides,
       };
     },
-    [projectId, projectName, references, artboardColor]
+    [
+      projectId,
+      projectName,
+      references,
+      artboardColor,
+      customFonts,
+      selectedFontFamily,
+      gridVisible,
+      gridSnap,
+      gridSpacingX,
+      gridSpacingY,
+      gridOpacity,
+      gridLocked,
+      guidesLocked,
+    ]
   );
 
   const saveDocument = useCallback(
@@ -1117,6 +1467,7 @@ export default function App() {
         await saveProject(buildProject({ id, name }));
         setProjectId(id);
         setProjectName(name);
+        localStorage.setItem(LAST_PROJECT_KEY, id);
         setIsSaved(true);
         if (!options.silent) notify('Saved to this device');
       } catch {
@@ -1140,7 +1491,7 @@ export default function App() {
   }, [layers, references, isSaved, saveDocument]);
 
   const openProject = useCallback(
-    (project: StoredProject) => {
+    (project: StoredProject, options: { silent?: boolean } = {}) => {
       const nextLayers = clone(project.layers);
       layersRef.current = nextLayers;
       setLayers(nextLayers);
@@ -1150,14 +1501,41 @@ export default function App() {
       setActiveLayerId(nextLayers[0]?.id ?? 'layer-1');
       setSelection({ ...emptySelection });
       setActivePathInProgress(null);
-      historyRef.current = { stack: [{ layers: clone(nextLayers), guides: [] }], index: 0 };
-      guidesRef.current = [];
-      setGuides([]);
+      const nextGuides = clone(project.guides ?? []);
+      historyRef.current = {
+        stack: [{ layers: clone(nextLayers), guides: clone(nextGuides) }],
+        index: 0,
+      };
+      guidesRef.current = nextGuides;
+      setGuides(nextGuides);
+      // The grid is part of the document. Documents saved before this field
+      // existed simply keep whatever grid is currently active.
+      if (project.grid) {
+        const g = project.grid;
+        setGridVisible(g.visible);
+        setGridSnap(g.snap);
+        setGridSpacingX(g.spacingX);
+        setGridSpacingY(g.spacingY);
+        setGridOpacity(g.opacity);
+        setGridLocked(g.locked);
+      }
+      if (typeof project.guidesLocked === 'boolean') setGuidesLocked(project.guidesLocked);
+      localStorage.setItem(LAST_PROJECT_KEY, project.id);
       syncHistoryFlags();
       setIsSaved(true);
       if (project.view) setView(project.view);
       else window.setTimeout(fitArtboard, 0);
-      notify(`Opened “${project.name}”`);
+      // Restore artboard color and fonts from saved project. Fonts are a global
+      // library, so anything the document names is merged into it rather than
+      // replacing what is already installed.
+      if (project.artboardColor) setArtboardColor(project.artboardColor);
+      if (project.customFonts?.length) {
+        setCustomFonts((prev) => [
+          ...new Set([...prev, ...project.customFonts!]),
+        ]);
+      }
+      if (project.selectedFontFamily) setSelectedFontFamily(project.selectedFontFamily);
+      if (!options.silent) notify(`Opened “${project.name}”`);
     },
     [fitArtboard, notify, syncHistoryFlags]
   );
@@ -1182,6 +1560,9 @@ export default function App() {
       thumbnailSvg: generateProjectThumbnailSvg([layer]),
       pathsCount: 0,
       layersCount: 1,
+      artboardColor: CANVAS.artboard,
+      customFonts: [],
+      selectedFontFamily: 'Plus Jakarta Sans, sans-serif',
     };
     await saveProject(project);
     openProject(project);
@@ -1200,18 +1581,70 @@ export default function App() {
         thumbnailSvg: generateProjectThumbnailSvg(template.layers),
         pathsCount: template.layers.reduce((n, l) => n + l.paths.length, 0),
         layersCount: template.layers.length,
+        artboardColor: CANVAS.artboard,
+        customFonts: [],
+        selectedFontFamily: 'Plus Jakarta Sans, sans-serif',
       });
     },
     [openProject]
   );
 
+  // Boot: reopen the document that was last on the artboard. Autosave keeps it
+  // current, so a refresh (or a detour to another app) never loses the work.
+  const bootedRef = useRef(false);
   useEffect(() => {
-    seedInitialProjectsIfEmpty().catch(() => undefined);
-    if (!localStorage.getItem('pentix.onboarded')) {
-      setSheet('start');
-      localStorage.setItem('pentix.onboarded', 'true');
-    }
-  }, []);
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+    let cancelled = false;
+
+    const boot = async () => {
+      try {
+        await seedInitialProjectsIfEmpty();
+      } catch {
+        /* starting empty is fine */
+      }
+
+      // Re-register every imported typeface from long-term storage, so text
+      // keeps its real font instead of falling back after a reload.
+      try {
+        const storedFonts = await loadAllFonts();
+        if (cancelled) return;
+        const families: string[] = [];
+        for (const font of storedFonts) {
+          try {
+            const face = new FontFace(font.family, font.data.slice(0));
+            const loaded = await face.load();
+            document.fonts.add(loaded);
+            fontFacesRef.current.set(font.family, loaded);
+            families.push(font.family);
+          } catch {
+            /* an unreadable file should not block the rest */
+          }
+        }
+        if (families.length) {
+          setCustomFonts((prev) => [...new Set([...families, ...prev])]);
+        }
+      } catch {
+        /* no stored fonts yet */
+      }
+
+      const lastId = localStorage.getItem(LAST_PROJECT_KEY);
+      if (!cancelled && lastId) {
+        const project = await getProject(lastId).catch(() => null);
+        if (!cancelled && project) openProject(project, { silent: true });
+      }
+
+      if (!localStorage.getItem('pentix.onboarded')) {
+        setSheet('start');
+        localStorage.setItem('pentix.onboarded', 'true');
+      }
+    };
+
+    void boot();
+    return () => {
+      cancelled = true;
+    };
+  }, [openProject]);
 
   /* ------------------------------------------------------------------ *
    * Keyboard
@@ -1394,6 +1827,7 @@ export default function App() {
           artboardColor={artboardColor}
           rulersVisible={rulersVisible}
           guides={guides}
+          guidesLocked={guidesLocked}
           onAddGuide={addGuide}
           onUpdateGuide={moveGuideLive}
           onCommitGuides={finishGuideDrag}
@@ -1419,7 +1853,10 @@ export default function App() {
           sbMode={sbMode}
           clipArtboard={clipArtboard}
           onRequestText={(point) => openTextSheet({ origin: point, path: null })}
+          onEditText={(path) => openTextSheet({ path })}
           onToolSwitch={changeTool}
+          hideTransformBox={nudgePadOpen || !showTransforms}
+          showPrecisionPad={showPrecisionPad}
         />
 
         {/* Zoom / fit pill */}
@@ -1443,6 +1880,7 @@ export default function App() {
           onDuplicate={duplicateSelection}
           onDelete={deleteSelection}
           visible={sheet === null || sheet === 'layers'}
+          onNudgeOpenChange={setNudgePadOpen}
         />
       </main>
 
@@ -1471,6 +1909,9 @@ export default function App() {
         onBoolean={runBoolean}
         onEditText={() => openTextSheet({ path: editingTextPath })}
         onExpandText={expandSelectedText}
+        onSimplify={simplifySelection}
+        onExpandStroke={expandStrokeSelection}
+        canExpandStroke={canExpandStroke}
         onOpenText={() => openTextSheet({ path: null, origin: null })}
         onFinishPath={finishPath}
         onCancelPath={cancelPath}
@@ -1490,6 +1931,8 @@ export default function App() {
         onPaste={pasteClipboard}
         canPaste={clipboard.length > 0}
         onRoundCorners={roundCorners}
+        onAlign={alignSelection}
+        onDistribute={distributeSelection}
       />
 
       <ToolDock
@@ -1506,7 +1949,6 @@ export default function App() {
         open={sheet === 'menu'}
         onClose={closeSheet}
         projectName={projectName}
-        savedLabel={isSaved ? 'Saved · autosave on' : 'Saving changes…'}
         onSave={() => {
           void saveDocument();
           closeSheet();
@@ -1516,7 +1958,6 @@ export default function App() {
           closeSheet();
         }}
         onOpenProjects={() => setSheet('projects')}
-        onOpenExport={() => setSheet('export')}
         onOpenCanvas={() => setSheet('canvas')}
         canvasLabel={`${view.width} × ${view.height} px`}
         gridLabel={`${gridSpacingX} × ${gridSpacingY} px${gridSnap ? ' · snapping' : ''}${gridLocked ? ' · locked' : ''}${gridVisible ? '' : ' · hidden'}`}
@@ -1531,9 +1972,13 @@ export default function App() {
         }}
         clipArtboard={clipArtboard}
         onToggleClipArtboard={() => setClipArtboard((v) => !v)}
+        showTransforms={showTransforms}
+        onToggleTransforms={() => setShowTransforms((v) => !v)}
+        showPrecisionPad={showPrecisionPad}
+        onTogglePrecisionPad={() => setShowPrecisionPad((v) => !v)}
         onOpenPressure={() => setSheet('pressure')}
         onOpenFonts={() => setSheet('fonts')}
-        onOpenReferences={() => setSheet('layers')}
+        onOpenReferences={() => setSheet('refs')}
         onOpenTracer={() => {
           setTraceSrc(null);
           setSheet('trace');
@@ -1555,7 +2000,6 @@ export default function App() {
         layers={layers}
         activeLayerId={activeLayerId}
         selectedPathIds={selection.selectedPathIds}
-        referenceImages={references}
         onSelectLayer={setActiveLayerId}
         onRenameLayer={(id, name) =>
           applyLayers((prev) => prev.map((l) => (l.id === id ? { ...l, name } : l)))
@@ -1570,6 +2014,7 @@ export default function App() {
         onDeleteLayer={deleteLayer}
         onDuplicateLayer={duplicateLayer}
         onMoveLayer={moveLayer}
+        onMovePath={movePath}
         onUpdateLayerOpacity={(id, opacity) =>
           applyLayers(
             (prev) => prev.map((l) => (l.id === id ? { ...l, opacity } : l)),
@@ -1585,16 +2030,25 @@ export default function App() {
           );
           pruneSelection(layersRef.current);
         }}
-        onUpdateReference={(image) =>
+        onTogglePathVisible={(id, visible) => setPathVisible(id, visible)}
+        onTogglePathLock={(id, locked) => setPathLock(id, locked)}
+        onUpdatePathOpacity={(id, opacity) => setPathOpacity(id, opacity)}
+      />
+
+      <ReferencesSheet
+        open={sheet === 'refs'}
+        onClose={closeSheet}
+        references={references}
+        onUpdate={(image) =>
           setReferences((prev) => prev.map((r) => (r.id === image.id ? image : r)))
         }
-        onDeleteReference={(id) => setReferences((prev) => prev.filter((r) => r.id !== id))}
-        onAddReference={addReference}
-        onTraceReference={(src) => {
+        onDelete={(id) => setReferences((prev) => prev.filter((r) => r.id !== id))}
+        onAdd={addReference}
+        onTrace={(src) => {
           setTraceSrc(src);
           setSheet('trace');
         }}
-        onSelectTool={changeTool}
+        onTraceWithPen={() => changeTool('pen')}
       />
 
       <ColorSheet
@@ -1695,6 +2149,7 @@ export default function App() {
         pressureConfig={pressureConfig}
         projectName={projectName}
         backgroundColor={artboardColor}
+        selectedPaths={selectedPaths}
       />
 
       <PressureSheet
@@ -1757,25 +2212,43 @@ export default function App() {
         height={view.height}
         onResize={resizeCanvas}
         gridVisible={gridVisible}
-        onToggleGrid={() => setGridVisible((v) => !v)}
+        onToggleGrid={() => {
+          setGridVisible((v) => !v);
+          setIsSaved(false);
+        }}
         gridSnap={gridSnap}
-        onToggleGridSnap={() => setGridSnap((v) => !v)}
+        onToggleGridSnap={() => {
+          setGridSnap((v) => !v);
+          setIsSaved(false);
+        }}
         gridSpacingX={gridSpacingX}
         gridSpacingY={gridSpacingY}
         onSpacingChange={(x, y) => {
           setGridSpacingX(x);
           setGridSpacingY(y);
+          setIsSaved(false);
         }}
         gridOpacity={gridOpacity}
-        onGridOpacityChange={setGridOpacity}
+        onGridOpacityChange={(value) => {
+          setGridOpacity(value);
+          setIsSaved(false);
+        }}
         gridLocked={gridLocked}
         onToggleGridLock={() => {
           const next = !gridLocked;
           setGridLocked(next);
+          setIsSaved(false);
           notify(next ? 'Grid locked — spacing fixed' : 'Grid unlocked');
         }}
         rulersVisible={rulersVisible}
         onToggleRulers={() => setRulersVisible((v) => !v)}
+        guidesLocked={guidesLocked}
+        onToggleGuidesLock={() => {
+          const next = !guidesLocked;
+          setGuidesLocked(next);
+          setIsSaved(false);
+          notify(next ? 'All guides locked' : 'Guides unlocked');
+        }}
         guides={guides}
         onUpdateGuide={updateGuide}
         onRemoveGuide={removeGuide}
@@ -1785,6 +2258,7 @@ export default function App() {
           setColorMode('background');
           setSheet('color');
         }}
+        onFitArtwork={fitArtworkToArtboard}
       />
 
       <StartSheet

@@ -3,10 +3,10 @@ import {
   FolderOpen,
   FilePlus2,
   Save,
-  Upload,
   Grid3x3,
   Hand,
   Ruler,
+  Frame,
   Lock,
   Crop,
   SlidersHorizontal,
@@ -14,7 +14,7 @@ import {
   Image as ImageIcon,
   Sparkles,
   HelpCircle,
-  Check,
+  Move,
   Undo2,
   Redo2,
 } from 'lucide-react';
@@ -24,11 +24,9 @@ interface AppMenuProps {
   open: boolean;
   onClose: () => void;
   projectName: string;
-  savedLabel: string;
   onSave: () => void;
   onNewProject: () => void;
   onOpenProjects: () => void;
-  onOpenExport: () => void;
   onOpenCanvas: () => void;
   canvasLabel: string;
   gridLabel: string;
@@ -40,6 +38,10 @@ interface AppMenuProps {
   onTogglePanZoomLock: () => void;
   clipArtboard: boolean;
   onToggleClipArtboard: () => void;
+  showTransforms: boolean;
+  onToggleTransforms: () => void;
+  showPrecisionPad: boolean;
+  onTogglePrecisionPad: () => void;
   onPanTool: () => void;
   onOpenPressure: () => void;
   onOpenFonts: () => void;
@@ -94,11 +96,9 @@ export const AppMenu: React.FC<AppMenuProps> = ({
   open,
   onClose,
   projectName,
-  savedLabel,
   onSave,
   onNewProject,
   onOpenProjects,
-  onOpenExport,
   onOpenCanvas,
   canvasLabel,
   gridLabel,
@@ -110,6 +110,10 @@ export const AppMenu: React.FC<AppMenuProps> = ({
   onTogglePanZoomLock,
   clipArtboard,
   onToggleClipArtboard,
+  showTransforms,
+  onToggleTransforms,
+  showPrecisionPad,
+  onTogglePrecisionPad,
   onPanTool,
   onOpenPressure,
   onOpenFonts,
@@ -121,7 +125,7 @@ export const AppMenu: React.FC<AppMenuProps> = ({
   onUndo,
   onRedo,
 }) => (
-  <Sheet open={open} onClose={onClose} title={projectName} subtitle={savedLabel} size="sm">
+  <Sheet open={open} onClose={onClose} title={projectName} subtitle={canvasLabel} size="sm">
     <div className="flex flex-col gap-5 pb-2">
       <section>
         <div className="label-mono mb-1 px-2">Document</div>
@@ -133,7 +137,6 @@ export const AppMenu: React.FC<AppMenuProps> = ({
         />
         <Row icon={<FolderOpen size={16} />} label="Projects" onClick={onOpenProjects} />
         <Row icon={<FilePlus2 size={16} />} label="New document" onClick={onNewProject} />
-        <Row icon={<Upload size={16} />} label="Export" onClick={onOpenExport} />
       </section>
 
       <section>
@@ -162,14 +165,8 @@ export const AppMenu: React.FC<AppMenuProps> = ({
         <div className="label-mono mb-1 px-2">Canvas</div>
         <Row
           icon={<Grid3x3 size={16} />}
-          label="Grid & snapping"
-          hint={gridLabel}
-          onClick={onOpenCanvas}
-        />
-        <Row
-          icon={<Ruler size={16} />}
-          label="Size, rulers & guides"
-          hint={`${canvasLabel} · ${rulersVisible ? 'rulers on' : 'rulers off'}${guidesCount ? ` · ${guidesCount} guide${guidesCount > 1 ? 's' : ''}` : ''}`}
+          label="Artboard & canvas"
+          hint={`${canvasLabel} · ${gridLabel} · ${rulersVisible ? 'rulers' : 'no rulers'}${guidesCount ? ` · ${guidesCount} guide${guidesCount > 1 ? 's' : ''}` : ''}`}
           onClick={onOpenCanvas}
         />
         <Row
@@ -189,6 +186,20 @@ export const AppMenu: React.FC<AppMenuProps> = ({
           label="Clip to artboard"
           onClick={onToggleClipArtboard}
           trailing={<Switch on={clipArtboard} />}
+        />
+        <Row
+          icon={<Frame size={16} />}
+          label="Transform box"
+          hint="Selection box and handles"
+          onClick={onToggleTransforms}
+          trailing={<Switch on={showTransforms} />}
+        />
+        <Row
+          icon={<Move size={16} />}
+          label="Precision pad"
+          hint="Trackpad cursor"
+          onClick={onTogglePrecisionPad}
+          trailing={<Switch on={showPrecisionPad} />}
         />
         <Row
           icon={<Hand size={16} />}
@@ -218,12 +229,9 @@ export const AppMenu: React.FC<AppMenuProps> = ({
 
       <section>
         <Row icon={<HelpCircle size={16} />} label="Gestures & shortcuts" onClick={onOpenHelp} />
-        <div className="mt-1 flex items-center justify-between px-2 pt-2">
+        <div className="mt-1 px-2 pt-2">
           <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-mute">
             Pentix · Studio
-          </span>
-          <span className="flex items-center gap-1 text-[10px] text-mute">
-            <Check size={10} /> offline
           </span>
         </div>
       </section>

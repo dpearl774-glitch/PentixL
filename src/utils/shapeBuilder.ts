@@ -17,7 +17,7 @@ export function vectorPathToClippingPolygon(path: VectorPath): Polygon {
   return [sampled as Ring];
 }
 
-import { simplifyPoints, fitSmoothBezierCurves } from './contourTracer';
+import { simplifyPoints, decimateContour, fitSmoothBezierCurves } from './contourTracer';
 
 /**
  * Converts a polygon-clipping Ring back to an editable VectorPath with smooth Bezier curves
@@ -37,8 +37,14 @@ export function ringToVectorPath(
     rawPts.push({ x: ring[i][0], y: ring[i][1] });
   }
 
-  const simplified = rawPts.length > 3 ? simplifyPoints(rawPts, 1.0) : rawPts;
-  const points = fitSmoothBezierCurves(simplified, `${basePath.id}-${idSuffix}`, true);
+  // Keep the boolean outline truthful, then let the fitter decide where the
+  // anchors go — one per curve instead of one per sampled point.
+  const tolerance = 0.75;
+  const simplified =
+    rawPts.length > 3
+      ? decimateContour(simplifyPoints(rawPts, tolerance * 0.5), tolerance * 0.5, true)
+      : rawPts;
+  const points = fitSmoothBezierCurves(simplified, `${basePath.id}-${idSuffix}`, true, tolerance);
 
   return {
     ...basePath,
@@ -128,12 +134,7 @@ export function executeBooleanOperation(
       }
 
       case 'divide': {
-        // Divide partitions into:
-        // A - B, B - A, and A ∩ B
-        // For each pair, compute distinct parts
-        const dividedPieces: VectorPath[] = [];
-        
-        // Compute pairwise intersections and pairwise differences
+        // Divide partitions into: A - B, B - A, and A ∩ B
         const pA = polys[0];
         const pB = polys[1];
 
@@ -142,14 +143,14 @@ export function executeBooleanOperation(
         const diffB = polygonClipping.difference(pB, pA);
 
         const partsA = multiPolygonToVectorPaths(diffA, { ...paths[0], name: `${paths[0].name} (Part 1)` });
-        const partsB = multiPolygonToVectorPaths(partsB_helper(diffB, paths[1]), { ...paths[1], name: `${paths[1].name} (Part 2)` });
+        const partsB = multiPolygonToVectorPaths(diffB, { ...paths[1], name: `${paths[1].name} (Part 2)` });
         const partsInter = multiPolygonToVectorPaths(intersection, {
           ...paths[0],
           name: 'Divided Intersection',
           fill: paths[0].fill !== 'none' ? paths[0].fill : paths[1].fill,
         });
 
-        dividedPieces.push(...partsA, ...partsInter, ...partsB);
+        const dividedPieces = [...partsA, ...partsInter, ...partsB];
         return dividedPieces.length > 0 ? dividedPieces : paths;
       }
     }
@@ -159,6 +160,3 @@ export function executeBooleanOperation(
   }
 }
 
-function partsB_helper(diffB: MultiPolygon, pathB: VectorPath): MultiPolygon {
-  return diffB;
-}

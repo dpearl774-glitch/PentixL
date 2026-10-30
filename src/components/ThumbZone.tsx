@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ChevronUp,
   ChevronDown,
@@ -23,12 +23,43 @@ interface ThumbZoneProps {
   onDuplicate: () => void;
   onDelete: () => void;
   visible: boolean;
+  /** Reports the nudge pad being open, so the canvas can drop the transform
+   *  rectangle while you are nudging instead of boxing in the view. */
+  onNudgeOpenChange?: (open: boolean) => void;
 }
 
-const KEYCAPS: { key: keyof ModifierState; glyph: string; label: string; hint: string }[] = [
-  { key: 'shift', glyph: '⇧', label: 'Shift', hint: 'Constrain angle / equal size' },
-  { key: 'ctrl', glyph: '⌃', label: 'Ctrl', hint: 'Direct select while held' },
-  { key: 'alt', glyph: '⌥', label: 'Alt', hint: 'Break handle / erase' },
+/**
+ * Each keycap gets its own colour when armed, so a glance tells you which
+ * modifier is on without reading the glyph.
+ */
+const KEYCAPS: {
+  key: keyof ModifierState;
+  glyph: string;
+  label: string;
+  hint: string;
+  activeClass: string;
+}[] = [
+  {
+    key: 'shift',
+    glyph: '⇧',
+    label: 'Shift',
+    hint: 'Constrain angle / equal size',
+    activeClass: 'border-accent bg-accent text-ink-0 shadow-accent/25',
+  },
+  {
+    key: 'ctrl',
+    glyph: '⌃',
+    label: 'Ctrl',
+    hint: 'Direct select while held',
+    activeClass: 'border-teal-300 bg-teal-300 text-ink-0 shadow-teal-300/25',
+  },
+  {
+    key: 'alt',
+    glyph: '⌥',
+    label: 'Alt',
+    hint: 'Break handle / erase',
+    activeClass: 'border-amber-400 bg-amber-400 text-ink-0 shadow-amber-400/25',
+  },
 ];
 
 /**
@@ -45,9 +76,20 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
   onDuplicate,
   onDelete,
   visible,
+  onNudgeOpenChange,
 }) => {
   const [showNudge, setShowNudge] = useState(false);
   const [step, setStep] = useState(1);
+
+  useEffect(() => {
+    onNudgeOpenChange?.(showNudge);
+  }, [showNudge, onNudgeOpenChange]);
+
+  // Nothing selected means nothing to nudge — drop the pad rather than
+  // leave an open panel that hides the transform box for a stale selection.
+  useEffect(() => {
+    if (!hasSelection) setShowNudge(false);
+  }, [hasSelection]);
 
   if (!visible) return null;
 
@@ -58,8 +100,8 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
 
   return (
     <>
-      {/* LEFT — modifier keys */}
-      <div className="pointer-events-none absolute bottom-2 left-1.5 z-20 flex flex-col gap-1.5">
+      {/* LEFT — modifier keys, one row so the canvas edge stays free */}
+      <div className="pointer-events-none absolute bottom-2 left-1.5 z-20 flex gap-1.5">
         {KEYCAPS.map((cap) => {
           const active = modifiers[cap.key];
           return (
@@ -69,10 +111,10 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
               aria-label={`${cap.label}: ${cap.hint}`}
               aria-pressed={active}
               onClick={() => toggle(cap.key)}
-              className={`press pointer-events-auto grid h-11 w-11 place-content-center gap-0.5 rounded-xl border shadow-lg shadow-black/30 ${
+              className={`press pointer-events-auto grid h-11 w-11 place-content-center gap-0.5 rounded-xl border shadow-lg ${
                 active
-                  ? 'border-accent bg-accent text-ink-0'
-                  : 'border-line bg-ink-2/90 text-dim backdrop-blur'
+                  ? `${cap.activeClass} shadow-lg`
+                  : 'border-line bg-ink-2/90 text-dim shadow-black/30 backdrop-blur'
               }`}
             >
               <span className="font-mono text-[15px] leading-none">{cap.glyph}</span>

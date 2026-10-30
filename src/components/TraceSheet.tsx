@@ -122,7 +122,7 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
         invert,
         simplification: simplify,
         minArea: 12,
-        fillColor: fillColor === 'none' ? '#cdff5c' : fillColor,
+        fillColor: fillColor === 'none' ? '#4c8dff' : fillColor,
         strokeColor,
         strokeWidth,
       });
@@ -176,7 +176,7 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
       onClose={onClose}
       title="Trace an image"
       eyebrow="Convert"
-      subtitle="Turn a silhouette into editable bezier paths."
+      subtitle="Silhouette to editable paths."
     >
       <div className="flex flex-col gap-4">
         <input
@@ -209,7 +209,7 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
             <div className="flex flex-col items-center gap-1.5 px-6 text-center">
               <ImagePlus size={20} className="text-mute" />
               <p className="text-[12px] text-mute">
-                Choose an image, a sample, or send one over from References.
+                Choose an image to trace.
               </p>
             </div>
           )}
@@ -251,7 +251,7 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
                 type="checkbox"
                 checked={invert}
                 onChange={(e) => setInvert(e.target.checked)}
-                className="h-3.5 w-3.5 accent-[#cdff5c]"
+                className="h-3.5 w-3.5 accent-[#4c8dff]"
               />
               Invert silhouette
             </label>

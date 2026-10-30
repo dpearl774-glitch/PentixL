@@ -49,8 +49,8 @@ const PALETTE = [
   '#4B5158',
   '#23262B',
   '#0B0C0E',
-  '#CDFF5C',
-  '#9EC93F',
+  '#4C8DFF',
+  '#9CC4FF',
   '#5CE1C5',
   '#5B8DEF',
   '#7C6BFF',
@@ -67,7 +67,7 @@ const HEX = /^#?([0-9a-fA-F]{6})$/;
 
 const hexToRgb = (hex: string): [number, number, number] => {
   const clean = hex.replace('#', '');
-  if (clean.length !== 6) return [205, 255, 92];
+  if (clean.length !== 6) return [76, 141, 255];
   return [
     parseInt(clean.slice(0, 2), 16),
     parseInt(clean.slice(2, 4), 16),
@@ -278,10 +278,10 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
   const title = mode === 'background' ? 'Artboard' : 'Paint';
   const subtitle =
     mode === 'background'
-      ? 'Artboard colour only — your artwork keeps its own colours.'
+      ? 'Background only — artwork colours stay put.'
       : mode === 'fill'
-        ? 'Applied to the fill of selected objects'
-        : 'Applied to the outline of selected objects';
+        ? 'Fill colour'
+        : 'Stroke colour';
 
   return (
     <Sheet open={open} onClose={onClose} title={title} eyebrow="Appearance" subtitle={subtitle}>
@@ -300,10 +300,10 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
         <div className="flex items-center gap-1.5 rounded-lg border border-line bg-ink-0 px-2.5 py-1.5 text-[11px] leading-snug text-mute">
           <Info size={12} className="shrink-0 text-accent" />
           {mode === 'background'
-            ? 'Shown behind the artwork on screen and in exports.'
+            ? 'Behind the artwork, in exports too.'
             : selectedCount > 0
               ? `Editing ${selectedCount} selected object${selectedCount > 1 ? 's' : ''}`
-              : 'Nothing selected — this becomes the style for the next object you draw.'}
+              : 'No selection — this styles the next object.'}
         </div>
 
         {/* Embedded picker: saturation/value square + hue rail */}

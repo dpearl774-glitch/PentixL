@@ -1,5 +1,5 @@
 import { Layer, VectorPath } from '../types/vector';
-import { pointsToSvgPath } from './bezier';
+import { pathToSvgD } from './bezier';
 import { gradientIdFor } from './svgExport';
 import { gradientMarkup } from './gradients';
 
@@ -42,7 +42,7 @@ export function generateProjectThumbnailSvg(
         return `<text x="${origin.x}" y="${origin.y}" fill="${textFill}" fill-opacity="${(path.fillOpacity ?? 1) * layerOpacity}" font-family="${path.fontFamily || 'sans-serif'}" font-size="${path.fontSize || 64}" font-weight="${path.fontWeight || 'bold'}">${safe}</text>`;
       }
 
-      const d = pointsToSvgPath(path.points, path.closed);
+      const d = pathToSvgD(path);
       if (!d) return '';
 
       const fill = gradId
@@ -57,7 +57,7 @@ export function generateProjectThumbnailSvg(
       const strokeCap = path.strokeCap || 'round';
       const strokeJoin = path.strokeJoin || 'round';
 
-      return `<path d="${d}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-opacity="${strokeOpacity}" stroke-linecap="${strokeCap}" stroke-linejoin="${strokeJoin}" />`;
+      return `<path d="${d}" fill-rule="evenodd" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-opacity="${strokeOpacity}" stroke-linecap="${strokeCap}" stroke-linejoin="${strokeJoin}" />`;
     })
     .join('');
 

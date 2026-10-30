@@ -41,27 +41,31 @@ export const StartSheet: React.FC<StartSheetProps> = ({
         <ArrowRight size={15} className="text-mute" />
       </button>
 
-      <div className="label-mono mt-2 px-1">Or open a blueprint</div>
+      <div className="label-mono mt-2 px-1">Or start from a grid</div>
 
-      {LOGO_TEMPLATES.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          onClick={() => onChooseTemplate(t)}
-          className="press flex items-center gap-3 rounded-xl border border-line bg-ink-2 p-2 text-left hover:border-accent/40"
-        >
-          <span className="h-14 w-16 shrink-0 overflow-hidden rounded-lg border border-line bg-ink-0">
-            <span
-              className="block h-full w-full [&>svg]:h-full [&>svg]:w-full"
-              dangerouslySetInnerHTML={{ __html: generateProjectThumbnailSvg(t.layers) }}
-            />
-          </span>
-          <span className="min-w-0">
-            <span className="block truncate text-[12.5px] font-semibold text-text">{t.name}</span>
-            <span className="block text-[11px] leading-snug text-mute">{t.description}</span>
-          </span>
-        </button>
-      ))}
+      <div className="grid grid-cols-2 gap-2">
+        {LOGO_TEMPLATES.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onChooseTemplate(t)}
+            className="press overflow-hidden rounded-xl border border-line bg-ink-2 p-1.5 text-left hover:border-accent/40"
+          >
+            <span className="block h-[74px] w-full overflow-hidden rounded-lg border border-line bg-ink-0 [&>svg]:h-full [&>svg]:w-full">
+              <span
+                className="block h-full w-full"
+                dangerouslySetInnerHTML={{ __html: generateProjectThumbnailSvg(t.layers) }}
+              />
+            </span>
+            <span className="mt-1.5 block truncate px-0.5 text-[12px] font-semibold text-text">
+              {t.name}
+            </span>
+            <span className="block px-0.5 pb-0.5 text-[10.5px] leading-snug text-mute">
+              {t.description}
+            </span>
+          </button>
+        ))}
+      </div>
 
       <Button variant="quiet" block onClick={onClose} className="mt-1">
         Skip

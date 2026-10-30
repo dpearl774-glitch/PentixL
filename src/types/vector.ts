@@ -45,6 +45,8 @@ export interface VectorPath {
   id: string;
   name: string;
   points: AnchorPoint[];
+  /** Counter shapes — the inside of an o, p, a — punched out of the fill */
+  holes?: AnchorPoint[][];
   closed: boolean;
   fill: string;
   fillOpacity: number;
@@ -60,6 +62,12 @@ export interface VectorPath {
   fontSize?: number;
   fontFamily?: string;
   fontWeight?: string;
+  /** Per-object visibility — hidden objects stop rendering and stop catching taps */
+  visible?: boolean;
+  /** Per-object lock — locked objects render but cannot be picked or moved */
+  locked?: boolean;
+  /** Object opacity, multiplied with the fill and stroke alpha */
+  opacity?: number;
 }
 
 export interface Layer {

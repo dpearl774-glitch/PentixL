@@ -202,7 +202,7 @@ export function computeAtomicSubRegions(paths: VectorPath[]): SubRegion[] {
       pathD: polygonToSvgPathD(r.poly),
       bbox,
       centroid,
-      fill: r.topPath.fill !== 'none' ? r.topPath.fill : '#CDFF5C',
+      fill: r.topPath.fill !== 'none' ? r.topPath.fill : '#4C8DFF',
       stroke: r.topPath.stroke !== 'none' ? r.topPath.stroke : '#E8EAED',
     };
   });
@@ -227,40 +227,63 @@ export function findSubRegionAtPoint(point: Point, regions: SubRegion[]): SubReg
   return null;
 }
 
-import { simplifyPoints, fitSmoothBezierCurves } from './contourTracer';
+import { simplifyPoints, decimateContour, fitSmoothBezierCurves } from './contourTracer';
 
 /**
- * Converts a Polygon to a standard editable VectorPath with smooth Bezier curves
+ * Converts one clipping ring into anchors. The boolean output arrives as a near
+ * point-per-pixel chain, so it is reduced first; every remaining vertex then
+ * gets curve handles. Corner-only anchors turned every arc inherited from the
+ * original artwork into a straight chord, which is the faceting you can see on
+ * merged, trimmed and erased results. Genuine corners stay corners, because the
+ * fitter only smooths a vertex whose deflection is under ~85°.
+ */
+function ringToAnchors(ring: Ring, idPrefix: string): AnchorPoint[] | null {
+  const count =
+    ring.length > 1 &&
+    ring[0][0] === ring[ring.length - 1][0] &&
+    ring[0][1] === ring[ring.length - 1][1]
+      ? ring.length - 1
+      : ring.length;
+
+  if (count < 3) return null;
+
+  const raw: Point[] = [];
+  for (let i = 0; i < count; i++) raw.push({ x: ring[i][0], y: ring[i][1] });
+
+  // Finer than a whole artboard unit: chords that coarse are visible on a mark
+  // that is only a few hundred units across.
+  const tolerance = 0.75;
+  const reduced =
+    raw.length > 3
+      ? decimateContour(simplifyPoints(raw, tolerance * 0.5), tolerance * 0.5, true)
+      : raw;
+  if (reduced.length < 3) return null;
+
+  return fitSmoothBezierCurves(reduced, idPrefix, true, tolerance);
+}
+
+/**
+ * Converts a Polygon to a standard editable VectorPath, keeping its counters as
+ * holes this path owns (drawn even-odd) instead of dropping them.
  */
 export function polygonToVectorPath(
   poly: Polygon,
   baseStyle: Partial<VectorPath>,
   idPrefix: string
 ): VectorPath {
-  const outerRing = poly[0] || [];
-  const count =
-    outerRing.length > 1 &&
-    outerRing[0][0] === outerRing[outerRing.length - 1][0] &&
-    outerRing[0][1] === outerRing[outerRing.length - 1][1]
-      ? outerRing.length - 1
-      : outerRing.length;
-
-  const rawPts: Point[] = [];
-  for (let i = 0; i < count; i++) {
-    rawPts.push({ x: outerRing[i][0], y: outerRing[i][1] });
-  }
-
-  // Simplify jitter while preserving curve features
-  const simplified = rawPts.length > 3 ? simplifyPoints(rawPts, 1.0) : rawPts;
-  // Fit smooth Bezier curves with Catmull-Rom tangent handles
-  const points = fitSmoothBezierCurves(simplified, `${idPrefix}-pt`, true);
+  const points = ringToAnchors(poly[0] || [], `${idPrefix}-pt`) ?? [];
+  const holes = poly
+    .slice(1)
+    .map((ring, i) => ringToAnchors(ring, `${idPrefix}-hole-${i}`))
+    .filter((ring): ring is AnchorPoint[] => ring !== null);
 
   return {
     id: `${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    name: baseStyle.name || 'Merged Shape',
+    name: baseStyle.name || 'Shape',
     points,
+    ...(holes.length > 0 ? { holes } : {}),
     closed: true,
-    fill: baseStyle.fill || '#CDFF5C',
+    fill: baseStyle.fill || '#4C8DFF',
     fillOpacity: baseStyle.fillOpacity ?? 1,
     stroke: baseStyle.stroke || '#E8EAED',
     strokeWidth: baseStyle.strokeWidth ?? 3,
@@ -288,7 +311,7 @@ export function executeShapeBuilderMerge(
 
   const resultingPaths: VectorPath[] = [];
 
-  // 1. Union all selected regions
+  // 1. Union all selected regions — fresh geometry, fit curves for smoothness
   if (selectedRegions.length > 0) {
     try {
       const selectedPolys = selectedRegions.map((r) => r.polygon);
@@ -318,7 +341,7 @@ export function executeShapeBuilderMerge(
     }
   }
 
-  // 2. Preserve unselected regions (grouped by their primary source path so unmerged parts don't disappear)
+  // 2. Preserve unselected regions — simple corner anchors, no Bezier refit
   for (let i = 0; i < unselectedRegions.length; i++) {
     const reg = unselectedRegions[i];
     const source = originalPaths.find((p) => p.id === reg.sourcePathIds[0]) || originalPaths[0];
@@ -327,12 +350,15 @@ export function executeShapeBuilderMerge(
       polygonToVectorPath(
         reg.polygon,
         {
-          name: `${source.name} (Part ${i + 1})`,
+          name: `${source.name}${selectedRegions.length > 0 ? ' (Part)' : ''}`,
           fill: reg.fill,
-          fillOpacity: 1,
+          fillOpacity: source.fillOpacity ?? 1,
           stroke: reg.stroke,
           strokeWidth: source.strokeWidth || 3,
-          strokeOpacity: 1,
+          strokeOpacity: source.strokeOpacity ?? 1,
+          strokeCap: source.strokeCap,
+          strokeJoin: source.strokeJoin,
+          pressureProfile: source.pressureProfile,
         },
         `sb-remain-${i}`
       )
@@ -365,10 +391,13 @@ export function executeShapeBuilderErase(
         {
           name: `${source.name} (Trimmed)`,
           fill: reg.fill,
-          fillOpacity: 1,
+          fillOpacity: source.fillOpacity ?? 1,
           stroke: reg.stroke,
           strokeWidth: source.strokeWidth || 3,
-          strokeOpacity: 1,
+          strokeOpacity: source.strokeOpacity ?? 1,
+          strokeCap: source.strokeCap,
+          strokeJoin: source.strokeJoin,
+          pressureProfile: source.pressureProfile,
         },
         `sb-erase-${i}`
       )

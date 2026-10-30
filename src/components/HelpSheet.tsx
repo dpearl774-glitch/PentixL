@@ -1,5 +1,14 @@
 import React from 'react';
-import { PenTool, Combine, MousePointer2, Hand, Type as TypeIcon } from 'lucide-react';
+import {
+  PenTool,
+  Combine,
+  MousePointer2,
+  Hand,
+  Type as TypeIcon,
+  Grid3x3,
+  Frame,
+  Sparkles,
+} from 'lucide-react';
 import { SectionLabel, Sheet } from './ui/primitives';
 
 interface HelpSheetProps {
@@ -55,6 +64,27 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
         <Item term="Top bar">Undo and redo sit beside the document name. Layers open as a see-through panel.</Item>
       </Group>
 
+      <Group icon={<Grid3x3 size={14} />} title="Grid & guides">
+        <Item term="Grid">
+          Show/hide, spacing and line strength live in Canvas settings. The lock freezes spacing and
+          appearance only — snapping, visibility and artwork editing keep working.
+        </Item>
+        <Item term="Snap">Independent of the grid, so you can snap with the grid hidden.</Item>
+        <Item term="Rulers">
+          Drag off a ruler to add a guide; a tap on the ruler does nothing. Undo removes the last
+          one, and Lock all freezes every guide.
+        </Item>
+        <Item term="Export">Grid, rulers and guides are editing aids and never export.</Item>
+      </Group>
+
+      <Group icon={<Frame size={14} />} title="Canvas & export">
+        <Item term="Size">Width and height in px, cm or in. Presets cover the square boards a mark is delivered at.</Item>
+        <Item term="Fit artwork">Trims the board to the artwork and shifts it to a small margin.</Item>
+        <Item term="One colour">Export can flatten every fill to black or white for reversed and mono uses, or crop to the selection.</Item>
+        <Item term="Background">Artboard colour is separate from artwork colour; Reset restores the default.</Item>
+        <Item term="Transparent">Off in the export panel drops the background entirely.</Item>
+      </Group>
+
       <Group icon={<span className="font-mono text-[13px]">⇧⌃⌥</span>} title="Thumb modifiers">
         <Item term={<Key>⇧ Shift</Key>}>Constrain pen segments to 45°, lock shapes to equal proportions, scale proportionally.</Item>
         <Item term={<Key>⌃ Ctrl</Key>}>Temporarily switch to direct selection.</Item>
@@ -74,19 +104,34 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
         <Item term="Build tool">With two or more shapes on the layer, drag across the regions you want to merge — release to commit.</Item>
         <Item term="Erase">Flip the Build strip to Erase, or hold Alt, then tap regions to remove them.</Item>
         <Item term="Pathfinder">
-          Select two or more objects, then Unite, Minus, Intersect or Exclude from the strip above the dock.
+          Select two or more objects, then Unite, Minus, Intersect or Exclude from More in the strip above the dock.
         </Item>
       </Group>
 
       <Group icon={<MousePointer2 size={14} />} title="Selection">
-        <Item term="Double-tap object">Switches you to direct select on that path.</Item>
+        <Item term="Direct mode">Double-tap an object to edit its nodes. Select in the dock returns you to object mode.</Item>
+        <Item term="Align">With objects selected, Align lines up edges or centres, or evens the gaps.</Item>
+        <Item term="Objects panel">Eye hides an object, the lock freezes it, and the slider sets its opacity.</Item>
+        <Item term="Reordering">Tap an arrow to step one place; hold it to send the object to the front or back.</Item>
         <Item term="Handles">Eight stretch handles plus a rotation handle above the box.</Item>
         <Item term="Right rail">Duplicate, delete and the nudge pad in 0.5, 1, 5 or 10 px steps.</Item>
       </Group>
 
       <Group icon={<TypeIcon size={14} />} title="Text">
         <Item term="Add text">Type tool or the Text chip in the options strip.</Item>
+        <Item term="Edit text">Double-tap a label, or tap it with the type tool, to change it.</Item>
         <Item term="To curves">Select the text and use “To curves” to convert glyphs into editable paths.</Item>
+      </Group>
+
+      <Group icon={<Sparkles size={14} />} title="Studio">
+        <Item term="Fonts">Imported typefaces are stored on this device and return after a refresh.</Item>
+        <Item term="References">Saved with the document, and locked behind the artwork until unlocked.</Item>
+        <Item term="Pressure">Auto uses stylus pressure or finger speed, Speed follows motion, Uniform is constant.</Item>
+        <Item term="Simplify">Reduces anchors on paths and traces you have already made. Lives in More.</Item>
+        <Item term="Pad">
+          Optional trackpad for pen work: move or drag to aim the crosshair, click to press, scroll
+          to pan and ⌘-scroll to zoom. Hide it from the menu.
+        </Item>
       </Group>
 
       <section className="rounded-xl border border-line bg-ink-2 px-3 py-2.5">

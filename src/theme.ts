@@ -12,17 +12,17 @@ export const CANVAS = {
   page: '#08090b',
   grid: '#3c424b',
   /** Single accent used for selection, handles, smart guides */
-  accent: '#cdff5c',
-  accentSoft: 'rgba(205, 255, 92, 0.16)',
+  accent: '#4c8dff',
+  accentSoft: 'rgba(76, 141, 255, 0.16)',
   /** Destructive / erase mode */
   erase: '#ff6b6b',
   eraseSoft: 'rgba(255, 107, 107, 0.18)',
   /** Anchor nodes */
   node: '#f5f7f2',
-  nodeActive: '#cdff5c',
+  nodeActive: '#4c8dff',
   nodeEdge: '#08090b',
   /** Secondary curve handle colour */
-  handle: '#9ec93f',
+  handle: '#5b8de0',
   /** Ink text on light chips */
   ink: '#0b0d10',
 } as const;

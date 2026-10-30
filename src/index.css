@@ -14,8 +14,8 @@
   --color-text: #eceef1;
   --color-dim: #9aa1aa;
   --color-mute: #6a717a;
-  --color-accent: #cdff5c;
-  --color-accent-dim: #9ec93f;
+  --color-accent: #4c8dff;
+  --color-accent-dim: #3a78e0;
   --color-danger: #ff6b6b;
   --color-warn: #ffc15e;
 
@@ -203,7 +203,7 @@
 }
 
 /* ------------------------------------------------------------------
-   Range inputs: thin graphite track, lime handle
+   Range inputs: thin graphite track, blue handle
    ------------------------------------------------------------------ */
 input[type="range"] {
   -webkit-appearance: none;

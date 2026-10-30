@@ -6,7 +6,7 @@ export function defaultGradient(from: string, to: string): GradientDef {
     type: 'linear',
     angle: 90,
     stops: [
-      { offset: 0, color: from === 'none' ? '#CDFF5C' : from, opacity: 1 },
+      { offset: 0, color: from === 'none' ? '#4C8DFF' : from, opacity: 1 },
       { offset: 1, color: to === 'none' || to === from ? '#5CE1C5' : to, opacity: 1 },
     ],
   };

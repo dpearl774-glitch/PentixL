@@ -1,6 +1,16 @@
-import { Layer, CanvasView, ReferenceImage } from '../types/vector';
+import { Layer, CanvasView, Guide, ReferenceImage } from '../types/vector';
 import { LOGO_TEMPLATES } from '../data/templates';
 import { generateProjectThumbnailSvg } from './thumbnailGenerator';
+
+/** Per-document grid system — visibility, spacing, appearance and lock */
+export interface GridSettings {
+  visible: boolean;
+  snap: boolean;
+  spacingX: number;
+  spacingY: number;
+  opacity: number;
+  locked: boolean;
+}
 
 export interface StoredProject {
   id: string;
@@ -9,12 +19,24 @@ export interface StoredProject {
   createdAt: number;
   updatedAt: number;
   layers: Layer[];
+  /** Ruler guides are editing aids, but they belong to the document. */
+  guides?: Guide[];
+  /** So does the grid system — each document keeps its own spacing and lock. */
+  grid?: GridSettings;
+  /** One switch that locks (or unlocks) every guide in the document */
+  guidesLocked?: boolean;
   /** Tracing references travel with the document. */
   references?: ReferenceImage[];
   view?: CanvasView;
   thumbnailSvg: string;
   pathsCount: number;
   layersCount: number;
+  /** Artboard background colour for export and on-load restoration */
+  artboardColor: string;
+  /** Custom fonts loaded and selected in this project */
+  customFonts: string[];
+  /** Selected font family for text objects */
+  selectedFontFamily: string;
 }
 
 const DB_NAME = 'pentix_vector_db';
@@ -185,9 +207,13 @@ export async function seedInitialProjectsIfEmpty(): Promise<StoredProject[]> {
         createdAt: now - (3 - i) * 3600000,
         updatedAt: now - (3 - i) * 1800000,
         layers: JSON.parse(JSON.stringify(tmpl.layers)),
+        guides: [],
         pathsCount,
         layersCount: tmpl.layers.length,
         thumbnailSvg,
+        artboardColor: '#ffffff',
+        customFonts: [],
+        selectedFontFamily: 'Plus Jakarta Sans, sans-serif',
       };
 
       await saveProject(proj);
@@ -240,10 +266,14 @@ export function importProjectFromFile(file: File): Promise<StoredProject> {
           createdAt: now,
           updatedAt: now,
           layers: parsed.layers,
+          guides: Array.isArray(parsed.guides) ? parsed.guides : [],
           view: parsed.view,
           thumbnailSvg: generateProjectThumbnailSvg(parsed.layers),
           pathsCount: parsed.layers.reduce((sum: number, l: Layer) => sum + (l.paths?.length || 0), 0),
           layersCount: parsed.layers.length,
+          artboardColor: '#ffffff',
+          customFonts: [],
+          selectedFontFamily: 'Plus Jakarta Sans, sans-serif',
         };
 
         await saveProject(importedProject);

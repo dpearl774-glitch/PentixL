@@ -67,7 +67,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
       onClose={onClose}
       title={editingPathId ? 'Edit text' : 'Add text'}
       eyebrow="Typography"
-      subtitle="Live vector text — convert to curves when the lettering is final."
+      subtitle="Live text — convert to curves when final."
     >
       <div className="flex flex-col gap-5">
         <textarea

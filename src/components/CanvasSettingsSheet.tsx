@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Lock, LockOpen, Ruler, Trash2, Grid3x3, Magnet } from 'lucide-react';
+import { Lock, LockOpen, Ruler, Trash2, Grid3x3, Magnet, Maximize2 } from 'lucide-react';
 import { Guide } from '../types/vector';
 import { Button, SectionLabel, Segmented, Sheet } from './ui/primitives';
 
@@ -24,6 +24,9 @@ interface CanvasSettingsSheetProps {
   /* rulers & guides */
   rulersVisible: boolean;
   onToggleRulers: () => void;
+  /** One switch for every guide in the document */
+  guidesLocked: boolean;
+  onToggleGuidesLock: () => void;
   guides: Guide[];
   onUpdateGuide: (id: string, patch: Partial<Guide>) => void;
   onRemoveGuide: (id: string) => void;
@@ -31,7 +34,18 @@ interface CanvasSettingsSheetProps {
   /* artboard */
   artboardColor: string;
   onEditBackground: () => void;
+  /** Trims the artboard to the artwork and shifts it to a small margin */
+  onFitArtwork?: () => void;
 }
+
+/** Square boards a logo is actually delivered at. */
+const PRESETS: { label: string; w: number; h: number }[] = [
+  { label: '1024²', w: 1024, h: 1024 },
+  { label: '512²', w: 512, h: 512 },
+  { label: '1080²', w: 1080, h: 1080 },
+  { label: '600²', w: 600, h: 600 },
+  { label: '64²', w: 64, h: 64 },
+];
 
 type Unit = 'px' | 'cm' | 'in';
 
@@ -146,12 +160,15 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
   onToggleGridLock,
   rulersVisible,
   onToggleRulers,
+  guidesLocked,
+  onToggleGuidesLock,
   guides,
   onUpdateGuide,
   onRemoveGuide,
   onClearGuides,
   artboardColor,
   onEditBackground,
+  onFitArtwork,
 }) => {
   const [unit, setUnit] = useState<Unit>('px');
   const [wDraft, setWDraft] = useState(String(width));
@@ -250,11 +267,38 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
             </label>
           </div>
 
+          <div className="flex flex-wrap items-center gap-1.5">
+            {PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  onResize(preset.w, preset.h);
+                  setWDraft(String(toUnit(preset.w, unit)));
+                  setHDraft(String(toUnit(preset.h, unit)));
+                }}
+                className="press h-7 rounded-lg border border-line bg-ink-1 px-2 font-mono text-[10px] font-semibold text-dim hover:text-text"
+              >
+                {preset.label}
+              </button>
+            ))}
+            {onFitArtwork && (
+              <button
+                type="button"
+                onClick={onFitArtwork}
+                className="press ml-auto flex h-7 items-center gap-1 rounded-lg border border-accent/40 bg-accent/10 px-2 text-[10px] font-semibold text-accent"
+              >
+                <Maximize2 size={11} /> Fit artwork
+              </button>
+            )}
+          </div>
+
           {error && <p className="text-[11.5px] text-danger">{error}</p>}
 
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] text-mute">
-              {width} × {height} px now · artwork stays in place
+              {width} × {height} px
             </span>
             <Button variant="primary" size="sm" onClick={applySize}>
               Apply
@@ -333,11 +377,6 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
             <Toggle on={gridSnap} onClick={onToggleGridSnap} label="Snap to grid" />
           </div>
 
-          <p className="text-[11px] leading-snug text-mute">
-            {gridLocked
-              ? 'Locked — spacing and appearance are fixed. Visibility and snapping still work, and artwork stays editable.'
-              : 'Locking freezes spacing and appearance only; it never blocks editing artwork.'}
-          </p>
         </section>
 
         {/* -------------------------- Rulers & guides -------------------------- */}
@@ -347,12 +386,18 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
               <Ruler size={14} className="text-accent" />
               <SectionLabel>Rulers & guides</SectionLabel>
             </span>
-            <Toggle on={rulersVisible} onClick={onToggleRulers} label="Show rulers" />
+            <span className="flex items-center gap-2">
+              <Toggle on={rulersVisible} onClick={onToggleRulers} label="Show rulers" />
+              <Toggle
+                on={guidesLocked}
+                onClick={onToggleGuidesLock}
+                label="Lock all guides"
+              />
+            </span>
           </div>
 
           <p className="text-[11px] leading-snug text-mute">
-            Drag off a ruler to pull out a guide — a tap on the ruler does nothing. The guide you
-            drag lights up with its position. Undo removes the last guide. Guides never export.
+            {guidesLocked ? 'All guides locked.' : 'Drag from a ruler to add a guide.'}
           </p>
 
           {guides.length > 0 && (

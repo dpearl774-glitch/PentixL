@@ -44,12 +44,12 @@ export const PressureSheet: React.FC<PressureSheetProps> = ({ open, onClose, con
       onClose={onClose}
       title="Brush pressure"
       eyebrow="Studio"
-      subtitle="How finger and stylus speed turns into stroke weight."
+      subtitle="Stroke weight from speed or pressure."
     >
       <div className="flex flex-col gap-5">
         <div className="grid h-20 place-items-center rounded-xl border border-line bg-ink-0">
           <svg viewBox="0 0 260 60" className="h-16 w-full px-2">
-            <path d={preview} fill="#cdff5c" />
+            <path d={preview} fill="#4c8dff" />
           </svg>
         </div>
 
@@ -66,10 +66,10 @@ export const PressureSheet: React.FC<PressureSheetProps> = ({ open, onClose, con
           />
           <p className="text-[11px] leading-relaxed text-mute">
             {config.source === 'stylus-or-touch'
-              ? 'Stylus pressure when available, finger speed otherwise.'
+              ? 'Pressure when available, speed otherwise.'
               : config.source === 'velocity'
-                ? 'Always derive weight from speed — predictable with a finger.'
-                : 'One constant weight, like a technical pen.'}
+                ? 'Weight follows speed.'
+                : 'One constant weight.'}
           </p>
         </section>
 

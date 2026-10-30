@@ -5,7 +5,6 @@ import {
   Trash2,
   FlipHorizontal,
   FlipVertical,
-  Combine,
   Minus,
   Plus,
   CornerDownRight,
@@ -22,9 +21,18 @@ import {
   Hexagon,
   Hand,
   Minus as Line,
+  AlignHorizontalJustifyStart,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyEnd,
+  AlignVerticalJustifyStart,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  AlignHorizontalSpaceAround,
+  AlignVerticalSpaceAround,
 } from 'lucide-react';
 import { ShapeKind, ToolType } from '../types/vector';
 import { BooleanOperation } from '../utils/shapeBuilder';
+import { AlignMode, DistributeAxis } from '../utils/align';
 import { Chip, IconButton } from './ui/primitives';
 
 interface ToolOptionsProps {
@@ -62,7 +70,13 @@ interface ToolOptionsProps {
   onPaste: () => void;
   canPaste: boolean;
   onRoundCorners: (radius: number) => void;
+  onSimplify: (tolerance: number) => void;
+  /** Turns a stroke into a closed fill so the shape builder can use it */
+  onExpandStroke?: () => void;
+  canExpandStroke?: boolean;
   onExitPan: () => void;
+  onAlign: (mode: AlignMode) => void;
+  onDistribute: (axis: DistributeAxis) => void;
 }
 
 const QUICK_SHAPES: { kind: ShapeKind; label: string; icon: React.ReactNode }[] = [
@@ -72,6 +86,20 @@ const QUICK_SHAPES: { kind: ShapeKind; label: string; icon: React.ReactNode }[] 
   { kind: 'star', label: 'Star', icon: <Star size={14} /> },
   { kind: 'polygon', label: 'Polygon', icon: <Hexagon size={14} /> },
   { kind: 'line', label: 'Line', icon: <Line size={14} /> },
+];
+
+const ALIGN_BUTTONS: { mode: AlignMode; label: string; icon: React.ReactNode }[] = [
+  { mode: 'left', label: 'Align left', icon: <AlignHorizontalJustifyStart size={14} /> },
+  { mode: 'center-x', label: 'Align centres', icon: <AlignHorizontalJustifyCenter size={14} /> },
+  { mode: 'right', label: 'Align right', icon: <AlignHorizontalJustifyEnd size={14} /> },
+  { mode: 'top', label: 'Align top', icon: <AlignVerticalJustifyStart size={14} /> },
+  { mode: 'center-y', label: 'Align middles', icon: <AlignVerticalJustifyCenter size={14} /> },
+  { mode: 'bottom', label: 'Align bottom', icon: <AlignVerticalJustifyEnd size={14} /> },
+];
+
+const DISTRIBUTE_BUTTONS: { axis: DistributeAxis; label: string; short: string; icon: React.ReactNode }[] = [
+  { axis: 'horizontal', label: 'Distribute across', short: 'Even H', icon: <AlignHorizontalSpaceAround size={13} /> },
+  { axis: 'vertical', label: 'Distribute down', short: 'Even V', icon: <AlignVerticalSpaceAround size={13} /> },
 ];
 
 const Swatch: React.FC<{
@@ -148,10 +176,16 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   onPaste,
   canPaste,
   onRoundCorners,
+  onSimplify,
+  onExpandStroke,
+  canExpandStroke,
   onExitPan,
+  onAlign,
+  onDistribute,
 }) => {
   const isDrawing = drawingPointCount > 0 && (tool === 'pen' || tool === 'pressure-brush');
-  const [roundMenu, setRoundMenu] = React.useState(false);
+  const [alignMenu, setAlignMenu] = React.useState(false);
+  const [moreMenu, setMoreMenu] = React.useState(false);
 
   if (tool === 'hand' && selectedCount === 0) {
     return (
@@ -159,7 +193,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
         <div className="mx-auto flex h-11 max-w-3xl items-center gap-2 px-2">
           <Hand size={14} className="shrink-0 text-accent" />
           <span className="truncate text-[11px] text-mute">
-            Drag to move the canvas · pinch with two fingers to zoom
+            Drag to pan · pinch to zoom
           </span>
           <span className="flex-1" />
           <Chip onClick={onExitPan}>Back to Select</Chip>
@@ -358,24 +392,144 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                   <ClipboardPaste size={14} />
                 </IconButton>
                 <div className="relative shrink-0">
-                  <Chip active={roundMenu} icon={<Spline size={13} />} onClick={() => setRoundMenu((v) => !v)}>
-                    Round
+                  <Chip
+                    active={alignMenu}
+                    icon={<AlignHorizontalJustifyStart size={13} />}
+                    onClick={() => {
+                      setMoreMenu(false);
+                      setAlignMenu((v) => !v);
+                    }}
+                  >
+                    Align
                   </Chip>
-                  {roundMenu && (
-                    <div className="absolute bottom-[calc(100%+6px)] left-0 z-40 w-32 rounded-xl border border-line bg-ink-2 p-1 shadow-2xl">
-                      {[0, 8, 16, 28, 48].map((r) => (
+                  {alignMenu && (
+                    <div className="absolute bottom-[calc(100%+6px)] left-0 z-40 w-[186px] rounded-xl border border-line bg-ink-2 p-1.5 shadow-2xl">
+                      <div className="grid grid-cols-3 gap-1">
+                        {ALIGN_BUTTONS.map((b) => (
+                          <button
+                            key={b.mode}
+                            type="button"
+                            aria-label={b.label}
+                            onClick={() => {
+                              onAlign(b.mode);
+                              setAlignMenu(false);
+                            }}
+                            className="press grid h-9 place-items-center rounded-lg bg-ink-3 text-dim hover:text-accent"
+                          >
+                            {b.icon}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mt-1 grid grid-cols-2 gap-1">
+                        {DISTRIBUTE_BUTTONS.map((b) => (
+                          <button
+                            key={b.axis}
+                            type="button"
+                            aria-label={b.label}
+                            onClick={() => {
+                              onDistribute(b.axis);
+                              setAlignMenu(false);
+                            }}
+                            className="press flex h-8 items-center justify-center gap-1 rounded-lg bg-ink-3 font-mono text-[9px] font-bold uppercase text-dim hover:text-accent"
+                          >
+                            {b.icon} {b.short}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="relative shrink-0">
+                  <Chip
+                    active={moreMenu}
+                    icon={<SlidersHorizontal size={13} />}
+                    onClick={() => {
+                      setAlignMenu(false);
+                      setMoreMenu((v) => !v);
+                    }}
+                  >
+                    More
+                  </Chip>
+                  {moreMenu && (
+                    <div className="absolute bottom-[calc(100%+6px)] left-0 z-40 w-[190px] rounded-xl border border-line bg-ink-2 p-1.5 shadow-2xl">
+                      <span className="block px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
+                        Corner radius
+                      </span>
+                      <div className="grid grid-cols-5 gap-1">
+                        {[0, 8, 16, 28, 48].map((r) => (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => {
+                              onRoundCorners(r);
+                              setMoreMenu(false);
+                            }}
+                            className="press h-7 rounded-md bg-ink-3 font-mono text-[9px] font-bold text-dim hover:text-accent"
+                          >
+                            {r === 0 ? '—' : r}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="mt-1.5 block px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
+                        Simplify
+                      </span>
+                      <div className="grid grid-cols-4 gap-1">
+                        {[1, 2, 4, 8].map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => {
+                              onSimplify(t);
+                              setMoreMenu(false);
+                            }}
+                            className="press h-7 rounded-md bg-ink-3 font-mono text-[9px] font-bold text-dim hover:text-accent"
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                      {canExpandStroke && onExpandStroke && (
                         <button
-                          key={r}
                           type="button"
                           onClick={() => {
-                            onRoundCorners(r);
-                            setRoundMenu(false);
+                            onExpandStroke();
+                            setMoreMenu(false);
                           }}
-                          className="flex h-8 w-full items-center justify-between rounded-lg px-2 font-mono text-[11px] font-semibold text-dim hover:bg-ink-3 hover:text-text"
+                          className="press mt-1.5 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-ink-3 text-[11px] font-semibold text-dim hover:text-accent"
                         >
-                          {r === 0 ? 'sharp' : `${r}px`}
+                          <Spline size={12} /> Outline stroke
                         </button>
-                      ))}
+                      )}
+                      {selectedCount >= 2 && (
+                        <>
+                          <span className="mt-1.5 block px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
+                            Pathfinder
+                          </span>
+                          <div className="grid grid-cols-3 gap-1">
+                            {(
+                              [
+                                ['union', 'Unite'],
+                                ['subtract', 'Minus'],
+                                ['intersect', 'Intersect'],
+                                ['exclude', 'Exclude'],
+                                ['divide', 'Divide'],
+                              ] as [BooleanOperation, string][]
+                            ).map(([op, label]) => (
+                              <button
+                                key={op}
+                                type="button"
+                                onClick={() => {
+                                  onBoolean(op);
+                                  setMoreMenu(false);
+                                }}
+                                className="press h-8 rounded-lg bg-ink-3 text-[10px] font-semibold text-dim hover:text-accent"
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -401,25 +555,6 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                   </>
                 )}
 
-                {selectedCount >= 2 && (
-                  <>
-                    <Divider />
-                    <span className="label-mono shrink-0 pl-0.5">Pathfinder</span>
-                    {(
-                      [
-                        ['union', 'Unite'],
-                        ['subtract', 'Minus'],
-                        ['intersect', 'Intersect'],
-                        ['exclude', 'Exclude'],
-                        ['divide', 'Divide'],
-                      ] as [BooleanOperation, string][]
-                    ).map(([op, label]) => (
-                      <Chip key={op} icon={<Combine size={12} />} onClick={() => onBoolean(op)}>
-                        {label}
-                      </Chip>
-                    ))}
-                  </>
-                )}
               </>
             )}
           </>
@@ -431,7 +566,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
             <Chip icon={<TypeIcon size={13} />} onClick={onOpenText}>
               Add text
             </Chip>
-            <span className="text-[11px] text-mute">or tap the canvas to place a label</span>
+            <span className="text-[11px] text-mute">or tap the canvas</span>
           </>
         )}
 

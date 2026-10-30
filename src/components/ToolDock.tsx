@@ -1,5 +1,5 @@
 import React from 'react';
-import { MousePointer2, PenTool, Square, Type, Brush, Crosshair } from 'lucide-react';
+import { MousePointer2, PenTool, Square, Type, Brush } from 'lucide-react';
 import { ToolType } from '../types/vector';
 import { haptic } from '../theme';
 
@@ -9,7 +9,7 @@ interface ToolDockProps {
   onOpenShapes: () => void;
 }
 
-const ShapeBuilderGlyph: React.FC<{ size?: number }> = ({ size = 20 }) => (
+const ShapeBuilderGlyph: React.FC<{ size?: number }> = ({ size = 21 }) => (
   <svg
     width={size}
     height={size}
@@ -35,20 +35,22 @@ interface Slot {
   opensSheet?: boolean;
 }
 
-/** Every tool that matters is one tap away — nothing hides behind a long press. */
+/**
+ * Six tools, one tap each. Node editing is the second mode of Select — a
+ * double-tap enters it — so it no longer costs a permanent slot.
+ */
 const SLOTS: Slot[] = [
-  { id: 'select', label: 'Select', aria: 'Select and move', icon: <MousePointer2 size={20} /> },
-  { id: 'direct-select', label: 'Direct', aria: 'Direct select nodes', icon: <Crosshair size={20} /> },
-  { id: 'pen', label: 'Pen', aria: 'Pen tool', icon: <PenTool size={20} /> },
-  { id: 'pressure-brush', label: 'Brush', aria: 'Pressure brush', icon: <Brush size={20} /> },
+  { id: 'select', label: 'Select', aria: 'Select and edit nodes', icon: <MousePointer2 size={21} /> },
+  { id: 'pen', label: 'Pen', aria: 'Pen tool', icon: <PenTool size={21} /> },
+  { id: 'pressure-brush', label: 'Brush', aria: 'Pressure brush', icon: <Brush size={21} /> },
   {
     id: 'shape-builder',
     label: 'Build',
     aria: 'Shape builder',
     icon: <ShapeBuilderGlyph />,
   },
-  { id: 'shape', label: 'Shapes', aria: 'Shape library', icon: <Square size={19} />, opensSheet: true },
-  { id: 'text', label: 'Text', aria: 'Text tool', icon: <Type size={20} /> },
+  { id: 'shape', label: 'Shapes', aria: 'Shape library', icon: <Square size={20} />, opensSheet: true },
+  { id: 'text', label: 'Text', aria: 'Text tool', icon: <Type size={21} /> },
 ];
 
 export const ToolDock: React.FC<ToolDockProps> = ({ currentTool, onSelectTool, onOpenShapes }) => (
@@ -56,7 +58,11 @@ export const ToolDock: React.FC<ToolDockProps> = ({ currentTool, onSelectTool, o
     <div className="safe-bottom">
       <div className="mx-auto flex h-[58px] max-w-2xl items-stretch px-1">
         {SLOTS.map((slot) => {
-          const active = currentTool === slot.id;
+          // Select owns two modes, so it stays lit while nodes are being edited
+          const active =
+            slot.id === 'select'
+              ? currentTool === 'select' || currentTool === 'direct-select'
+              : currentTool === slot.id;
           return (
             <button
               key={slot.id}
@@ -71,13 +77,12 @@ export const ToolDock: React.FC<ToolDockProps> = ({ currentTool, onSelectTool, o
               className="press relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl"
             >
               <span className={active ? 'text-accent' : 'text-dim'}>{slot.icon}</span>
-              <span
-                className={`max-w-full truncate font-mono text-[8.5px] uppercase leading-none tracking-[0.06em] ${
-                  active ? 'text-accent' : 'text-mute'
-                }`}
-              >
-                {slot.label}
-              </span>
+              {/* Only the active tool is named — six labels at phone width read as noise */}
+              {active && (
+                <span className="max-w-full truncate font-mono text-[8.5px] uppercase leading-none tracking-[0.06em] text-accent">
+                  {slot.label}
+                </span>
+              )}
               {active && <span className="absolute -top-px h-[2px] w-6 rounded-full bg-accent" />}
             </button>
           );

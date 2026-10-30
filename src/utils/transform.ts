@@ -1,4 +1,5 @@
 import { AnchorPoint, Point, VectorPath } from '../types/vector';
+import { sampleCubicBezier } from './bezier';
 
 export interface BoundingBox {
   minX: number;
@@ -26,27 +27,41 @@ export function computePathsBoundingBox(paths: VectorPath[]): BoundingBox | null
 
   let hasPoints = false;
 
+  const include = (p: Point) => {
+    hasPoints = true;
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  };
+
+  // Bounds come from the curves themselves. Control handles sit off the
+  // outline, so counting them made the transform box much larger than the art.
+  const includeContour = (points: AnchorPoint[], closed: boolean) => {
+    if (points.length === 0) return;
+    if (points.length === 1) {
+      include(points[0]);
+      return;
+    }
+    const segments = closed ? points.length : points.length - 1;
+    for (let i = 0; i < segments; i++) {
+      const a = points[i];
+      const b = points[(i + 1) % points.length];
+      const samples = sampleCubicBezier(
+        a,
+        a.handleOut || a,
+        b.handleIn || b,
+        b,
+        16
+      );
+      for (const s of samples) include(s);
+    }
+  };
+
   for (const path of paths) {
-    for (const pt of path.points) {
-      hasPoints = true;
-      if (pt.x < minX) minX = pt.x;
-      if (pt.x > maxX) maxX = pt.x;
-      if (pt.y < minY) minY = pt.y;
-      if (pt.y > maxY) maxY = pt.y;
-
-      if (pt.handleIn) {
-        if (pt.handleIn.x < minX) minX = pt.handleIn.x;
-        if (pt.handleIn.x > maxX) maxX = pt.handleIn.x;
-        if (pt.handleIn.y < minY) minY = pt.handleIn.y;
-        if (pt.handleIn.y > maxY) maxY = pt.handleIn.y;
-      }
-
-      if (pt.handleOut) {
-        if (pt.handleOut.x < minX) minX = pt.handleOut.x;
-        if (pt.handleOut.x > maxX) maxX = pt.handleOut.x;
-        if (pt.handleOut.y < minY) minY = pt.handleOut.y;
-        if (pt.handleOut.y > maxY) maxY = pt.handleOut.y;
-      }
+    includeContour(path.points, path.closed);
+    if (path.holes) {
+      for (const hole of path.holes) includeContour(hole, true);
     }
 
     if (path.text) {
@@ -84,6 +99,26 @@ export function computePathsBoundingBox(paths: VectorPath[]): BoundingBox | null
 }
 
 /**
+ * Moves paths by a delta. Counters travel with their outline — without this a
+ * traced logo's letter bowls stay behind when the group is dragged.
+ */
+export function translatePaths(paths: VectorPath[], dx: number, dy: number): VectorPath[] {
+  const shift = (pt: AnchorPoint): AnchorPoint => ({
+    ...pt,
+    x: pt.x + dx,
+    y: pt.y + dy,
+    handleIn: pt.handleIn ? { x: pt.handleIn.x + dx, y: pt.handleIn.y + dy } : undefined,
+    handleOut: pt.handleOut ? { x: pt.handleOut.x + dx, y: pt.handleOut.y + dy } : undefined,
+  });
+
+  return paths.map((path) => ({
+    ...path,
+    points: path.points.map(shift),
+    ...(path.holes ? { holes: path.holes.map((hole) => hole.map(shift)) } : {}),
+  }));
+}
+
+/**
  * Scales an array of paths relative to a fixed origin point
  */
 export function scalePaths(
@@ -92,41 +127,31 @@ export function scalePaths(
   scaleX: number,
   scaleY: number
 ): VectorPath[] {
-  return paths.map((path) => {
-    const scaledPoints: AnchorPoint[] = path.points.map((pt) => {
-      const newX = origin.x + (pt.x - origin.x) * scaleX;
-      const newY = origin.y + (pt.y - origin.y) * scaleY;
-
-      let handleIn: Point | undefined;
-      if (pt.handleIn) {
-        handleIn = {
+  const scalePoint = (pt: AnchorPoint): AnchorPoint => ({
+    ...pt,
+    x: origin.x + (pt.x - origin.x) * scaleX,
+    y: origin.y + (pt.y - origin.y) * scaleY,
+    handleIn: pt.handleIn
+      ? {
           x: origin.x + (pt.handleIn.x - origin.x) * scaleX,
           y: origin.y + (pt.handleIn.y - origin.y) * scaleY,
-        };
-      }
-
-      let handleOut: Point | undefined;
-      if (pt.handleOut) {
-        handleOut = {
+        }
+      : undefined,
+    handleOut: pt.handleOut
+      ? {
           x: origin.x + (pt.handleOut.x - origin.x) * scaleX,
           y: origin.y + (pt.handleOut.y - origin.y) * scaleY,
-        };
-      }
+        }
+      : undefined,
+  });
 
-      return {
-        ...pt,
-        x: newX,
-        y: newY,
-        handleIn,
-        handleOut,
-      };
-    });
-
+  return paths.map((path) => {
     const newFontSize = path.fontSize ? Math.max(10, Math.round(path.fontSize * Math.abs((scaleX + scaleY) / 2))) : undefined;
 
     return {
       ...path,
-      points: scaledPoints,
+      points: path.points.map(scalePoint),
+      ...(path.holes ? { holes: path.holes.map((hole) => hole.map(scalePoint)) } : {}),
       fontSize: newFontSize,
     };
   });
@@ -152,19 +177,18 @@ export function rotatePaths(
     };
   };
 
-  return paths.map((path) => {
-    const rotatedPoints: AnchorPoint[] = path.points.map((pt) => ({
-      ...pt,
-      ...rotatePoint(pt),
-      handleIn: pt.handleIn ? rotatePoint(pt.handleIn) : undefined,
-      handleOut: pt.handleOut ? rotatePoint(pt.handleOut) : undefined,
-    }));
-
-    return {
-      ...path,
-      points: rotatedPoints,
-    };
+  const rotateAnchor = (pt: AnchorPoint): AnchorPoint => ({
+    ...pt,
+    ...rotatePoint(pt),
+    handleIn: pt.handleIn ? rotatePoint(pt.handleIn) : undefined,
+    handleOut: pt.handleOut ? rotatePoint(pt.handleOut) : undefined,
   });
+
+  return paths.map((path) => ({
+    ...path,
+    points: path.points.map(rotateAnchor),
+    ...(path.holes ? { holes: path.holes.map((hole) => hole.map(rotateAnchor)) } : {}),
+  }));
 }
 
 /**
@@ -175,39 +199,27 @@ export function flipPaths(
   center: Point,
   direction: 'horizontal' | 'vertical'
 ): VectorPath[] {
-  return paths.map((path) => {
-    const flippedPoints: AnchorPoint[] = path.points.map((pt) => {
-      const newX = direction === 'horizontal' ? center.x - (pt.x - center.x) : pt.x;
-      const newY = direction === 'vertical' ? center.y - (pt.y - center.y) : pt.y;
-
-      let handleIn: Point | undefined;
-      if (pt.handleIn) {
-        handleIn = {
+  const flipPoint = (pt: AnchorPoint): AnchorPoint => ({
+    ...pt,
+    x: direction === 'horizontal' ? center.x - (pt.x - center.x) : pt.x,
+    y: direction === 'vertical' ? center.y - (pt.y - center.y) : pt.y,
+    handleIn: pt.handleIn
+      ? {
           x: direction === 'horizontal' ? center.x - (pt.handleIn.x - center.x) : pt.handleIn.x,
           y: direction === 'vertical' ? center.y - (pt.handleIn.y - center.y) : pt.handleIn.y,
-        };
-      }
-
-      let handleOut: Point | undefined;
-      if (pt.handleOut) {
-        handleOut = {
+        }
+      : undefined,
+    handleOut: pt.handleOut
+      ? {
           x: direction === 'horizontal' ? center.x - (pt.handleOut.x - center.x) : pt.handleOut.x,
           y: direction === 'vertical' ? center.y - (pt.handleOut.y - center.y) : pt.handleOut.y,
-        };
-      }
-
-      return {
-        ...pt,
-        x: newX,
-        y: newY,
-        handleIn,
-        handleOut,
-      };
-    });
-
-    return {
-      ...path,
-      points: flippedPoints,
-    };
+        }
+      : undefined,
   });
+
+  return paths.map((path) => ({
+    ...path,
+    points: path.points.map(flipPoint),
+    ...(path.holes ? { holes: path.holes.map((hole) => hole.map(flipPoint)) } : {}),
+  }));
 }

@@ -45,7 +45,7 @@ export const FontsSheet: React.FC<FontsSheetProps> = ({
       onClose={onClose}
       title="Fonts"
       eyebrow="Typography"
-      subtitle="Import a typeface and it becomes available in the text tool."
+      subtitle="Imported typefaces for the text tool."
     >
       <div className="flex flex-col gap-5">
         <input
@@ -84,10 +84,7 @@ export const FontsSheet: React.FC<FontsSheetProps> = ({
         <section className="flex flex-col gap-1.5">
           <SectionLabel>Imported · {customFonts.length}</SectionLabel>
           {customFonts.length === 0 ? (
-            <p className="text-[11.5px] leading-relaxed text-mute">
-              The bundled system fonts are already available. Imported fonts stay loaded for this
-              session.
-            </p>
+            <p className="text-[11.5px] leading-relaxed text-mute">Stored on this device.</p>
           ) : (
             customFonts.map((family) => (
               <div

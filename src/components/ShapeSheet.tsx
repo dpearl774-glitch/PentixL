@@ -45,7 +45,7 @@ export const ShapeSheet: React.FC<ShapeSheetProps> = ({
     onClose={onClose}
     title="Shapes"
     eyebrow="Insert"
-    subtitle="Pick one, then drag on the canvas to size it — nothing is added until you drag."
+    subtitle="Pick a shape, then drag to size it."
     footer={
       <Button variant="primary" block onClick={onClose}>
         <Check size={15} /> Draw “{selectedShape.replace('-', ' ')}”

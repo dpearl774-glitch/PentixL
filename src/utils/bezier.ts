@@ -1,4 +1,10 @@
 import { AnchorPoint, Point, VectorPath, PressureConfig } from '../types/vector';
+import {
+  decimateContour,
+  fitSmoothBezierCurves,
+  simplifyPoints,
+  simplifyRing,
+} from './contourTracer';
 
 /**
  * Calculates Euclidean distance between two points
@@ -343,4 +349,199 @@ export function roundPathCorners(path: VectorPath, radius: number): VectorPath {
     ...path,
     points: newPoints,
   };
+}
+
+/**
+ * Nearest point on one segment, measured on the curve itself rather than the
+ * straight line between its two anchors.
+ */
+export function nearestPointOnSegment(
+  path: VectorPath,
+  segmentIndex: number,
+  pt: Point,
+  steps = 48
+): { point: Point; t: number; distance: number } | null {
+  const count = path.points.length;
+  if (count < 2) return null;
+
+  const a = path.points[segmentIndex];
+  const b = path.points[(segmentIndex + 1) % count];
+  if (!a || !b) return null;
+
+  const samples = sampleCubicBezier(
+    a,
+    a.handleOut || { x: a.x, y: a.y },
+    b.handleIn || { x: b.x, y: b.y },
+    b,
+    steps
+  );
+
+  let best: { point: Point; t: number; distance: number } | null = null;
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    const d = Math.hypot(s.x - pt.x, s.y - pt.y);
+    if (!best || d < best.distance) best = { point: s, t: i / steps, distance: d };
+  }
+
+  return best;
+}
+
+/**
+ * Inserts a node on a segment without moving the drawn outline: the segment is
+ * split with de Casteljau, so the two halves trace exactly the old curve. A
+ * straight segment gets a plain corner, because splitting it needs no handles.
+ */
+export function insertPointOnSegment(
+  path: VectorPath,
+  segmentIndex: number,
+  t: number,
+  id: string
+): { points: AnchorPoint[]; index: number } | null {
+  const count = path.points.length;
+  if (count < 2) return null;
+
+  const aIndex = segmentIndex;
+  const bIndex = (segmentIndex + 1) % count;
+  const a = path.points[aIndex];
+  const b = path.points[bIndex];
+  if (!a || !b) return null;
+
+  const clamped = Math.min(0.97, Math.max(0.03, t));
+  const index = aIndex + 1;
+  const points = [...path.points];
+
+  if (!a.handleOut && !b.handleIn) {
+    points.splice(index, 0, {
+      id,
+      x: a.x + (b.x - a.x) * clamped,
+      y: a.y + (b.y - a.y) * clamped,
+      type: 'corner',
+    });
+    return { points, index };
+  }
+
+  const p0 = { x: a.x, y: a.y };
+  const p1 = { x: b.x, y: b.y };
+  const cp1 = a.handleOut || p0;
+  const cp2 = b.handleIn || p1;
+  const lerp = (m: Point, n: Point): Point => ({
+    x: m.x + (n.x - m.x) * clamped,
+    y: m.y + (n.y - m.y) * clamped,
+  });
+
+  const q0 = lerp(p0, cp1);
+  const q1 = lerp(cp1, cp2);
+  const q2 = lerp(cp2, p1);
+  const r0 = lerp(q0, q1);
+  const r1 = lerp(q1, q2);
+  const mid = lerp(r0, r1);
+
+  points[aIndex] = { ...a, handleOut: q0 };
+  points[bIndex] = { ...b, handleIn: q2 };
+  points.splice(index, 0, {
+    id,
+    x: mid.x,
+    y: mid.y,
+    type: 'smooth',
+    handleIn: r0,
+    handleOut: r1,
+  });
+
+  return { points, index };
+}
+
+/**
+ * Flattens anchors (and any curve handles) into an ordered polygon.
+ */
+function flattenAnchors(
+  anchors: AnchorPoint[],
+  closed: boolean,
+  stepsPerCurve = 16
+): Point[] {
+  const count = anchors.length;
+  if (count < 2) return anchors.map((p) => ({ x: p.x, y: p.y }));
+
+  const out: Point[] = [];
+  const segments = closed ? count : count - 1;
+
+  for (let i = 0; i < segments; i++) {
+    const a = anchors[i];
+    const b = anchors[(i + 1) % count];
+    const cp1 = a.handleOut;
+    const cp2 = b.handleIn;
+
+    if (cp1 || cp2) {
+      const sampled = sampleCubicBezier(a, cp1 ?? a, cp2 ?? b, b, stepsPerCurve);
+      // Drop the last sample: the next segment contributes that anchor itself.
+      for (let s = 0; s < sampled.length - 1; s++) {
+        out.push({ x: sampled[s].x, y: sampled[s].y });
+      }
+    } else {
+      out.push({ x: a.x, y: a.y });
+    }
+  }
+
+  if (!closed) {
+    const last = anchors[count - 1];
+    out.push({ x: last.x, y: last.y });
+  }
+
+  return out;
+}
+
+/**
+ * Reduces the anchor count of an already-drawn path without re-tracing it.
+ * The outline is flattened, simplified at `tolerance` artboard units and
+ * refitted with smooth handles, so an over-traced logo or a converted glyph
+ * becomes editable again while keeping its shape. Counters travel with it.
+ */
+export function simplifyPath(path: VectorPath, tolerance: number): VectorPath {
+  if (path.text || tolerance <= 0) return path;
+
+  const reduce = (
+    anchors: AnchorPoint[],
+    closed: boolean,
+    prefix: string
+  ): AnchorPoint[] | null => {
+    if (anchors.length < (closed ? 4 : 3)) return null;
+    const flat = flattenAnchors(anchors, closed);
+    const reduced = closed
+      ? simplifyRing(flat, tolerance)
+      : decimateContour(simplifyPoints(flat, tolerance), tolerance, false);
+    if (reduced.length < (closed ? 3 : 2) || reduced.length >= anchors.length) return null;
+    // The fit may use part of the chosen tolerance: the user asked for at most
+    // `tolerance` units of shape change, and a fit inside half of that keeps
+    // the result both sparse and honest.
+    return fitSmoothBezierCurves(reduced, prefix, closed, Math.max(0.4, tolerance * 0.5));
+  };
+
+  const outer = reduce(path.points, path.closed, `${path.id}-s`);
+  const holes = path.holes?.map(
+    (hole, i) => reduce(hole, true, `${path.id}-h${i}`) ?? hole
+  );
+
+  const before = path.points.length + (path.holes?.reduce((n, h) => n + h.length, 0) ?? 0);
+  const after = (outer ?? path.points).length + (holes?.reduce((n, h) => n + h.length, 0) ?? 0);
+  if (after >= before) return path;
+
+  return {
+    ...path,
+    points: outer ?? path.points,
+    ...(holes ? { holes } : {}),
+  };
+}
+
+/**
+ * Path data for a path and its counters. Draw the result with the even-odd rule
+ * so a hole really is a hole rather than another filled shape on top.
+ */
+export function pathToSvgD(path: VectorPath): string {
+  let d = pointsToSvgPath(path.points, path.closed);
+  if (path.holes && path.holes.length > 0) {
+    for (const hole of path.holes) {
+      const holeD = pointsToSvgPath(hole, true);
+      if (holeD) d += ` ${holeD}`;
+    }
+  }
+  return d;
 }
