@@ -1,5 +1,5 @@
 import React from 'react';
-import { MousePointer2, PenTool, Square, Type, Brush } from 'lucide-react';
+import { MousePointer2, PenTool, Square, Type, Brush, Crosshair } from 'lucide-react';
 import { ToolType } from '../types/vector';
 import { haptic } from '../theme';
 
@@ -35,12 +35,11 @@ interface Slot {
   opensSheet?: boolean;
 }
 
-/**
- * Six tools, one tap each. Node editing is the second mode of Select — a
- * double-tap enters it — so it no longer costs a permanent slot.
- */
+/** Every tool is one tap away. Direct Select is its own slot: node editing
+ * must never be hidden behind a gesture. */
 const SLOTS: Slot[] = [
-  { id: 'select', label: 'Select', aria: 'Select and edit nodes', icon: <MousePointer2 size={21} /> },
+  { id: 'select', label: 'Select', aria: 'Select and move', icon: <MousePointer2 size={21} /> },
+  { id: 'direct-select', label: 'Nodes', aria: 'Direct select nodes', icon: <Crosshair size={21} /> },
   { id: 'pen', label: 'Pen', aria: 'Pen tool', icon: <PenTool size={21} /> },
   { id: 'pressure-brush', label: 'Brush', aria: 'Pressure brush', icon: <Brush size={21} /> },
   {
@@ -58,11 +57,7 @@ export const ToolDock: React.FC<ToolDockProps> = ({ currentTool, onSelectTool, o
     <div className="safe-bottom">
       <div className="mx-auto flex h-[58px] max-w-2xl items-stretch px-1">
         {SLOTS.map((slot) => {
-          // Select owns two modes, so it stays lit while nodes are being edited
-          const active =
-            slot.id === 'select'
-              ? currentTool === 'select' || currentTool === 'direct-select'
-              : currentTool === slot.id;
+          const active = currentTool === slot.id;
           return (
             <button
               key={slot.id}

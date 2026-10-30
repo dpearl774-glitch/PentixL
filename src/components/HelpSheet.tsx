@@ -129,8 +129,8 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
         <Item term="Pressure">Auto uses stylus pressure or finger speed, Speed follows motion, Uniform is constant.</Item>
         <Item term="Simplify">Reduces anchors on paths and traces you have already made. Lives in More.</Item>
         <Item term="Pad">
-          Optional trackpad for pen work: move or drag to aim the crosshair, click to press, scroll
-          to pan and ⌘-scroll to zoom. Hide it from the menu.
+          Optional trackpad for pen, node and select work: steer the crosshair, click to press,
+          drag to move what it landed on, scroll to pan and ⌘-scroll to zoom. Hide it from the menu.
         </Item>
       </Group>
 

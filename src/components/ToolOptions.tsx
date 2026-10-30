@@ -189,7 +189,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
 
   if (tool === 'hand' && selectedCount === 0) {
     return (
-      <div className="z-20 shrink-0 border-t border-line bg-ink-1/95">
+      <div className="relative z-20 shrink-0 border-t border-line bg-ink-1/95">
         <div className="mx-auto flex h-11 max-w-3xl items-center gap-2 px-2">
           <Hand size={14} className="shrink-0 text-accent" />
           <span className="truncate text-[11px] text-mute">
@@ -203,7 +203,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   }
 
   return (
-    <div className="z-20 shrink-0 border-t border-line bg-ink-1/95">
+    <div className="relative z-20 shrink-0 border-t border-line bg-ink-1/95">
       <div className="scroll-x mx-auto flex h-11 max-w-3xl items-center gap-1.5 px-2">
         {/* ---------------- Drawing a path ---------------- */}
         {isDrawing && (
@@ -391,148 +391,26 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                 <IconButton label="Paste objects" size="sm" onClick={onPaste} disabled={!canPaste}>
                   <ClipboardPaste size={14} />
                 </IconButton>
-                <div className="relative shrink-0">
-                  <Chip
-                    active={alignMenu}
-                    icon={<AlignHorizontalJustifyStart size={13} />}
-                    onClick={() => {
-                      setMoreMenu(false);
-                      setAlignMenu((v) => !v);
-                    }}
-                  >
-                    Align
-                  </Chip>
-                  {alignMenu && (
-                    <div className="absolute bottom-[calc(100%+6px)] left-0 z-40 w-[186px] rounded-xl border border-line bg-ink-2 p-1.5 shadow-2xl">
-                      <div className="grid grid-cols-3 gap-1">
-                        {ALIGN_BUTTONS.map((b) => (
-                          <button
-                            key={b.mode}
-                            type="button"
-                            aria-label={b.label}
-                            onClick={() => {
-                              onAlign(b.mode);
-                              setAlignMenu(false);
-                            }}
-                            className="press grid h-9 place-items-center rounded-lg bg-ink-3 text-dim hover:text-accent"
-                          >
-                            {b.icon}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mt-1 grid grid-cols-2 gap-1">
-                        {DISTRIBUTE_BUTTONS.map((b) => (
-                          <button
-                            key={b.axis}
-                            type="button"
-                            aria-label={b.label}
-                            onClick={() => {
-                              onDistribute(b.axis);
-                              setAlignMenu(false);
-                            }}
-                            className="press flex h-8 items-center justify-center gap-1 rounded-lg bg-ink-3 font-mono text-[9px] font-bold uppercase text-dim hover:text-accent"
-                          >
-                            {b.icon} {b.short}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div className="relative shrink-0">
-                  <Chip
-                    active={moreMenu}
-                    icon={<SlidersHorizontal size={13} />}
-                    onClick={() => {
-                      setAlignMenu(false);
-                      setMoreMenu((v) => !v);
-                    }}
-                  >
-                    More
-                  </Chip>
-                  {moreMenu && (
-                    <div className="absolute bottom-[calc(100%+6px)] left-0 z-40 w-[190px] rounded-xl border border-line bg-ink-2 p-1.5 shadow-2xl">
-                      <span className="block px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
-                        Corner radius
-                      </span>
-                      <div className="grid grid-cols-5 gap-1">
-                        {[0, 8, 16, 28, 48].map((r) => (
-                          <button
-                            key={r}
-                            type="button"
-                            onClick={() => {
-                              onRoundCorners(r);
-                              setMoreMenu(false);
-                            }}
-                            className="press h-7 rounded-md bg-ink-3 font-mono text-[9px] font-bold text-dim hover:text-accent"
-                          >
-                            {r === 0 ? '—' : r}
-                          </button>
-                        ))}
-                      </div>
-                      <span className="mt-1.5 block px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
-                        Simplify
-                      </span>
-                      <div className="grid grid-cols-4 gap-1">
-                        {[1, 2, 4, 8].map((t) => (
-                          <button
-                            key={t}
-                            type="button"
-                            onClick={() => {
-                              onSimplify(t);
-                              setMoreMenu(false);
-                            }}
-                            className="press h-7 rounded-md bg-ink-3 font-mono text-[9px] font-bold text-dim hover:text-accent"
-                          >
-                            {t}
-                          </button>
-                        ))}
-                      </div>
-                      {canExpandStroke && onExpandStroke && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onExpandStroke();
-                            setMoreMenu(false);
-                          }}
-                          className="press mt-1.5 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-ink-3 text-[11px] font-semibold text-dim hover:text-accent"
-                        >
-                          <Spline size={12} /> Outline stroke
-                        </button>
-                      )}
-                      {selectedCount >= 2 && (
-                        <>
-                          <span className="mt-1.5 block px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
-                            Pathfinder
-                          </span>
-                          <div className="grid grid-cols-3 gap-1">
-                            {(
-                              [
-                                ['union', 'Unite'],
-                                ['subtract', 'Minus'],
-                                ['intersect', 'Intersect'],
-                                ['exclude', 'Exclude'],
-                                ['divide', 'Divide'],
-                              ] as [BooleanOperation, string][]
-                            ).map(([op, label]) => (
-                              <button
-                                key={op}
-                                type="button"
-                                onClick={() => {
-                                  onBoolean(op);
-                                  setMoreMenu(false);
-                                }}
-                                className="press h-8 rounded-lg bg-ink-3 text-[10px] font-semibold text-dim hover:text-accent"
-                              >
-                                {label}
-                              </button>
-                            ))}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
+                <Chip
+                  active={alignMenu}
+                  icon={<AlignHorizontalJustifyStart size={13} />}
+                  onClick={() => {
+                    setMoreMenu(false);
+                    setAlignMenu((v) => !v);
+                  }}
+                >
+                  Align
+                </Chip>
+                <Chip
+                  active={moreMenu}
+                  icon={<SlidersHorizontal size={13} />}
+                  onClick={() => {
+                    setAlignMenu(false);
+                    setMoreMenu((v) => !v);
+                  }}
+                >
+                  More
+                </Chip>
                 <IconButton label="Flip horizontal" size="sm" onClick={() => onFlip('horizontal')}>
                   <FlipHorizontal size={14} />
                 </IconButton>
@@ -594,6 +472,128 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
           </>
         )}
       </div>
+
+      {/* Panels live outside the scrolling strip — inside it their tops were
+          clipped, which made Align and More look dead. */}
+      {alignMenu && (
+        <div className="absolute bottom-[calc(100%+6px)] left-2 z-40 w-[186px] rounded-xl border border-line bg-ink-2 p-1.5 shadow-2xl">
+          <div className="grid grid-cols-3 gap-1">
+            {ALIGN_BUTTONS.map((b) => (
+              <button
+                key={b.mode}
+                type="button"
+                aria-label={b.label}
+                onClick={() => {
+                  onAlign(b.mode);
+                  setAlignMenu(false);
+                }}
+                className="press grid h-9 place-items-center rounded-lg bg-ink-3 text-dim hover:text-accent"
+              >
+                {b.icon}
+              </button>
+            ))}
+          </div>
+          <div className="mt-1 grid grid-cols-2 gap-1">
+            {DISTRIBUTE_BUTTONS.map((b) => (
+              <button
+                key={b.axis}
+                type="button"
+                aria-label={b.label}
+                onClick={() => {
+                  onDistribute(b.axis);
+                  setAlignMenu(false);
+                }}
+                className="press flex h-8 items-center justify-center gap-1 rounded-lg bg-ink-3 font-mono text-[9px] font-bold uppercase text-dim hover:text-accent"
+              >
+                {b.icon} {b.short}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {moreMenu && (
+        <div className="absolute bottom-[calc(100%+6px)] right-2 z-40 w-[196px] rounded-xl border border-line bg-ink-2 p-1.5 shadow-2xl">
+          <span className="block px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
+            Corner radius
+          </span>
+          <div className="grid grid-cols-5 gap-1">
+            {[0, 8, 16, 28, 48].map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => {
+                  onRoundCorners(r);
+                  setMoreMenu(false);
+                }}
+                className="press h-7 rounded-md bg-ink-3 font-mono text-[9px] font-bold text-dim hover:text-accent"
+              >
+                {r === 0 ? '—' : r}
+              </button>
+            ))}
+          </div>
+          <span className="mt-1.5 block px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
+            Simplify
+          </span>
+          <div className="grid grid-cols-4 gap-1">
+            {[1, 2, 4, 8].map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => {
+                  onSimplify(t);
+                  setMoreMenu(false);
+                }}
+                className="press h-7 rounded-md bg-ink-3 font-mono text-[9px] font-bold text-dim hover:text-accent"
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+          {canExpandStroke && onExpandStroke && (
+            <button
+              type="button"
+              onClick={() => {
+                onExpandStroke();
+                setMoreMenu(false);
+              }}
+              className="press mt-1.5 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-ink-3 text-[11px] font-semibold text-dim hover:text-accent"
+            >
+              <Spline size={12} /> Outline stroke
+            </button>
+          )}
+          {selectedCount >= 2 && (
+            <>
+              <span className="mt-1.5 block px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
+                Pathfinder
+              </span>
+              <div className="grid grid-cols-3 gap-1">
+                {(
+                  [
+                    ['union', 'Unite'],
+                    ['subtract', 'Minus'],
+                    ['intersect', 'Intersect'],
+                    ['exclude', 'Exclude'],
+                    ['divide', 'Divide'],
+                  ] as [BooleanOperation, string][]
+                ).map(([op, label]) => (
+                  <button
+                    key={op}
+                    type="button"
+                    onClick={() => {
+                      onBoolean(op);
+                      setMoreMenu(false);
+                    }}
+                    className="press h-8 rounded-lg bg-ink-3 text-[10px] font-semibold text-dim hover:text-accent"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 };

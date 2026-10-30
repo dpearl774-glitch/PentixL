@@ -73,7 +73,7 @@ const PadGlyph: React.FC = () => (
 );
 
 /** Radius, in canvas units, of the hit target around an anchor node. */
-const ANCHOR_HIT_RADIUS = 22;
+const ANCHOR_HIT_RADIUS = 26;
 
 /**
  * Nearest point on a path's outline to `pt`, within `threshold` canvas units.
@@ -586,6 +586,29 @@ export const Canvas: React.FC<CanvasProps> = ({
     setDraggingTarget(target);
   };
 
+  /**
+   * Grabs a node for dragging. Shared by the node itself and by the handle
+   * grabbers, so a press that lands on the node always moves the node.
+   */
+  const grabAnchor = (
+    pathId: string,
+    index: number,
+    point: Point,
+    e: React.PointerEvent
+  ) => {
+    onSelectionChange({
+      selectedPathIds: [pathId],
+      selectedAnchorIndex: index,
+      selectedHandleType: null,
+    });
+    startDragOperation(e, {
+      type: 'anchor',
+      pathId,
+      pointIndex: index,
+      initialPoint: { x: point.x, y: point.y },
+    });
+  };
+
   /** While set, taps near the outline select instead of inserting a node. */
   const insertBlockedUntilRef = useRef(0);
 
@@ -824,17 +847,6 @@ export const Canvas: React.FC<CanvasProps> = ({
         });
       }
       return;
-    }
-
-    // Direct Select: Click on an existing path's segment to INSERT a new anchor node!
-    if (effectiveTool === 'direct-select' && selection.selectedPathIds.length > 0) {
-      const activePath = allPaths.find((p) => p.id === selection.selectedPathIds[0]);
-      const hit = activePath ? segmentInsertAt(activePath, canvasPt, 14 / view.zoom) : null;
-
-      if (activePath && hit) {
-        insertNodeAt(activePath, hit, e);
-        return;
-      }
     }
 
     // Direct select on empty canvas: clear selection, never marquee
@@ -1217,6 +1229,21 @@ export const Canvas: React.FC<CanvasProps> = ({
       };
       brushStrokeRef.current = updatedPath;
       setActivePathInProgress(updatedPath);
+      return;
+    }
+
+    // A trackpad click lands with a pixel of travel. Until the pointer has
+    // moved a few screen pixels, a press is a selection, not a drag — otherwise
+    // picking a node nudged it off its corner.
+    if (
+      draggingTarget &&
+      dragStartPoint &&
+      (draggingTarget.type === 'anchor' ||
+        draggingTarget.type === 'handle-in' ||
+        draggingTarget.type === 'handle-out' ||
+        draggingTarget.type === 'path') &&
+      distance(canvasPt, dragStartPoint) * view.zoom < 3
+    ) {
       return;
     }
 
@@ -1949,7 +1976,13 @@ export const Canvas: React.FC<CanvasProps> = ({
   })();
 
   /* --------------------------- Precision pad --------------------------- */
-  const padAvailable = (effectiveTool === 'pen' || effectiveTool === 'direct-select') && showPrecisionPad;
+  // Pen, nodes and plain selection: the pad is how you aim without covering
+  // the thing you are about to grab, so it belongs in Select too.
+  const padAvailable =
+    (effectiveTool === 'pen' ||
+      effectiveTool === 'direct-select' ||
+      effectiveTool === 'select') &&
+    showPrecisionPad;
 
   useEffect(() => {
     if (padAvailable) return;
@@ -2215,24 +2248,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                           if (isShapeBuilder) {
                             handleShapeBuilderToggle(path, e);
                           } else if (effectiveTool === 'direct-select') {
-                            // A tap on the outline of the path being edited adds a
-                            // node there. This handler is what the tap actually
-                            // reaches, so the insert has to live here too.
-                            if (
-                              selection.selectedPathIds.length === 1 &&
-                              selection.selectedPathIds[0] === path.id
-                            ) {
-                              const hit = segmentInsertAt(
-                                path,
-                                screenToCanvas(e.clientX, e.clientY),
-                                14 / view.zoom
-                              );
-                              if (hit) {
-                                e.stopPropagation();
-                                insertNodeAt(path, hit, e);
-                                return;
-                              }
-                            }
+                            // A click only selects. Nodes are inserted with the +
+                            // badge, so a press never quietly rewrites the path.
                             e.stopPropagation();
                             const already = selection.selectedPathIds.includes(path.id);
                             onSelectionChange({
@@ -2301,24 +2318,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                           if (isShapeBuilder) {
                             handleShapeBuilderToggle(path, e);
                           } else if (effectiveTool === 'direct-select') {
-                            // A tap on the outline of the path being edited adds a
-                            // node there. This handler is what the tap actually
-                            // reaches, so the insert has to live here too.
-                            if (
-                              selection.selectedPathIds.length === 1 &&
-                              selection.selectedPathIds[0] === path.id
-                            ) {
-                              const hit = segmentInsertAt(
-                                path,
-                                screenToCanvas(e.clientX, e.clientY),
-                                14 / view.zoom
-                              );
-                              if (hit) {
-                                e.stopPropagation();
-                                insertNodeAt(path, hit, e);
-                                return;
-                              }
-                            }
+                            // A click only selects. Nodes are inserted with the +
+                            // badge, so a press never quietly rewrites the path.
                             e.stopPropagation();
                             const already = selection.selectedPathIds.includes(path.id);
                             onSelectionChange({
@@ -2639,6 +2640,31 @@ export const Canvas: React.FC<CanvasProps> = ({
             />
           )}
 
+          {/* Build: the objects it is about to work on. A wash on the whole
+              object, under the region overlay, so picking Build shows its
+              subject immediately instead of only lighting up on hover. */}
+          {tool === 'shape-builder' && participatingPaths.length >= 2 && (
+            <g className="shape-builder-participants pointer-events-none">
+              {participatingPaths.map((p) => {
+                const d = pathToSvgD(p);
+                if (!d) return null;
+                const picked = selection.selectedPathIds.includes(p.id);
+                return (
+                  <path
+                    key={`sb-participant-${p.id}`}
+                    d={d}
+                    fill={p.closed ? CANVAS.accent : 'none'}
+                    fillOpacity={picked ? 0.13 : 0.06}
+                    stroke={CANVAS.accent}
+                    strokeOpacity={picked ? 0.85 : 0.35}
+                    strokeWidth={(picked ? 2 : 1) / view.zoom}
+                    strokeDasharray={picked ? undefined : `${4 / view.zoom} ${4 / view.zoom}`}
+                  />
+                );
+              })}
+            </g>
+          )}
+
           {/* ================= ADOBE ILLUSTRATOR SHAPE BUILDER INTERACTIVE OVERLAY ================= */}
           {tool === 'shape-builder' && atomicRegions.length > 0 && (
             <g className="shape-builder-overlay">
@@ -2797,7 +2823,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         <circle
                           cx={pt.x}
                           cy={pt.y}
-                          r={22 / view.zoom}
+                          r={ANCHOR_HIT_RADIUS / view.zoom}
                           fill="transparent"
                           className="cursor-pointer"
                           onPointerDown={(e) => {
@@ -2822,17 +2848,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                               return;
                             }
 
-                            onSelectionChange({
-                              selectedPathIds: [path.id],
-                              selectedAnchorIndex: idx,
-                              selectedHandleType: null,
-                            });
-                            startDragOperation(e, {
-                              type: 'anchor',
-                              pathId: path.id,
-                              pointIndex: idx,
-                              initialPoint: { x: pt.x, y: pt.y },
-                            });
+                            grabAnchor(path.id, idx, pt, e);
                           }}
                         />
 
@@ -2852,6 +2868,16 @@ export const Canvas: React.FC<CanvasProps> = ({
                               if (modifiers.alt) {
                                 e.stopPropagation();
                                 deleteNodeAt(path, idx);
+                                return;
+                              }
+                              // A handle near its node used to win the press, so
+                              // the node felt unclickable. The node wins now.
+                              if (
+                                distance(screenToCanvas(e.clientX, e.clientY), pt) * view.zoom <=
+                                ANCHOR_HIT_RADIUS
+                              ) {
+                                e.stopPropagation();
+                                grabAnchor(path.id, idx, pt, e);
                                 return;
                               }
                               onSelectionChange({
@@ -2879,6 +2905,16 @@ export const Canvas: React.FC<CanvasProps> = ({
                               if (modifiers.alt) {
                                 e.stopPropagation();
                                 deleteNodeAt(path, idx);
+                                return;
+                              }
+                              // A handle near its node used to win the press, so
+                              // the node felt unclickable. The node wins now.
+                              if (
+                                distance(screenToCanvas(e.clientX, e.clientY), pt) * view.zoom <=
+                                ANCHOR_HIT_RADIUS
+                              ) {
+                                e.stopPropagation();
+                                grabAnchor(path.id, idx, pt, e);
                                 return;
                               }
                               onSelectionChange({
@@ -3256,7 +3292,7 @@ export const Canvas: React.FC<CanvasProps> = ({
             <button
               type="button"
               onClick={openPad}
-              aria-label="Open precision pad: steer a crosshair instead of covering the node with your finger"
+              aria-label="Open precision pad: steer a crosshair instead of covering a node or an object with your finger"
               className="press absolute bottom-2 left-1/2 z-20 flex h-9 -translate-x-1/2 items-center gap-1.5 rounded-full border border-line bg-ink-2/85 px-3 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-dim shadow-lg shadow-black/40 backdrop-blur"
             >
               <PadGlyph />

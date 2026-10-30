@@ -151,9 +151,15 @@ export function fitSmoothBezierCurves(
   rawPoints: Point[],
   idPrefix: string,
   closed: boolean = true,
-  tolerance?: number
+  tolerance?: number,
+  cornerAngle?: number
 ): AnchorPoint[] {
-  return fitBezierPath(rawPoints, { idPrefix, closed, tolerance });
+  return fitBezierPath(rawPoints, {
+    idPrefix,
+    closed,
+    tolerance,
+    ...(cornerAngle !== undefined ? { cornerAngle } : {}),
+  });
 }
 
 /* ------------------------------------------------------------------------ *
@@ -519,6 +525,10 @@ export function traceImageToVectorPaths(
     threshold?: number;       // 0 to 255 (default 128)
     invert?: boolean;
     simplification?: number;  // vertex tolerance in raster pixels (default 1)
+    /** Maximum curve deviation in raster pixels (defaults to `simplification`) */
+    fitTolerance?: number;
+    /** Direction change, in radians, that counts as a corner (default ~57°) */
+    cornerAngle?: number;
     minArea?: number;         // smallest enclosed area worth keeping, px²
     /** Keep counters (the inside of o, p, a) as real holes */
     includeHoles?: boolean;
@@ -532,6 +542,8 @@ export function traceImageToVectorPaths(
     threshold = 128,
     invert = false,
     simplification = 1,
+    fitTolerance: fitToleranceOption,
+    cornerAngle,
     minArea = 8,
     includeHoles = true,
     fillColor = '#4C8DFF',
@@ -553,19 +565,34 @@ export function traceImageToVectorPaths(
     minArea,
   });
 
-  const fitTolerance = Math.max(0.6, simplification);
+  // A fit tolerance above one raster pixel lets a single cubic span a stem and
+  // a terminal, which is what rounds letters off. Sub-pixel keeps the curve on
+  // the edge it was traced from.
+  const fitTolerance = Math.max(0.05, fitToleranceOption ?? Math.max(0.6, simplification));
 
   return regions.map((region, idx) => {
     const holes = includeHoles
       ? region.holes.map((hole, holeIdx) =>
-          fitSmoothBezierCurves(hole, `traced-${idx}-hole-${holeIdx}`, true, fitTolerance)
+          fitSmoothBezierCurves(
+            hole,
+            `traced-${idx}-hole-${holeIdx}`,
+            true,
+            fitTolerance,
+            cornerAngle
+          )
         )
       : [];
 
     return {
       id: `traced-path-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
       name: `${namePrefix} ${idx + 1}`,
-      points: fitSmoothBezierCurves(region.points, `traced-${idx}`, true, fitTolerance),
+      points: fitSmoothBezierCurves(
+        region.points,
+        `traced-${idx}`,
+        true,
+        fitTolerance,
+        cornerAngle
+      ),
       ...(holes.length > 0 ? { holes } : {}),
       closed: true,
       fill: fillColor,
@@ -630,9 +657,12 @@ export function expandTextToVectorPaths(
     (metrics.actualBoundingBoxAscent || fontSize * 0.8) +
       (metrics.actualBoundingBoxDescent || fontSize * 0.25)
   ) + pad * 2;
+  // Upsampling before tracing is the one lever that improves fidelity for free:
+  // a raster pixel becomes a smaller slice of the glyph, so the polyline the
+  // fitter sees is a closer stand-in for the font's own outline.
   const scale = Math.max(
-    1.5,
-    Math.min(3, Math.sqrt(2_500_000 / Math.max(1, probeWidth * probeHeight)))
+    2,
+    Math.min(4, Math.sqrt(4_000_000 / Math.max(1, probeWidth * probeHeight)))
   );
   const ascent = metrics.actualBoundingBoxAscent || fontSize * 0.8;
   const descent = metrics.actualBoundingBoxDescent || fontSize * 0.25;
@@ -657,9 +687,15 @@ export function expandTextToVectorPaths(
   const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const tracedPaths = traceImageToVectorPaths(imgData, {
     threshold: 128,
-    // ~0.6 artboard units. Enough to ignore the anti-aliasing ripple, not enough
-    // to round off a stem, a terminal or a 20-radius counter.
-    simplification: 0.62 * scale,
+    // Tolerances are in raster pixels, so they shrink with the supersample
+    // instead of growing with the letter: ~0.2 artboard units of deviation at
+    // any font size, which is Potrace's default (0.2 px) rather than a tenth of
+    // a stem. The corner angle is tighter than the 57° default because joins,
+    // terminals and apexes of type sit well inside that, and a join read as a
+    // curve is exactly how a letter looks melted.
+    simplification: 0.4 * scale,
+    fitTolerance: 0.22 * scale,
+    cornerAngle: 0.62,
     minArea: 6,
     includeHoles: true,
     fillColor,

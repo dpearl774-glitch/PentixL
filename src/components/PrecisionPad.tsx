@@ -112,7 +112,11 @@ export const PrecisionPad: React.FC<PrecisionPadProps> = ({
     pressedRef.current = false;
     movedRef.current = false;
     clearHold();
-    holdRef.current = window.setTimeout(beginPress, HOLD_MS);
+    // A mouse button is already a deliberate press, so a click-drag is a
+    // press-drag: aim, click, pull — no waiting, and no movement cancelling
+    // the press. Touch keeps the hold timing so a tap stays a tap.
+    if (e.pointerType === 'mouse') beginPress();
+    else holdRef.current = window.setTimeout(beginPress, HOLD_MS);
   };
 
   const handleMove = (e: React.PointerEvent<HTMLDivElement>) => {
