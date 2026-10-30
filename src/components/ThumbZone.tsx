@@ -100,8 +100,8 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
 
   return (
     <>
-      {/* LEFT — modifier keys, one row so the canvas edge stays free */}
-      <div className="pointer-events-none absolute bottom-2 left-1.5 z-20 flex gap-1.5">
+      {/* LEFT — modifier keys, stacked in the app's original thumb column */}
+      <div className="pointer-events-none absolute bottom-2 left-1.5 z-20 flex flex-col gap-1.5">
         {KEYCAPS.map((cap) => {
           const active = modifiers[cap.key];
           return (
