@@ -1,7 +1,26 @@
+# Netlify reads this file from the publish root. GitHub Pages ignores it, so the
+# policy costs nothing if the site moves.
+#
+# The CSP is here for one reason: Netlify injects its "Powered by Netlify" badge
+# at the edge as an inline script, and an inline script cannot run without
+# 'unsafe-inline' in script-src. Omitting it keeps the badge (and the pre-launch
+# toolbar) off the page. Pentix ships no inline scripts of its own, so nothing
+# else loses anything.
+#
+# style-src keeps 'unsafe-inline' on purpose: the editor writes dynamic inline
+# styles for drag positions and thumb-side controls. Google Fonts is the only
+# third-party origin, for the stylesheet and the font files.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'
+  Cache-Control: public, max-age=0, must-revalidate
+
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
+# Repeated so the policy survives whichever matching order Netlify applies.
 /index.html
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'
   Cache-Control: public, max-age=0, must-revalidate
 
 /sw.js
