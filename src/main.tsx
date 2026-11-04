@@ -61,7 +61,9 @@ createRoot(document.getElementById('root')!).render(
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
-    void navigator.serviceWorker.register('/sw.js').catch(() => {
+    // updateViaCache: 'none' keeps the browser from holding a stale worker
+    // script, which would pin the old shell long after a deploy.
+    void navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {
       /* offline support is optional; the editor still works */
     });
   });
