@@ -248,106 +248,205 @@ export function generateVariableStrokePolygon(
   return d;
 }
 
-/**
- * Mathematically rounds sharp corners of a VectorPath by a specified radius using cubic bezier curves.
- * If radius is 0, converts smooth points back to sharp corners.
- */
-export function roundPathCorners(path: VectorPath, radius: number): VectorPath {
-  const points = path.points;
-  if (points.length < 3) return path;
+const cloneAnchor = (point: AnchorPoint): AnchorPoint => ({
+  ...point,
+  handleIn: point.handleIn ? { ...point.handleIn } : undefined,
+  handleOut: point.handleOut ? { ...point.handleOut } : undefined,
+});
 
-  const K_CIRCLE = 0.5522847498;
-  const newPoints: AnchorPoint[] = [];
+const cloneContour = (points: AnchorPoint[]): AnchorPoint[] => points.map(cloneAnchor);
 
-  for (let i = 0; i < points.length; i++) {
-    const curr = points[i];
-    // For open paths, keep endpoints unmodified
-    if (!path.closed && (i === 0 || i === points.length - 1)) {
-      newPoints.push({ ...curr });
-      continue;
-    }
-
-    const prev = points[(i - 1 + points.length) % points.length];
-    const next = points[(i + 1) % points.length];
-
-    // If radius is 0, reset to sharp corner
-    if (radius <= 0) {
-      newPoints.push({
-        ...curr,
-        type: 'corner',
-        handleIn: undefined,
-        handleOut: undefined,
-      });
-      continue;
-    }
-
-    // Vectors to prev and next
-    const vPrev = { x: prev.x - curr.x, y: prev.y - curr.y };
-    const vNext = { x: next.x - curr.x, y: next.y - curr.y };
-
-    const lenPrev = Math.sqrt(vPrev.x * vPrev.x + vPrev.y * vPrev.y);
-    const lenNext = Math.sqrt(vNext.x * vNext.x + vNext.y * vNext.y);
-
-    if (lenPrev === 0 || lenNext === 0) {
-      newPoints.push({ ...curr });
-      continue;
-    }
-
-    // Max allowable offset along the edge (at most 45% of edge length)
-    const d = Math.min(radius, lenPrev * 0.45, lenNext * 0.45);
-    if (d < 1) {
-      newPoints.push({ ...curr });
-      continue;
-    }
-
-    const uPrev = { x: vPrev.x / lenPrev, y: vPrev.y / lenPrev };
-    const uNext = { x: vNext.x / lenNext, y: vNext.y / lenNext };
-
-    // Point on incoming edge entering curve
-    const pEnter: Point = {
-      x: curr.x + uPrev.x * d,
-      y: curr.y + uPrev.y * d,
-    };
-
-    // Point on outgoing edge leaving curve
-    const pLeave: Point = {
-      x: curr.x + uNext.x * d,
-      y: curr.y + uNext.y * d,
-    };
-
-    // Handles towards corner vertex
-    const k = d * K_CIRCLE;
-    const handleOut: Point = {
-      x: pEnter.x - uPrev.x * (d - k),
-      y: pEnter.y - uPrev.y * (d - k),
-    };
-    const handleIn: Point = {
-      x: pLeave.x - uNext.x * (d - k),
-      y: pLeave.y - uNext.y * (d - k),
-    };
-
-    newPoints.push({
-      id: `${curr.id}-c1`,
-      x: pEnter.x,
-      y: pEnter.y,
-      type: 'smooth',
-      handleIn: curr.handleIn,
-      handleOut,
-    });
-
-    newPoints.push({
-      id: `${curr.id}-c2`,
-      x: pLeave.x,
-      y: pLeave.y,
-      type: 'smooth',
-      handleIn,
-      handleOut: curr.handleOut,
-    });
+/** Removes the rounding metadata while keeping the current rounded outline. */
+export function clearCornerRounding(path: VectorPath): VectorPath {
+  if (!path.cornerSource && path.cornerRadius === undefined && !path.cornerRadii) {
+    return path;
   }
+  const next = { ...path };
+  delete next.cornerSource;
+  delete next.cornerRadius;
+  delete next.cornerRadii;
+  return next;
+}
+
+/**
+ * Round only genuine sharp corners on one contour. `t` is the distance from
+ * the vertex to each tangent point; it is derived from the requested radius,
+ * the corner angle and the available edge length. This is the key difference
+ * from the old implementation: a 90° corner gives t = r, a sharp 60° corner
+ * needs a longer tangent, and a wide 120° corner needs a shorter one. The
+ * previous fixed offset produced visibly wrong arcs on anything but a square,
+ * and even the square used the wrong Bezier handle length.
+ */
+function roundContour(
+  points: AnchorPoint[],
+  closed: boolean,
+  radius: number,
+  radii?: Record<string, number>
+): { points: AnchorPoint[]; changed: boolean } {
+  const count = points.length;
+  if (count < 3) {
+    return { points: cloneContour(points), changed: false };
+  }
+
+  const out: AnchorPoint[] = [];
+  let changed = false;
+
+  for (let i = 0; i < count; i++) {
+    const curr = points[i];
+    if (!closed && (i === 0 || i === count - 1)) {
+      out.push(cloneAnchor(curr));
+      continue;
+    }
+
+    // Smooth or hand-authored curve nodes are not corners. Rounding them was
+    // what turned a second radius change into a lumpy, doubled outline.
+    if (curr.handleIn || curr.handleOut || (curr.type !== 'corner' && curr.type !== 'broken')) {
+      out.push(cloneAnchor(curr));
+      continue;
+    }
+
+    const prev = points[(i - 1 + count) % count];
+    const next = points[(i + 1) % count];
+    const inX = curr.x - prev.x;
+    const inY = curr.y - prev.y;
+    const outX = next.x - curr.x;
+    const outY = next.y - curr.y;
+    const inLength = Math.hypot(inX, inY);
+    const outLength = Math.hypot(outX, outY);
+    if (inLength < 0.001 || outLength < 0.001) {
+      out.push(cloneAnchor(curr));
+      continue;
+    }
+
+    const dot = Math.min(1, Math.max(-1, (inX * outX + inY * outY) / (inLength * outLength)));
+    const angle = Math.acos(dot);
+    // Straight-through and fold-back vertices have no useful arc.
+    if (angle < 0.05 || angle > Math.PI - 0.05) {
+      out.push(cloneAnchor(curr));
+      continue;
+    }
+
+    const halfTan = Math.tan(angle / 2);
+    if (!Number.isFinite(halfTan) || halfTan <= 0.001) {
+      out.push(cloneAnchor(curr));
+      continue;
+    }
+
+    const cornerRadius = radii?.[curr.id] ?? radius;
+    if (cornerRadius <= 0) {
+      out.push(cloneAnchor(curr));
+      continue;
+    }
+
+    // Tangent length for the requested radius, limited by both neighbouring
+    // edges. If the limit bites, recompute the effective radius so the curve
+    // stays a true circular arc instead of a stretched approximation.
+    const maxTangent = Math.min(inLength, outLength) * 0.49;
+    const tangent = Math.min(cornerRadius / halfTan, maxTangent);
+    if (tangent < 0.25) {
+      out.push(cloneAnchor(curr));
+      continue;
+    }
+    const effectiveRadius = tangent * halfTan;
+    const handleLength = (4 / 3) * Math.tan(angle / 4) * effectiveRadius;
+
+    const inUnit = { x: inX / inLength, y: inY / inLength };
+    const outUnit = { x: outX / outLength, y: outY / outLength };
+    const enter = {
+      x: curr.x - inUnit.x * tangent,
+      y: curr.y - inUnit.y * tangent,
+    };
+    const leave = {
+      x: curr.x + outUnit.x * tangent,
+      y: curr.y + outUnit.y * tangent,
+    };
+
+    out.push({
+      id: `${curr.id}-c1`,
+      x: enter.x,
+      y: enter.y,
+      type: 'smooth',
+      handleOut: {
+        x: enter.x + inUnit.x * handleLength,
+        y: enter.y + inUnit.y * handleLength,
+      },
+    });
+    out.push({
+      id: `${curr.id}-c2`,
+      x: leave.x,
+      y: leave.y,
+      type: 'smooth',
+      handleIn: {
+        x: leave.x - outUnit.x * handleLength,
+        y: leave.y - outUnit.y * handleLength,
+      },
+    });
+    changed = true;
+  }
+
+  return { points: out, changed };
+}
+
+/**
+ * Sets a uniform corner radius, or one corner when `cornerId` is supplied.
+ * The sharp source and per-corner overrides stay editable, so a radius can be
+ * dragged back and forth without compounding round after round.
+ */
+export function roundPathCorners(
+  path: VectorPath,
+  radius: number,
+  cornerId?: string
+): VectorPath {
+  if (path.text) return path;
+
+  const source = path.cornerSource
+    ? {
+        points: cloneContour(path.cornerSource.points),
+        ...(path.cornerSource.holes
+          ? { holes: path.cornerSource.holes.map(cloneContour) }
+          : {}),
+      }
+    : {
+        points: cloneContour(path.points),
+        ...(path.holes ? { holes: path.holes.map(cloneContour) } : {}),
+      };
+
+  const nextUniform = cornerId ? (path.cornerRadius ?? 0) : radius;
+  const nextRadii = cornerId ? { ...(path.cornerRadii ?? {}) } : {};
+  if (cornerId) nextRadii[cornerId] = Math.max(0, radius);
+
+  const allZero =
+    nextUniform <= 0 && Object.values(nextRadii).every((value) => value <= 0);
+  if (allZero) {
+    if (!path.cornerSource && !path.cornerRadii && (path.cornerRadius ?? 0) <= 0) {
+      return path;
+    }
+    return {
+      ...path,
+      points: source.points,
+      ...(source.holes ? { holes: source.holes } : { holes: undefined }),
+      cornerRadius: 0,
+      cornerRadii: undefined,
+      cornerSource: undefined,
+    };
+  }
+
+  const rounded = roundContour(source.points, path.closed, nextUniform, nextRadii);
+  const roundedHoles = source.holes?.map((hole) =>
+    roundContour(hole, true, nextUniform, nextRadii)
+  );
+  const holesChanged = roundedHoles?.some((hole) => hole.changed) ?? false;
+  if (!rounded.changed && !holesChanged && !path.cornerSource) return path;
 
   return {
     ...path,
-    points: newPoints,
+    points: rounded.points,
+    ...(roundedHoles
+      ? { holes: roundedHoles.map((hole) => hole.points) }
+      : { holes: undefined }),
+    cornerRadius: nextUniform,
+    ...(Object.keys(nextRadii).length ? { cornerRadii: nextRadii } : { cornerRadii: undefined }),
+    cornerSource: source,
   };
 }
 
@@ -524,11 +623,15 @@ export function simplifyPath(path: VectorPath, tolerance: number): VectorPath {
   const after = (outer ?? path.points).length + (holes?.reduce((n, h) => n + h.length, 0) ?? 0);
   if (after >= before) return path;
 
-  return {
+  const next = {
     ...path,
     points: outer ?? path.points,
     ...(holes ? { holes } : {}),
   };
+  delete next.cornerSource;
+  delete next.cornerRadius;
+  delete next.cornerRadii;
+  return next;
 }
 
 /**

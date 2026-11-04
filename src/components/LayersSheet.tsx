@@ -1,3 +1,4 @@
+import { RangeInput } from './ui/primitives';
 import React, { useRef, useState } from 'react';
 import {
   Eye,
@@ -149,7 +150,7 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
           <div className="flex items-center gap-3 rounded-xl border border-line bg-ink-0 px-3 py-2.5">
             <Droplet size={14} className="shrink-0 text-dim" />
             <span className="shrink-0 text-[11px] font-semibold text-dim">Layer</span>
-            <input
+            <RangeInput
               type="range"
               min={0.05}
               max={1}
@@ -294,7 +295,7 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
             <span className="min-w-0 shrink truncate text-[11px] font-semibold text-dim">
               Object
             </span>
-            <input
+            <RangeInput
               type="range"
               min={0.05}
               max={1}
@@ -352,6 +353,16 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
                         text
                       </span>
                     )}
+                    {path.isClippingMask && (
+                      <span className="shrink-0 rounded bg-accent/15 px-1 py-0.5 font-mono text-[8px] uppercase text-accent">
+                        mask
+                      </span>
+                    )}
+                    {path.clipPathId && (
+                      <span className="shrink-0 rounded bg-ink-3 px-1 py-0.5 font-mono text-[8px] uppercase text-mute">
+                        clipped
+                      </span>
+                    )}
                   </button>
 
                   <button
@@ -364,7 +375,7 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => onTogglePathLock(path.id, locked)}
+                    onClick={() => onTogglePathLock(path.id, !locked)}
                     aria-label={locked ? 'Unlock object' : 'Lock object'}
                     className="press grid h-7 w-7 shrink-0 place-items-center rounded-lg hover:bg-ink-3"
                   >
@@ -393,6 +404,91 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
                 </div>
               );
             })}
+          </section>
+        )}
+
+        {/* Objects on the other layers stay reachable without switching the
+            active layer first. The full management row remains on the active
+            layer, where it is not buried. */}
+        {ordered.some((layer) => layer.id !== activeLayer?.id && layer.paths.length > 0) && (
+          <section className="flex flex-col gap-1">
+            <SectionLabel>Other layers</SectionLabel>
+            {ordered.map(
+              (layer) =>
+                layer.id !== activeLayer?.id &&
+                layer.paths.length > 0 && (
+                  <div key={layer.id} className="rounded-lg border border-line bg-ink-0 p-1">
+                    <div className="px-1.5 py-1 font-mono text-[9px] uppercase tracking-wider text-mute">
+                      {layer.name}
+                    </div>
+                    {[...layer.paths].reverse().map((path) => {
+                      const hidden = path.visible === false;
+                      const locked = path.locked === true;
+                      const selected = selectedPathIds.includes(path.id);
+                      return (
+                        <div
+                          key={path.id}
+                          className={`flex items-center gap-0.5 rounded-md pr-0.5 ${
+                            selected ? 'bg-accent/10' : ''
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => onSelectPath(path.id)}
+                            className="flex min-w-0 flex-1 items-center gap-2 px-1.5 py-1.5 text-left"
+                          >
+                            <span
+                              className={`grid h-4 w-4 shrink-0 place-items-center rounded-[4px] border border-line-strong ${
+                                hidden ? 'opacity-30' : ''
+                              }`}
+                              style={{
+                                backgroundColor: path.fill !== 'none' ? path.fill : 'transparent',
+                              }}
+                            />
+                            <span
+                              className={`truncate text-[11.5px] ${
+                                selected ? 'text-accent' : hidden ? 'text-mute line-through' : 'text-dim'
+                              }`}
+                            >
+                              {path.name}
+                            </span>
+                            {path.isClippingMask && (
+                              <span className="shrink-0 rounded bg-accent/15 px-1 py-0.5 font-mono text-[8px] uppercase text-accent">
+                                mask
+                              </span>
+                            )}
+                            {path.clipPathId && (
+                              <span className="shrink-0 rounded bg-ink-3 px-1 py-0.5 font-mono text-[8px] uppercase text-mute">
+                                clipped
+                              </span>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onTogglePathVisible(path.id, hidden)}
+                            aria-label={hidden ? 'Show object' : 'Hide object'}
+                            className="press grid h-8 w-8 shrink-0 place-items-center text-dim"
+                          >
+                            {hidden ? <EyeOff size={12} /> : <Eye size={12} />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onTogglePathLock(path.id, !locked)}
+                            aria-label={locked ? 'Unlock object' : 'Lock object'}
+                            className="press grid h-8 w-8 shrink-0 place-items-center"
+                          >
+                            {locked ? (
+                              <Lock size={11} className="text-warn" />
+                            ) : (
+                              <Unlock size={11} className="text-mute" />
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+            )}
           </section>
         )}
       </div>

@@ -41,10 +41,33 @@ export type StrokeCap = 'round' | 'butt' | 'square';
 export type StrokeJoin = 'round' | 'miter' | 'bevel';
 export type PressureProfile = 'uniform' | 'tapered' | 'dynamic-touch' | 'calligraphy';
 
+export interface CornerSource {
+  points: AnchorPoint[];
+  holes?: AnchorPoint[][];
+}
+
 export interface VectorPath {
   id: string;
   name: string;
   points: AnchorPoint[];
+  /** Path used as a live clipping mask for this object, if any. */
+  clipPathId?: string;
+  /** This object is a mask source: it clips others and is not painted alone. */
+  isClippingMask?: boolean;
+  /** Extrusion depth in artboard units; 0 or absent means flat. */
+  extrudeDepth?: number;
+  /** Extrusion direction in degrees; defaults to down-right. */
+  extrudeAngle?: number;
+  /** Perspective shrink of the back face, 0–0.45. Undefined uses the default. */
+  extrudeTaper?: number;
+  /** Soft contact shadow under the solid. Undefined draws one. */
+  extrudeShadow?: boolean;
+  /** Uniform live corner radius; 0 or absent means sharp. */
+  cornerRadius?: number;
+  /** Per-corner overrides keyed by the sharp source anchor id. */
+  cornerRadii?: Record<string, number>;
+  /** Sharp geometry behind a generated rounding, so radius changes are reversible. */
+  cornerSource?: CornerSource;
   /** Counter shapes — the inside of an o, p, a — punched out of the fill */
   holes?: AnchorPoint[][];
   closed: boolean;
@@ -62,6 +85,14 @@ export interface VectorPath {
   fontSize?: number;
   fontFamily?: string;
   fontWeight?: string;
+  /** Extra space between letters, in artboard pixels */
+  letterSpacing?: number;
+  /**
+   * Local-to-world affine transform for live text: [a, b, c, d, e, f].
+   * The baseline stays in the first point; this keeps scale, rotation and
+   * flips on the glyph box without rasterising or moving the anchor.
+   */
+  textMatrix?: [number, number, number, number, number, number];
   /** Per-object visibility — hidden objects stop rendering and stop catching taps */
   visible?: boolean;
   /** Per-object lock — locked objects render but cannot be picked or moved */
@@ -83,11 +114,14 @@ export type ToolType =
   | 'select'          // Move and transform paths
   | 'direct-select'   // Move individual anchor points or handles
   | 'pen'             // Illustrator bezier pen tool
+  | 'pencil'          // Freehand pencil: fitted curves, closes on the start point
   | 'shape-builder'   // Interactive shape builder (Unite / Erase across regions)
   | 'shape'           // Rectangle, Circle, Polygon, Star
   | 'pressure-brush'  // Dynamic touch/stylus pressure vector stroke
   | 'text'            // Vector Typography tool
   | 'hand';           // Pan canvas
+
+export type PencilSmoothing = 'tight' | 'smooth' | 'loose';
 
 export type ShapeKind =
   | 'rectangle'
@@ -133,6 +167,8 @@ export interface ModifierState {
 export interface SelectionState {
   selectedPathIds: string[];
   selectedAnchorIndex: number | null;
+  /** Additional anchors selected with Shift; selectedAnchorIndex is the last one. */
+  selectedAnchorIndexes?: number[];
   selectedHandleType: 'in' | 'out' | null;
 }
 

@@ -1,7 +1,9 @@
+import { RangeInput } from './ui/primitives';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Upload, Zap, Star, Crown, Check, ImagePlus } from 'lucide-react';
 import { VectorPath } from '../types/vector';
 import { traceImageToVectorPaths } from '../utils/contourTracer';
+import { pathToSvgD } from '../utils/bezier';
 import { Button, SectionLabel, Sheet } from './ui/primitives';
 
 interface TraceSheetProps {
@@ -56,24 +58,48 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
   const fileRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const loadTokenRef = useRef(0);
   const [ready, setReady] = useState(false);
 
-  // Load whichever image is current
-  useEffect(() => {
-    if (!open) return;
-    const next = initialSrc ?? null;
-    setSrc(next);
+  /**
+   * Replaces the image and clears the previous result atomically. Otherwise an
+   * old trace stayed placeable after switching to a new image or reopening the
+   * sheet, and a slow image load could publish results from the previous one.
+   */
+  const loadImage = useCallback((url: string | null) => {
+    const token = ++loadTokenRef.current;
+    setSrc(url);
     setReady(false);
-    if (!next) return;
+    setPaths([]);
+    setError(null);
+    imageRef.current = null;
+    const preview = previewRef.current;
+    if (preview) {
+      preview.width = 1;
+      preview.height = 1;
+    }
+    if (!url) return;
+
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
+      if (token !== loadTokenRef.current) return;
       imageRef.current = img;
       setReady(true);
     };
-    img.onerror = () => setError('That image could not be loaded.');
-    img.src = next;
-  }, [open, initialSrc]);
+    img.onerror = () => {
+      if (token !== loadTokenRef.current) return;
+      setReady(false);
+      setPaths([]);
+      setError('That image could not be loaded.');
+    };
+    img.src = url;
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    loadImage(initialSrc ?? null);
+  }, [open, initialSrc, loadImage]);
 
   const process = useCallback(() => {
     const img = imageRef.current;
@@ -126,6 +152,30 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
         strokeColor,
         strokeWidth,
       });
+
+      // Draw the fitted curves over the threshold mask. The old preview only
+      // showed the bitmap, so moving Smoothing changed the node count while the
+      // preview looked identical. This is the vector result the Place button
+      // will actually add.
+      if (pctx && traced.length > 0 && typeof Path2D !== 'undefined') {
+        try {
+          const overlay = new Path2D();
+          for (const path of traced) {
+            const d = pathToSvgD(path);
+            if (d) overlay.addPath(new Path2D(d));
+          }
+          pctx.save();
+          pctx.fillStyle = 'rgba(76, 141, 255, 0.2)';
+          pctx.fill(overlay, 'evenodd');
+          pctx.strokeStyle = '#4c8dff';
+          pctx.lineWidth = Math.max(0.75, 1.25 / Math.max(1, Math.min(w, h) / 160));
+          pctx.stroke(overlay);
+          pctx.restore();
+        } catch {
+          // Keep the threshold preview if the browser rejects a path string.
+        }
+      }
+
       setPaths(traced);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Trace failed');
@@ -136,37 +186,27 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
   }, [threshold, simplify, invert, fillColor, strokeColor, strokeWidth]);
 
   useEffect(() => {
-    if (open && ready) process();
+    if (!open || !ready) return;
+    // Coalesce slider movement into one trace after the thumb settles.
+    setBusy(true);
+    const id = window.setTimeout(() => process(), 90);
+    return () => {
+      window.clearTimeout(id);
+      setBusy(false);
+    };
   }, [open, ready, process]);
 
   const useSample = (svg: string) => {
-    const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-    setReady(false);
-    setSrc(url);
-    const img = new Image();
-    img.onload = () => {
-      imageRef.current = img;
-      setReady(true);
-    };
-    img.src = url;
+    loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
   };
 
   const handleFile = (file: File | undefined) => {
     if (!file) return;
-    setError(null);
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setReady(false);
-        setSrc(reader.result);
-        const img = new Image();
-        img.onload = () => {
-          imageRef.current = img;
-          setReady(true);
-        };
-        img.src = reader.result;
-      }
+      if (typeof reader.result === 'string') loadImage(reader.result);
     };
+    reader.onerror = () => setError('That image could not be read.');
     reader.readAsDataURL(file);
   };
 
@@ -222,7 +262,7 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
                 <SectionLabel>Threshold</SectionLabel>
                 <span className="font-mono text-[10px] text-accent">{threshold}</span>
               </div>
-              <input
+              <RangeInput
                 type="range"
                 min={10}
                 max={245}
@@ -236,7 +276,7 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
                 <SectionLabel>Smoothing</SectionLabel>
                 <span className="font-mono text-[10px] text-accent">{simplify.toFixed(1)}</span>
               </div>
-              <input
+              <RangeInput
                 type="range"
                 min={0.4}
                 max={4}
@@ -285,7 +325,7 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
           <Button
             variant="primary"
             className="flex-1"
-            disabled={paths.length === 0}
+            disabled={busy || paths.length === 0}
             onClick={() => {
               onTrace(paths);
               onClose();

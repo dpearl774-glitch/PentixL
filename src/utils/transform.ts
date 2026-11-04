@@ -1,5 +1,11 @@
 import { AnchorPoint, Point, VectorPath } from '../types/vector';
 import { sampleCubicBezier } from './bezier';
+import {
+  flipTextMatrix,
+  rotateTextMatrix,
+  scaleTextMatrix,
+  textWorldBox,
+} from './textGeometry';
 
 export interface BoundingBox {
   minX: number;
@@ -13,6 +19,22 @@ export interface BoundingBox {
 }
 
 export type HandleType = 'tl' | 'tr' | 'bl' | 'br' | 'tc' | 'bc' | 'ml' | 'mr' | 'rot';
+
+/** Keep the sharp geometry behind a rounded corner moving with the path. */
+function transformCornerSource(
+  path: VectorPath,
+  map: (point: AnchorPoint) => AnchorPoint
+): Pick<VectorPath, 'cornerSource'> {
+  if (!path.cornerSource) return {};
+  return {
+    cornerSource: {
+      points: path.cornerSource.points.map(map),
+      ...(path.cornerSource.holes
+        ? { holes: path.cornerSource.holes.map((hole) => hole.map(map)) }
+        : {}),
+    },
+  };
+}
 
 /**
  * Computes tight bounding box for an array of VectorPaths
@@ -59,25 +81,24 @@ export function computePathsBoundingBox(paths: VectorPath[]): BoundingBox | null
   };
 
   for (const path of paths) {
+    // Live text is a box, not its single baseline anchor. Measure the glyphs
+    // and run the label's affine transform so the transform box tracks what is
+    // actually drawn through scale, rotation and flips.
+    if (path.text) {
+      const box = textWorldBox(path);
+      if (box) {
+        hasPoints = true;
+        if (box.minX < minX) minX = box.minX;
+        if (box.maxX > maxX) maxX = box.maxX;
+        if (box.minY < minY) minY = box.minY;
+        if (box.maxY > maxY) maxY = box.maxY;
+      }
+      continue;
+    }
+
     includeContour(path.points, path.closed);
     if (path.holes) {
       for (const hole of path.holes) includeContour(hole, true);
-    }
-
-    if (path.text) {
-      const originX = path.points[0]?.x ?? 0;
-      const originY = path.points[0]?.y ?? 0;
-      const size = path.fontSize || 48;
-      const estWidth = Math.max(size, path.text.length * size * 0.62);
-      const textMinX = originX;
-      const textMaxX = originX + estWidth;
-      const textMinY = originY - size * 0.9;
-      const textMaxY = originY + size * 0.2;
-      hasPoints = true;
-      if (textMinX < minX) minX = textMinX;
-      if (textMaxX > maxX) maxX = textMaxX;
-      if (textMinY < minY) minY = textMinY;
-      if (textMaxY > maxY) maxY = textMaxY;
     }
   }
 
@@ -115,6 +136,7 @@ export function translatePaths(paths: VectorPath[], dx: number, dy: number): Vec
     ...path,
     points: path.points.map(shift),
     ...(path.holes ? { holes: path.holes.map((hole) => hole.map(shift)) } : {}),
+    ...transformCornerSource(path, shift),
   }));
 }
 
@@ -145,16 +167,35 @@ export function scalePaths(
       : undefined,
   });
 
-  return paths.map((path) => {
-    const newFontSize = path.fontSize ? Math.max(10, Math.round(path.fontSize * Math.abs((scaleX + scaleY) / 2))) : undefined;
-
-    return {
-      ...path,
-      points: path.points.map(scalePoint),
-      ...(path.holes ? { holes: path.holes.map((hole) => hole.map(scalePoint)) } : {}),
-      fontSize: newFontSize,
-    };
-  });
+  const radiusScale = Math.min(Math.abs(scaleX), Math.abs(scaleY));
+  return paths.map((path) => ({
+    ...path,
+    points: path.points.map(scalePoint),
+    ...(path.holes ? { holes: path.holes.map((hole) => hole.map(scalePoint)) } : {}),
+    ...transformCornerSource(path, scalePoint),
+    ...(path.cornerRadius !== undefined
+      ? { cornerRadius: path.cornerRadius * radiusScale }
+      : {}),
+    ...(path.cornerRadii
+      ? {
+          cornerRadii: Object.fromEntries(
+            Object.entries(path.cornerRadii).map(([id, value]) => [
+              id,
+              value * radiusScale,
+            ])
+          ),
+        }
+      : {}),
+    ...(path.extrudeDepth !== undefined
+      ? { extrudeDepth: path.extrudeDepth * radiusScale }
+      : {}),
+    // Text keeps its base font size and stores the handle scale here. Baking
+    // the average scale into fontSize made side handles change both axes, so
+    // the glyphs never followed the finger.
+    ...(path.text
+      ? { textMatrix: scaleTextMatrix(path.textMatrix, scaleX, scaleY) }
+      : {}),
+  }));
 }
 
 /**
@@ -188,6 +229,10 @@ export function rotatePaths(
     ...path,
     points: path.points.map(rotateAnchor),
     ...(path.holes ? { holes: path.holes.map((hole) => hole.map(rotateAnchor)) } : {}),
+    ...transformCornerSource(path, rotateAnchor),
+    ...(path.text
+      ? { textMatrix: rotateTextMatrix(path.textMatrix, angleRad) }
+      : {}),
   }));
 }
 
@@ -221,5 +266,62 @@ export function flipPaths(
     ...path,
     points: path.points.map(flipPoint),
     ...(path.holes ? { holes: path.holes.map((hole) => hole.map(flipPoint)) } : {}),
+    ...transformCornerSource(path, flipPoint),
+    ...(path.text
+      ? { textMatrix: flipTextMatrix(path.textMatrix, direction) }
+      : {}),
   }));
+}
+
+/**
+ * Fresh copies for duplicate/paste: every path, anchor and hole point gets a
+ * new id, and both the outline and its counters move by the same offset.
+ * Reusing point ids made the copy and original select and edit together; only
+ * moving the outline left letter bowls behind.
+ */
+export function copyPathsWithNewIds(
+  paths: VectorPath[],
+  dx: number,
+  dy: number,
+  idPrefix: string
+): VectorPath[] {
+  const shift = (pt: AnchorPoint, id: string): AnchorPoint => ({
+    ...pt,
+    id,
+    x: pt.x + dx,
+    y: pt.y + dy,
+    handleIn: pt.handleIn ? { x: pt.handleIn.x + dx, y: pt.handleIn.y + dy } : undefined,
+    handleOut: pt.handleOut ? { x: pt.handleOut.x + dx, y: pt.handleOut.y + dy } : undefined,
+  });
+
+  const nextIds = new Map(paths.map((path, pathIndex) => [path.id, `${idPrefix}-${pathIndex}`]));
+  const referencedIds = new Set(
+    paths.map((path) => path.clipPathId).filter((id): id is string => !!id)
+  );
+
+  return paths.map((path, pathIndex) => {
+    const id = nextIds.get(path.id)!;
+    const clipPathId = path.clipPathId
+      ? nextIds.get(path.clipPathId) ?? path.clipPathId
+      : undefined;
+    // A mask source copied without any of its children becomes a normal copy;
+    // otherwise it would be an invisible object in the layers panel.
+    const keepMask = path.isClippingMask === true && referencedIds.has(path.id);
+    return {
+      ...path,
+      id,
+      name: `${path.name} copy`,
+      ...(clipPathId ? { clipPathId } : { clipPathId: undefined }),
+      ...(path.isClippingMask ? { isClippingMask: keepMask } : {}),
+      points: path.points.map((pt, pointIndex) => shift(pt, `${id}-pt-${pointIndex}`)),
+      ...(path.holes
+        ? {
+            holes: path.holes.map((hole, holeIndex) =>
+              hole.map((pt, pointIndex) => shift(pt, `${id}-h${holeIndex}-${pointIndex}`))
+            ),
+          }
+        : {}),
+      ...transformCornerSource(path, (pt) => shift(pt, pt.id)),
+    };
+  });
 }

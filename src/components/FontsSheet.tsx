@@ -21,6 +21,10 @@ export const FontsSheet: React.FC<FontsSheetProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+
+  const q = query.trim().toLowerCase();
+  const visibleFonts = q ? customFonts.filter((f) => f.toLowerCase().includes(q)) : customFonts;
 
   const handleFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -45,7 +49,7 @@ export const FontsSheet: React.FC<FontsSheetProps> = ({
       onClose={onClose}
       title="Fonts"
       eyebrow="Typography"
-      subtitle="Imported typefaces for the text tool."
+      subtitle="Imported typefaces stay on this device until removed."
     >
       <div className="flex flex-col gap-5">
         <input
@@ -83,10 +87,23 @@ export const FontsSheet: React.FC<FontsSheetProps> = ({
 
         <section className="flex flex-col gap-1.5">
           <SectionLabel>Imported · {customFonts.length}</SectionLabel>
+          {customFonts.length > 0 && (
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search imported fonts"
+              aria-label="Search imported fonts"
+              className="h-9 w-full rounded-lg border border-line bg-ink-0 px-3 text-[12.5px] text-text outline-none placeholder:text-mute focus:border-accent/60"
+            />
+          )}
           {customFonts.length === 0 ? (
-            <p className="text-[11.5px] leading-relaxed text-mute">Stored on this device.</p>
+            <p className="text-[11.5px] leading-relaxed text-mute">
+              Stored on this device until removed, and available in every project.
+            </p>
+          ) : visibleFonts.length === 0 ? (
+            <p className="text-[11.5px] text-mute">No font matches “{query}”.</p>
           ) : (
-            customFonts.map((family) => (
+            visibleFonts.map((family) => (
               <div
                 key={family}
                 className="flex items-center gap-2 rounded-xl border border-line bg-ink-2 px-3 py-2"

@@ -1,6 +1,9 @@
+import { RangeInput } from './ui/primitives';
 import React, { useEffect, useRef, useState } from 'react';
 import { Ban, Check, Info, Pipette, Plus, Trash2, RotateCcw } from 'lucide-react';
-import { GradientDef, StrokeCap, StrokeJoin } from '../types/vector';
+import { GradientDef, StrokeCap, StrokeJoin, VectorPath } from '../types/vector';
+import type { StoredSwatch } from '../utils/projectStorage';
+import { pathToSvgD } from '../utils/bezier';
 import { gradientCss, mixHex, sortedStops } from '../utils/gradients';
 import { Button, SectionLabel, Segmented, Sheet } from './ui/primitives';
 
@@ -40,6 +43,14 @@ interface ColorSheetProps {
   sampling: boolean;
   /** 0 means nothing is selected: edits become the default style */
   selectedCount?: number;
+  /** Colours already used, newest first */
+  recentColors?: string[];
+  /** The selected object, drawn in the sheet so the paint is visible */
+  previewPath?: VectorPath | null;
+  /** Named colours saved with this document */
+  swatches?: StoredSwatch[];
+  onAddSwatch?: (name: string, color: string) => void;
+  onRemoveSwatch?: (id: string) => void;
 }
 
 const PALETTE = [
@@ -170,11 +181,18 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
   onSample,
   sampling,
   selectedCount = 0,
+  recentColors = [],
+  previewPath = null,
+  swatches = [],
+  onAddSwatch,
+  onRemoveSwatch,
 }) => {
   const isGradient = mode === 'fill' && fillType === 'gradient' && !!fillGradient;
   const stops = fillGradient ? sortedStops(fillGradient.stops) : [];
   const setStopIndex = onStopIndexChange;
   const [hexDraft, setHexDraft] = useState('');
+  const [naming, setNaming] = useState(false);
+  const [swatchName, setSwatchName] = useState('');
 
   // The colour currently under the editor: solid paint, a gradient stop, or the artboard.
   const current =
@@ -306,6 +324,58 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
               : 'No selection — this styles the next object.'}
         </div>
 
+        {/* The sheet covers the artboard, so the object comes to the sheet:
+            what you are painting, painted. */}
+        {mode !== 'background' && previewPath && previewPath.points.length > 1 &&
+          (() => {
+            const d = pathToSvgD(previewPath);
+            if (!d) return null;
+            const xs = previewPath.points.map((pt) => pt.x);
+            const ys = previewPath.points.map((pt) => pt.y);
+            const minX = Math.min(...xs);
+            const minY = Math.min(...ys);
+            const w = Math.max(1, Math.max(...xs) - minX);
+            const hgt = Math.max(1, Math.max(...ys) - minY);
+            const pad = Math.max(w, hgt) * 0.1;
+            const paint = isNone
+              ? 'none'
+              : isGradient && fillGradient
+                ? gradientCss(fillGradient)
+                : fillColor;
+            return (
+              <div className="flex items-center gap-3 rounded-xl border border-line bg-ink-0 p-2.5">
+                <svg
+                  viewBox={`${minX - pad} ${minY - pad} ${w + pad * 2} ${hgt + pad * 2}`}
+                  role="img"
+                  aria-label="Live preview on the selected object"
+                  className="h-14 w-14 shrink-0 rounded-lg border border-line bg-ink-1"
+                >
+                  <path
+                    d={d}
+                    fill={paint}
+                    fillOpacity={fillOpacity}
+                    stroke={strokeColor}
+                    strokeOpacity={strokeOpacity}
+                    strokeWidth={strokeWidth}
+                    strokeLinejoin={strokeJoin}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                </svg>
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[9px] uppercase tracking-[0.1em] text-mute">
+                    live on object
+                  </div>
+                  <div className="truncate text-[12px] font-semibold text-text">
+                    {selectedCount > 1 ? `${selectedCount} objects` : previewPath.name || 'Object'}
+                  </div>
+                  <div className="truncate font-mono text-[10px] text-dim">
+                    {isNone ? 'no fill' : effective}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
         {/* Embedded picker: saturation/value square + hue rail */}
         <div className="flex flex-col gap-2.5">
           <div
@@ -407,7 +477,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
             {mode !== 'background' && !isNone && (
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[10px] uppercase tracking-wider text-mute">Alpha</span>
-                <input
+                <RangeInput
                   type="range"
                   min={0}
                   max={100}
@@ -511,7 +581,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
                 {/* Stop position */}
                 <div className="flex items-center gap-2">
                   <span className="w-14 font-mono text-[10px] uppercase tracking-wider text-mute">Pos</span>
-                  <input
+                  <RangeInput
                     type="range"
                     min={0}
                     max={100}
@@ -535,7 +605,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
                 {fillGradient.type === 'linear' && (
                   <div className="flex items-center gap-2">
                     <span className="w-14 font-mono text-[10px] uppercase tracking-wider text-mute">Angle</span>
-                    <input
+                    <RangeInput
                       type="range"
                       min={0}
                       max={359}
@@ -589,6 +659,120 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
           </div>
         </section>
 
+        {/* Colours you have actually used, so a repeat is one tap away */}
+        {mode !== 'background' && recentColors.length > 0 && (
+          <section className="flex flex-col gap-2">
+            <SectionLabel>Recent</SectionLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {recentColors.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => apply(c)}
+                  aria-label={`Use recent colour ${c}`}
+                  className={`press h-8 w-8 rounded-lg border ${
+                    current.toUpperCase() === c ? 'border-accent' : 'border-line'
+                  }`}
+                  style={{ backgroundColor: c }}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Named colours, saved with the document */}
+        {mode !== 'background' && (
+          <section className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <SectionLabel>Swatches</SectionLabel>
+              {swatches.length > 0 && (
+                <span className="font-mono text-[10px] text-mute">{swatches.length} saved</span>
+              )}
+            </div>
+
+            {swatches.length > 0 && (
+              <div className="grid grid-cols-2 gap-1.5">
+                {swatches.map((s) => (
+                  <div
+                    key={s.id}
+                    className={`flex items-center gap-1 rounded-lg border bg-ink-1 px-1 py-1 ${
+                      current.toUpperCase() === s.color ? 'border-accent' : 'border-line'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => apply(s.color)}
+                      aria-label={`Apply swatch ${s.name}`}
+                      className="flex min-w-0 flex-1 items-center gap-2 py-0.5 pl-0.5 text-left"
+                    >
+                      <span
+                        className="h-6 w-6 shrink-0 rounded-md border border-line"
+                        style={{ backgroundColor: s.color }}
+                      />
+                      <span className="truncate text-[11px] font-semibold text-dim">{s.name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveSwatch?.(s.id)}
+                      aria-label={`Remove swatch ${s.name}`}
+                      className="press grid h-6 w-6 shrink-0 place-items-center rounded-md text-mute hover:text-danger"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {naming ? (
+              <form
+                className="flex items-center gap-1.5"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  onAddSwatch?.(swatchName, effective);
+                  setNaming(false);
+                }}
+              >
+                <input
+                  autoFocus
+                  value={swatchName}
+                  onChange={(e) => setSwatchName(e.target.value)}
+                  placeholder={effective}
+                  aria-label="Swatch name"
+                  spellCheck={false}
+                  className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-ink-0 px-2 text-[12px] text-text outline-none focus:border-accent/60"
+                />
+                <button
+                  type="submit"
+                  className="press h-8 shrink-0 rounded-lg bg-accent px-3 text-[12px] font-bold text-ink-0"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNaming(false)}
+                  className="press h-8 shrink-0 rounded-lg border border-line bg-ink-3 px-2.5 text-[12px] font-semibold text-dim"
+                >
+                  Cancel
+                </button>
+              </form>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                block
+                disabled={isNone}
+                onClick={() => {
+                  setSwatchName(effective);
+                  setNaming(true);
+                }}
+              >
+                <Plus size={13} /> Save this colour
+              </Button>
+            )}
+          </section>
+        )}
+
         {/* Background controls */}
         {mode === 'background' && (
           <section className="flex flex-col gap-2">
@@ -614,7 +798,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
               <SectionLabel>Weight</SectionLabel>
               <span className="font-mono text-[11px] font-bold text-accent">{strokeWidth} px</span>
             </div>
-            <input
+            <RangeInput
               type="range"
               min={0.5}
               max={32}

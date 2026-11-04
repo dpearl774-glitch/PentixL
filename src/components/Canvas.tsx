@@ -7,6 +7,7 @@ import {
   Guide,
   Layer,
   ModifierState,
+  PencilSmoothing,
   Point,
   PressureConfig,
   ReferenceImage,
@@ -29,6 +30,7 @@ import {
   pathToSvgD,
 } from '../utils/bezier';
 import { generateShapePath } from '../utils/shapeGenerator';
+import { fitBezierPath } from '../utils/curveFit';
 import {
   computePathsBoundingBox,
   scalePaths,
@@ -37,6 +39,7 @@ import {
   BoundingBox,
   HandleType,
 } from '../utils/transform';
+import { textLineHeight, textLines, textMatrixCss } from '../utils/textGeometry';
 import {
   SmartGuideLine,
   getSnapCandidates,
@@ -50,9 +53,18 @@ import {
   executeShapeBuilderErase,
   SubRegion,
 } from '../utils/shapeBuilderRegions';
+import { computeVisiblePathsBoundingBox } from '../utils/shapeBuilder';
 import { PrecisionPad } from './PrecisionPad';
+import { computeSelectionOverlapD } from '../utils/overlap';
+import { extrusionFaces, extrusionShadow } from '../utils/extrusion';
+import {
+  clipPathIdFor,
+  clippingUrlFor,
+  collectClipIds,
+  collectClippingMasks,
+} from '../utils/clipping';
 
-const RULER_SIZE = 18;
+const RULER_SIZE = 26;
 
 /** Pointer id used for the synthetic presses the precision pad sends. */
 const PAD_POINTER_ID = 8301;
@@ -74,6 +86,53 @@ const PadGlyph: React.FC = () => (
 
 /** Radius, in canvas units, of the hit target around an anchor node. */
 const ANCHOR_HIT_RADIUS = 26;
+
+/** Screen-pixel fidelity per pencil setting — lower follows the finger closer */
+const PENCIL_TOLERANCE: Record<PencilSmoothing, number> = {
+  tight: 0.9,
+  smooth: 2.6,
+  loose: 5.2,
+};
+
+/** Low-pass passes applied before fitting. Tight stays close to the finger. */
+const PENCIL_BLEND: Record<PencilSmoothing, { passes: number; weight: number }> = {
+  tight: { passes: 0, weight: 0 },
+  smooth: { passes: 2, weight: 0.32 },
+  loose: { passes: 3, weight: 0.4 },
+};
+
+/**
+ * Removes hand jitter before the Bezier fit. Sharp reversals are left alone so
+ * corners and deliberate hooks do not turn into soft curves.
+ */
+function smoothPencilSamples(points: Point[], level: PencilSmoothing): Point[] {
+  const { passes, weight } = PENCIL_BLEND[level];
+  if (passes === 0 || points.length < 3) return points.map((p) => ({ x: p.x, y: p.y }));
+  let current = points.map((p) => ({ x: p.x, y: p.y }));
+  for (let pass = 0; pass < passes; pass++) {
+    current = current.map((point, index) => {
+      if (index === 0 || index === current.length - 1) return point;
+      const prev = current[index - 1];
+      const next = current[index + 1];
+      const ax = point.x - prev.x;
+      const ay = point.y - prev.y;
+      const bx = next.x - point.x;
+      const by = next.y - point.y;
+      const lengths = Math.hypot(ax, ay) * Math.hypot(bx, by);
+      const turn = lengths > 0 ? (ax * bx + ay * by) / lengths : 1;
+      // Preserve genuine corners rather than rounding them away.
+      if (turn < 0.25) return point;
+      return {
+        x: point.x * (1 - 2 * weight) + prev.x * weight + next.x * weight,
+        y: point.y * (1 - 2 * weight) + prev.y * weight + next.y * weight,
+      };
+    });
+  }
+  return current;
+}
+
+/** How near the start point the stroke must end to close the shape */
+const PENCIL_CLOSE_RADIUS = 22;
 
 /**
  * Nearest point on a path's outline to `pt`, within `threshold` canvas units.
@@ -109,7 +168,7 @@ interface CanvasProps {
   onViewChange: (newView: CanvasView) => void;
   layers: Layer[];
   activeLayerId: string;
-  onUpdatePath: (path: VectorPath) => void;
+  onUpdatePath: (path: VectorPath, options?: { preserveCornerSource?: boolean }) => void;
   onAddPath: (path: VectorPath) => void;
   tool: ToolType;
   shapeKind: ShapeKind;
@@ -141,10 +200,14 @@ interface CanvasProps {
   fillColor: string;
   strokeColor: string;
   strokeWidth: number;
+  /** Pencil fidelity, chosen in the tool options strip */
+  pencilSmoothing?: PencilSmoothing;
   pressureConfig: PressureConfig;
   onCommitHistory: () => void;
   activePathInProgress: VectorPath | null;
   setActivePathInProgress: React.Dispatch<React.SetStateAction<VectorPath | null>>;
+  /** The draw-inside source also clips the live stroke before it is committed. */
+  drawInsideId?: string | null;
   onReplacePaths?: (removePathIds: string[], newPaths: VectorPath[]) => void;
   isPanZoomLocked?: boolean;
   smartGuidesEnabled?: boolean;
@@ -194,10 +257,12 @@ export const Canvas: React.FC<CanvasProps> = ({
   fillColor,
   strokeColor,
   strokeWidth,
+  pencilSmoothing = 'smooth',
   pressureConfig,
   onCommitHistory,
   activePathInProgress,
   setActivePathInProgress,
+  drawInsideId = null,
   onReplacePaths,
   isPanZoomLocked = false,
   smartGuidesEnabled = true,
@@ -236,6 +301,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     transformHandle?: HandleType;
     initialBBox?: BoundingBox;
     initialSelectedPaths?: VectorPath[];
+    pointIndexes?: number[];
   } | null>(null);
 
   // Shape Builder region selection (the merge/erase mode lives in the app shell)
@@ -256,6 +322,10 @@ export const Canvas: React.FC<CanvasProps> = ({
 
   // Synchronous brush reference to prevent dropped strokes
   const brushStrokeRef = useRef<VectorPath | null>(null);
+
+  // Pencil: raw finger samples live in a ref until the stroke is fitted
+  const pencilPointsRef = useRef<Point[]>([]);
+  const [pencilStroke, setPencilStroke] = useState<Point[] | null>(null);
 
   // Double tap on an object switches to direct selection
   const lastTapRef = useRef<{ id: string; time: number } | null>(null);
@@ -413,7 +483,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     const cx = pt.x - rect.left;
     const cy = pt.y - rect.top;
     const ratio = Math.exp(-dy * 0.0018);
-    const zoom = Math.min(5, Math.max(0.2, view.zoom * ratio));
+    const zoom = Math.min(5, Math.max(0.05, view.zoom * ratio));
     onViewChange({
       ...view,
       zoom,
@@ -484,7 +554,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     const ratio = distance(pts[0], pts[1]) / pinch.dist;
     if (!Number.isFinite(ratio)) return;
 
-    const zoom = Math.min(5, Math.max(0.2, pinch.zoom * ratio));
+    const zoom = Math.min(5, Math.max(0.05, pinch.zoom * ratio));
     const rect = svgRef.current?.getBoundingClientRect();
     const midX = (pts[0].x + pts[1].x) / 2 - (rect?.left ?? 0);
     const midY = (pts[0].y + pts[1].y) / 2 - (rect?.top ?? 0);
@@ -519,7 +589,60 @@ export const Canvas: React.FC<CanvasProps> = ({
 
   // Selected paths for transformation
   const selectedPaths = allPaths.filter((p) => selection.selectedPathIds.includes(p.id));
-  const selectedBBox = computePathsBoundingBox(selectedPaths);
+  const selectedBBox = computeVisiblePathsBoundingBox(
+    selectedPaths,
+    layers.flatMap((layer) => layer.paths)
+  );
+  const drawInsideSource = React.useMemo(() => {
+    if (!drawInsideId) return null;
+    for (const layer of layers) {
+      if (!layer.visible) continue;
+      const source = layer.paths.find(
+        (path) =>
+          path.id === drawInsideId &&
+          path.visible !== false &&
+          path.closed &&
+          !path.text &&
+          !path.isClippingMask
+      );
+      if (source) return source;
+    }
+    return null;
+  }, [drawInsideId, layers]);
+  const clippingMasks = React.useMemo(() => {
+    const masks = collectClippingMasks(layers);
+    if (!drawInsideSource || masks.some((mask) => mask.id === drawInsideSource.id)) {
+      return masks;
+    }
+    return [...masks, drawInsideSource];
+  }, [drawInsideSource, layers]);
+  const clipIds = React.useMemo(() => collectClipIds(layers), [layers]);
+  const missingClipIds = React.useMemo(() => {
+    const present = new Set(clippingMasks.map((mask) => mask.id));
+    return [...clipIds].filter((id) => !present.has(id));
+  }, [clipIds, clippingMasks]);
+  const drawInsideClipUrl = drawInsideSource
+    ? `url(#${clipPathIdFor(drawInsideSource.id)})`
+    : undefined;
+  const selectionOverlapD = React.useMemo(() => {
+    if (selection.selectedPathIds.length < 2) return null;
+    const selected = layers
+      .filter((layer) => layer.visible)
+      .flatMap((layer) => layer.paths)
+      .filter(
+        (path) => path.visible !== false && selection.selectedPathIds.includes(path.id)
+      );
+    return computeSelectionOverlapD(
+      selected,
+      layers.flatMap((layer) => layer.paths)
+    );
+  }, [layers, selection.selectedPathIds]);
+  const selectedAnchors =
+    selection.selectedAnchorIndex !== null
+      ? selection.selectedAnchorIndexes?.includes(selection.selectedAnchorIndex)
+        ? selection.selectedAnchorIndexes
+        : [selection.selectedAnchorIndex]
+      : [];
 
   /**
    * Shift constrains the next pen anchor to the nearest 45° ray from the last
@@ -539,11 +662,20 @@ export const Canvas: React.FC<CanvasProps> = ({
   const participatingPaths = React.useMemo(() => {
     if (tool !== 'shape-builder') return [];
     if (selection.selectedPathIds.length >= 2) {
-      return allPaths.filter((p) => selection.selectedPathIds.includes(p.id) && (p.closed || p.points.length >= 3));
+      return allPaths.filter(
+        (p) =>
+          !p.isClippingMask &&
+          selection.selectedPathIds.includes(p.id) &&
+          (p.closed || p.points.length >= 3)
+      );
     }
-    const layerClosed = currentLayer.paths.filter((p) => p.closed || p.points.length >= 3);
+    const layerClosed = currentLayer.paths.filter(
+      (p) => !p.isClippingMask && (p.closed || p.points.length >= 3)
+    );
     if (layerClosed.length >= 2) return layerClosed;
-    const allClosed = allPaths.filter((p) => p.closed || p.points.length >= 3);
+    const allClosed = allPaths.filter(
+      (p) => !p.isClippingMask && (p.closed || p.points.length >= 3)
+    );
     if (allClosed.length >= 2) return allClosed;
     return [];
   }, [tool, selection.selectedPathIds, allPaths, currentLayer]);
@@ -552,12 +684,39 @@ export const Canvas: React.FC<CanvasProps> = ({
   const atomicRegions = React.useMemo<SubRegion[]>(() => {
     if (tool !== 'shape-builder' || participatingPaths.length < 2) return [];
     try {
-      return computeAtomicSubRegions(participatingPaths);
+      return computeAtomicSubRegions(
+        participatingPaths,
+        layers.flatMap((layer) => layer.paths)
+      );
     } catch (err) {
       console.warn('Shape builder planar decomposition error:', err);
       return [];
     }
-  }, [tool, participatingPaths]);
+  }, [tool, participatingPaths, layers]);
+
+  // Anything locked cannot be picked: an object by its own lock, or every
+  // object in a locked layer. The canvas used to ignore layer.locked entirely.
+  const lockedPathIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    layers.forEach((layer) => {
+      layer.paths.forEach((p) => {
+        if (layer.locked || p.locked === true) ids.add(p.id);
+      });
+    });
+    return ids;
+  }, [layers]);
+
+  // Other objects do not move while a transform is dragged, so their boxes can
+  // be measured once per selection instead of once per pointer event.
+  const otherSnapBBoxes = React.useMemo(() => {
+    const boxes: { id: string; bbox: BoundingBox; name?: string }[] = [];
+    for (const path of allPaths) {
+      if (selection.selectedPathIds.includes(path.id)) continue;
+      const box = computePathsBoundingBox([path]);
+      if (box) boxes.push({ id: path.id, bbox: box, name: path.name });
+    }
+    return boxes;
+  }, [allPaths, selection.selectedPathIds]);
 
   // Unified helper for initiating drags on SVG child elements with pointer capture
   const startDragOperation = (
@@ -571,6 +730,7 @@ export const Canvas: React.FC<CanvasProps> = ({
       transformHandle?: HandleType;
       initialBBox?: BoundingBox;
       initialSelectedPaths?: VectorPath[];
+      pointIndexes?: number[];
     }
   ) => {
     e.stopPropagation();
@@ -596,15 +756,42 @@ export const Canvas: React.FC<CanvasProps> = ({
     point: Point,
     e: React.PointerEvent
   ) => {
+    const samePath =
+      selection.selectedPathIds.length === 1 && selection.selectedPathIds[0] === pathId;
+    const additive = modifiers.shift && samePath && selection.selectedAnchorIndex !== null;
+    const current = additive
+      ? selection.selectedAnchorIndexes?.includes(selection.selectedAnchorIndex!)
+        ? selection.selectedAnchorIndexes
+        : [selection.selectedAnchorIndex!]
+      : [];
+    const indexes = additive
+      ? current.includes(index)
+        ? current.filter((i) => i !== index)
+        : [...current, index]
+      : [index];
+
+    // Shift-clicking the last selected node removes it without starting a drag.
+    if (indexes.length === 0) {
+      onSelectionChange({
+        selectedPathIds: [pathId],
+        selectedAnchorIndex: null,
+        selectedAnchorIndexes: [],
+        selectedHandleType: null,
+      });
+      return;
+    }
+
     onSelectionChange({
       selectedPathIds: [pathId],
-      selectedAnchorIndex: index,
+      selectedAnchorIndex: additive ? indexes[indexes.length - 1] : index,
+      selectedAnchorIndexes: indexes,
       selectedHandleType: null,
     });
     startDragOperation(e, {
       type: 'anchor',
       pathId,
       pointIndex: index,
+      pointIndexes: indexes,
       initialPoint: { x: point.x, y: point.y },
     });
   };
@@ -637,6 +824,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         onSelectionChange({
           selectedPathIds: [path.id],
           selectedAnchorIndex: near,
+          selectedAnchorIndexes: [near],
           selectedHandleType: null,
         });
         return;
@@ -656,6 +844,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     onSelectionChange({
       selectedPathIds: [updated.id],
       selectedAnchorIndex: result.index,
+      selectedAnchorIndexes: [result.index],
       selectedHandleType: null,
     });
     onCommitHistory();
@@ -724,6 +913,9 @@ export const Canvas: React.FC<CanvasProps> = ({
       setIsPointerDown(false);
       setDraggingTarget(null);
       setMarqueeBox(null);
+      // A pinch is a view gesture, not a pencil stroke
+      pencilPointsRef.current = [];
+      setPencilStroke(null);
       return;
     }
 
@@ -787,6 +979,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         onSelectionChange({
           selectedPathIds: [newPathId],
           selectedAnchorIndex: 0,
+          selectedAnchorIndexes: [0],
           selectedHandleType: null,
         });
 
@@ -836,6 +1029,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         onSelectionChange({
           selectedPathIds: [updatedPath.id],
           selectedAnchorIndex: newIdx,
+          selectedAnchorIndexes: [newIdx],
           selectedHandleType: null,
         });
 
@@ -849,19 +1043,38 @@ export const Canvas: React.FC<CanvasProps> = ({
       return;
     }
 
-    // Direct select on empty canvas: clear selection, never marquee
+    // Direct select: drag a box over the nodes of the selected path. With no
+    // path selected there is nothing to marquee, so a tap clears.
     if (effectiveTool === 'direct-select') {
-      onSelectionChange({
-        selectedPathIds: [],
-        selectedAnchorIndex: null,
-        selectedHandleType: null,
-      });
+      if (selection.selectedPathIds.length === 1) {
+        setMarqueeBox({ start: canvasPt, current: canvasPt });
+        setDraggingTarget({ type: 'marquee', initialPoint: canvasPt });
+      } else {
+        onSelectionChange({
+          selectedPathIds: [],
+          selectedAnchorIndex: null,
+          selectedHandleType: null,
+        });
+      }
       return;
     }
 
     // Vector Typography Tool Logic
     if (effectiveTool === 'text') {
       onRequestText?.(canvasPt);
+      return;
+    }
+
+    // Pencil: collect raw samples, fit them to curves on release
+    if (effectiveTool === 'pencil') {
+      const start = { x: canvasPt.x, y: canvasPt.y };
+      pencilPointsRef.current = [start];
+      setPencilStroke([start]);
+      onSelectionChange({
+        selectedPathIds: [],
+        selectedAnchorIndex: null,
+        selectedHandleType: null,
+      });
       return;
     }
 
@@ -975,7 +1188,7 @@ export const Canvas: React.FC<CanvasProps> = ({
       const pts = Array.from(activePointersRef.current.values());
       const currentDist = distance(pts[0], pts[1]);
       const zoomRatio = currentDist / initialPinchDistRef.current;
-      const targetZoom = Math.min(5, Math.max(0.2, initialPinchZoomRef.current * zoomRatio));
+      const targetZoom = Math.min(5, Math.max(0.05, initialPinchZoomRef.current * zoomRatio));
 
       const midX = (pts[0].x + pts[1].x) / 2;
       const midY = (pts[0].y + pts[1].y) / 2;
@@ -1026,9 +1239,28 @@ export const Canvas: React.FC<CanvasProps> = ({
       const x2 = Math.max(marqueeBox.start.x, canvasPt.x);
       const y2 = Math.max(marqueeBox.start.y, canvasPt.y);
 
+      if (effectiveTool === 'direct-select') {
+        const path = allPaths.find((p) => p.id === selection.selectedPathIds[0]);
+        if (!path) return;
+        const indexes = path.points.flatMap((point, index) =>
+          point.x >= x1 && point.x <= x2 && point.y >= y1 && point.y <= y2
+            ? [index]
+            : []
+        );
+        onSelectionChange({
+          selectedPathIds: [path.id],
+          selectedAnchorIndex: indexes[indexes.length - 1] ?? null,
+          selectedAnchorIndexes: indexes,
+          selectedHandleType: null,
+        });
+        return;
+      }
+
       // Find all paths intersecting the marquee box
       const enclosedIds: string[] = [];
       allPaths.forEach((path) => {
+        // Locked objects are not marquee-selectable either.
+        if (lockedPathIds.has(path.id)) return;
         const box = computePathsBoundingBox([path]);
         if (box) {
           const intersects = !(box.maxX < x1 || box.minX > x2 || box.maxY < y1 || box.minY > y2);
@@ -1059,14 +1291,7 @@ export const Canvas: React.FC<CanvasProps> = ({
       let effectivePt = canvasPt;
 
       if (smartGuidesEnabled && !modifiers.alt) {
-        const otherPaths = allPaths.filter((p) => !selection.selectedPathIds.includes(p.id));
-        const otherBBoxes: { id: string; bbox: BoundingBox; name?: string }[] = [];
-        for (const p of otherPaths) {
-          const b = computePathsBoundingBox([p]);
-          if (b) otherBBoxes.push({ id: p.id, bbox: b, name: p.name });
-        }
-
-        const candidates = getSnapCandidates(view.width, view.height, otherBBoxes);
+        const candidates = getSnapCandidates(view.width, view.height, otherSnapBBoxes);
         const snapThreshold = 7 / view.zoom;
 
         const resizeSnap = calculateResizeSmartGuides(
@@ -1129,7 +1354,7 @@ export const Canvas: React.FC<CanvasProps> = ({
       }
 
       const transformed = scalePaths(draggingTarget.initialSelectedPaths, anchorPoint, scaleX, scaleY);
-      transformed.forEach((p) => onUpdatePath(p));
+      transformed.forEach((p) => onUpdatePath(p, { preserveCornerSource: true }));
       return;
     }
 
@@ -1151,7 +1376,7 @@ export const Canvas: React.FC<CanvasProps> = ({
       }
 
       const rotated = rotatePaths(draggingTarget.initialSelectedPaths, center, deltaAngle);
-      rotated.forEach((p) => onUpdatePath(p));
+      rotated.forEach((p) => onUpdatePath(p, { preserveCornerSource: true }));
       return;
     }
 
@@ -1180,6 +1405,17 @@ export const Canvas: React.FC<CanvasProps> = ({
         ...activePathInProgress,
         points: updatedPoints,
       });
+      return;
+    }
+
+    // Pencil sampling: keep the trail light, but never skip real corners
+    if (effectiveTool === 'pencil' && pencilPointsRef.current.length > 0) {
+      const pts = pencilPointsRef.current;
+      const lastSample = pts[pts.length - 1];
+      const minStep = Math.max(0.6, 1.1 / view.zoom);
+      if (distance(lastSample, canvasPt) < minStep) return;
+      pts.push({ x: canvasPt.x, y: canvasPt.y });
+      setPencilStroke(pts.slice());
       return;
     }
 
@@ -1260,16 +1496,27 @@ export const Canvas: React.FC<CanvasProps> = ({
       let newPoints = [...targetPath.points];
 
       if (draggingTarget.type === 'anchor') {
-        const dx = canvasPt.x - (draggingTarget.initialPoint?.x || currPt.x);
-        const dy = canvasPt.y - (draggingTarget.initialPoint?.y || currPt.y);
-
-        newPoints[ptIdx] = {
-          ...currPt,
-          x: canvasPt.x,
-          y: canvasPt.y,
-          handleIn: currPt.handleIn ? { x: currPt.handleIn.x + dx, y: currPt.handleIn.y + dy } : undefined,
-          handleOut: currPt.handleOut ? { x: currPt.handleOut.x + dx, y: currPt.handleOut.y + dy } : undefined,
-        };
+        const anchorPoint = draggingTarget.initialPoint ?? currPt;
+        const dx = canvasPt.x - anchorPoint.x;
+        const dy = canvasPt.y - anchorPoint.y;
+        // A Shift-built node selection moves as one block, with every selected
+        // node's handles following it.
+        const moving = new Set(draggingTarget.pointIndexes ?? [ptIdx]);
+        newPoints = targetPath.points.map((point, index) =>
+          moving.has(index)
+            ? {
+                ...point,
+                x: point.x + dx,
+                y: point.y + dy,
+                handleIn: point.handleIn
+                  ? { x: point.handleIn.x + dx, y: point.handleIn.y + dy }
+                  : undefined,
+                handleOut: point.handleOut
+                  ? { x: point.handleOut.x + dx, y: point.handleOut.y + dy }
+                  : undefined,
+              }
+            : point
+        );
         setDraggingTarget({ ...draggingTarget, initialPoint: canvasPt });
       } else if (draggingTarget.type === 'handle-out') {
         let hOut = canvasPt;
@@ -1323,14 +1570,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         draggingTarget.initialBBox || computePathsBoundingBox(draggingTarget.initialSelectedPaths);
 
       if (smartGuidesEnabled && !modifiers.alt && currentInitialBBox) {
-        const otherPaths = allPaths.filter((p) => !selection.selectedPathIds.includes(p.id));
-        const otherBBoxes: { id: string; bbox: BoundingBox; name?: string }[] = [];
-        for (const p of otherPaths) {
-          const b = computePathsBoundingBox([p]);
-          if (b) otherBBoxes.push({ id: p.id, bbox: b, name: p.name });
-        }
-
-        const candidates = getSnapCandidates(view.width, view.height, otherBBoxes);
+        const candidates = getSnapCandidates(view.width, view.height, otherSnapBBoxes);
         const snapThreshold = 7 / view.zoom;
 
         const snapResult = calculateMoveSmartGuides(
@@ -1352,7 +1592,7 @@ export const Canvas: React.FC<CanvasProps> = ({
       // Counters travel with their outline: without this a traced logo leaves a
       // letter bowl or a logo cut-out behind when the group is dragged.
       for (const path of translatePaths(draggingTarget.initialSelectedPaths, dx, dy)) {
-        onUpdatePath(path);
+        onUpdatePath(path, { preserveCornerSource: true });
       }
       return;
     }
@@ -1398,7 +1638,7 @@ export const Canvas: React.FC<CanvasProps> = ({
             sbSelectedRegionIds,
             atomicRegions,
             participatingPaths,
-            { fill: fillColor, stroke: strokeColor, strokeWidth }
+            { fill: fillColor, stroke: 'none', strokeWidth: 0 }
           );
           onReplacePaths?.(participatingPaths.map((p) => p.id), newPaths);
         }
@@ -1445,7 +1685,7 @@ export const Canvas: React.FC<CanvasProps> = ({
             b.y,
             shapeOptions,
             `shape-${Date.now()}`,
-            { fill: fillColor, stroke: strokeColor, strokeWidth }
+            { fill: fillColor, stroke: 'none', strokeWidth: 0 }
           ),
           fillOpacity,
           strokeOpacity,
@@ -1455,6 +1695,79 @@ export const Canvas: React.FC<CanvasProps> = ({
         onAddPath(newShape);
         onSelectionChange({
           selectedPathIds: [newShape.id],
+          selectedAnchorIndex: null,
+          selectedHandleType: null,
+        });
+        onCommitHistory();
+      }
+    }
+
+    // Pencil: fit the samples, close the shape when it ends on its start
+    if (effectiveTool === 'pencil' && pencilPointsRef.current.length > 0) {
+      const raw = pencilPointsRef.current;
+      pencilPointsRef.current = [];
+      setPencilStroke(null);
+
+      const first = raw[0];
+      const lastSample = raw[raw.length - 1];
+      let travelled = 0;
+      for (let i = 1; i < raw.length; i++) travelled += distance(raw[i - 1], raw[i]);
+
+      if (raw.length >= 2) {
+        const closed =
+          travelled > 60 / view.zoom &&
+          distance(first, lastSample) <= PENCIL_CLOSE_RADIUS / view.zoom;
+        const id = `pencil-${Date.now()}`;
+        const points = fitBezierPath(smoothPencilSamples(raw, pencilSmoothing), {
+          idPrefix: id,
+          closed,
+          tolerance: PENCIL_TOLERANCE[pencilSmoothing] / view.zoom,
+        });
+
+        // The fitted seam has to land exactly on the start or a closed fill
+        // shows a notch where the two ends meet
+        if (closed && points.length > 1) {
+          points[0] = { ...points[0], x: first.x, y: first.y };
+        }
+
+        const newPath: VectorPath = {
+          id,
+          name: `Pencil ${currentLayer.paths.length + 1}`,
+          points,
+          closed,
+          fill: closed ? fillColor : 'none',
+          fillOpacity,
+          ...(closed && fillGradient ? { fillGradient } : {}),
+          stroke: strokeColor,
+          strokeWidth,
+          strokeOpacity,
+          strokeCap: 'round',
+          strokeJoin: 'round',
+          pressureProfile: 'uniform',
+        };
+
+        onAddPath(newPath);
+        onSelectionChange({
+          selectedPathIds: [newPath.id],
+          selectedAnchorIndex: null,
+          selectedHandleType: null,
+        });
+        onCommitHistory();
+      } else if (raw.length === 1) {
+        // A tap is a dot, matching the brush's single-tap behaviour
+        const r = Math.max(1, strokeWidth / 2);
+        const dot = generateShapePath(
+          first.x - r,
+          first.y - r,
+          first.x + r,
+          first.y + r,
+          { kind: 'circle' },
+          `pencil-dot-${Date.now()}`,
+          { fill: strokeColor === 'none' ? fillColor : strokeColor, stroke: 'none', strokeWidth: 0 }
+        );
+        onAddPath(dot);
+        onSelectionChange({
+          selectedPathIds: [dot.id],
           selectedAnchorIndex: null,
           selectedHandleType: null,
         });
@@ -1514,7 +1827,7 @@ export const Canvas: React.FC<CanvasProps> = ({
       if (isPanZoomLocked) return;
       const current = viewStateRef.current;
       const zoomFactor = event.deltaY < 0 ? 1.1 : 0.9;
-      const newZoom = Math.min(5, Math.max(0.2, current.zoom * zoomFactor));
+      const newZoom = Math.min(5, Math.max(0.05, current.zoom * zoomFactor));
       const rect = svgRef.current?.getBoundingClientRect();
       if (!rect) return;
       const mouseX = event.clientX - rect.left;
@@ -1690,8 +2003,9 @@ export const Canvas: React.FC<CanvasProps> = ({
     const inside =
       axis === 'v' ? position >= 0 && position <= view.width : position >= 0 && position <= view.height;
     // A tap on the ruler creates nothing: the pointer has to leave the ruler
-    // strip first, and the guide has to land on the artboard
-    const draggedOff = axis === 'v' ? e.clientY > RULER_SIZE : e.clientX > RULER_SIZE;
+    // strip first, and the guide has to land on the artboard. A horizontal
+    // guide comes off the top ruler, so leaving it means moving down.
+    const draggedOff = axis === 'h' ? e.clientY > RULER_SIZE : e.clientX > RULER_SIZE;
     if (inside && draggedOff) onAddGuide(axis, position);
     e.stopPropagation();
   };
@@ -1723,7 +2037,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                 <line
                   {...coords}
                   stroke="transparent"
-                  strokeWidth={12 / view.zoom}
+                  strokeWidth={22 / view.zoom}
                   className={g.locked ? '' : 'cursor-move'}
                   style={{ pointerEvents: g.locked ? 'none' : 'stroke' }}
                   onPointerDown={(e) => {
@@ -1831,11 +2145,12 @@ export const Canvas: React.FC<CanvasProps> = ({
 
     return (
       <>
-        {/* Top ruler — drag down onto the canvas to pull out a vertical guide */}
+        {/* Top ruler — drag down and the guide runs across, the way a top
+            ruler reads in every other editor. */}
         <div
           className="absolute left-0 right-0 top-0 z-10 touch-none select-none border-b border-line bg-ink-1/95 backdrop-blur"
           style={{ height: strip }}
-          onPointerDown={startRulerDrag('v')}
+          onPointerDown={startRulerDrag('h')}
           onPointerMove={moveRulerDrag}
           onPointerUp={endRulerDrag}
           onPointerCancel={endRulerDrag}
@@ -1869,10 +2184,10 @@ export const Canvas: React.FC<CanvasProps> = ({
           </svg>
         </div>
 
-        {/* Left ruler — drag right onto the canvas for a horizontal guide */}
+        {/* Left ruler — drag right and the guide runs down the artwork. */}
         <div
           className="absolute left-0 top-0 bottom-0 z-10 w-[18px] touch-none select-none border-r border-line bg-ink-1/95 backdrop-blur"
-          onPointerDown={startRulerDrag('h')}
+          onPointerDown={startRulerDrag('v')}
           onPointerMove={moveRulerDrag}
           onPointerUp={endRulerDrag}
           onPointerCancel={endRulerDrag}
@@ -1975,11 +2290,22 @@ export const Canvas: React.FC<CanvasProps> = ({
     return bestIndex;
   })();
 
+  /**
+   * A pen path with no stroke would build invisibly, so its geometry is drawn
+   * as a thin accent guide until a stroke is applied. Guides are editing aids
+   * only — they are never part of the artwork or the export.
+   */
+  const penGuideOnly =
+    !!activePathInProgress &&
+    effectiveTool === 'pen' &&
+    (activePathInProgress.stroke === 'none' || activePathInProgress.strokeWidth <= 0);
+
   /* --------------------------- Precision pad --------------------------- */
   // Pen, nodes and plain selection: the pad is how you aim without covering
   // the thing you are about to grab, so it belongs in Select too.
   const padAvailable =
     (effectiveTool === 'pen' ||
+      effectiveTool === 'pencil' ||
       effectiveTool === 'direct-select' ||
       effectiveTool === 'select') &&
     showPrecisionPad;
@@ -1999,6 +2325,7 @@ export const Canvas: React.FC<CanvasProps> = ({
   const getCanvasCursor = () => {
     if (effectiveTool === 'hand') return 'cursor-grab active:cursor-grabbing';
     if (effectiveTool === 'pen') return 'cursor-crosshair';
+    if (effectiveTool === 'pencil') return 'cursor-crosshair';
     if (effectiveTool === 'pressure-brush') return 'cursor-crosshair';
     if (effectiveTool === 'shape') return 'cursor-crosshair';
     if (effectiveTool === 'shape-builder') return 'cursor-crosshair';
@@ -2030,6 +2357,29 @@ export const Canvas: React.FC<CanvasProps> = ({
           <pattern id="sb-stipple-erase" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
             <line x1="0" y1="0" x2="0" y2="8" stroke={CANVAS.erase} strokeWidth="2.8" opacity="0.85" />
           </pattern>
+          <pattern id="selection-overlap-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <rect width="8" height="8" fill="rgba(205, 255, 92, 0.10)" />
+            <line x1="0" y1="0" x2="0" y2="8" stroke={CANVAS.accent} strokeWidth="1.4" opacity="0.7" />
+          </pattern>
+          {clippingMasks.map((mask) => {
+            const d = pathToSvgD(mask);
+            return d ? (
+              <clipPath
+                key={`clip-${mask.id}`}
+                id={clipPathIdFor(mask.id)}
+                clipPathUnits="userSpaceOnUse"
+              >
+                <path d={d} fillRule="evenodd" />
+              </clipPath>
+            ) : null;
+          })}
+          {missingClipIds.map((id) => (
+            <clipPath
+              key={`missing-clip-${id}`}
+              id={clipPathIdFor(id)}
+              clipPathUnits="userSpaceOnUse"
+            />
+          ))}
           {/* Artboard Shadow */}
           <filter id="artboard-shadow" x="-5%" y="-5%" width="115%" height="115%">
             <feDropShadow dx="0" dy="6" stdDeviation="14" floodColor="#000000" floodOpacity="0.6" />
@@ -2127,34 +2477,63 @@ export const Canvas: React.FC<CanvasProps> = ({
 
             {layers.map((layer) => {
             if (!layer.visible) return null;
+            const layerLocked = layer.locked === true;
 
             return (
               <g key={layer.id} opacity={layer.opacity}>
                 {layer.paths.map((path) => {
                   if (path.visible === false) return null;
+                  // One lock is enough: the object's own, or its layer's.
+                  const pathLocked = path.locked === true || layerLocked;
                   const isSelected = selection.selectedPathIds.includes(path.id);
                   const isShapeBuilder = tool === 'shape-builder';
+                  const clipPath = clippingUrlFor(path);
+
+                  // A mask source clips other artwork but does not paint itself.
+                  if (path.isClippingMask) {
+                    if (!isSelected) return null;
+                    const maskD = pathToSvgD(path);
+                    return maskD ? (
+                      <path
+                        key={path.id}
+                        d={maskD}
+                        fill="none"
+                        stroke={CANVAS.accent}
+                        strokeWidth={1.6 / view.zoom}
+                        strokeDasharray={`${6 / view.zoom} ${4 / view.zoom}`}
+                        opacity={0.8}
+                        className="pointer-events-none"
+                      />
+                    ) : null;
+                  }
 
                   // Vector Typography Path Rendering
                   if (path.text) {
                     const fontSize = path.fontSize || 48;
                     const fontFamily = path.fontFamily || 'Impact, sans-serif';
                     const fontWeight = path.fontWeight || 'bold';
+                    const lines = textLines(path.text);
+                    const lineHeight = textLineHeight(fontSize);
                     const pt = path.points[0] || { x: 50, y: 50 };
+                    // Keep the glyphs' own scale/rotation/flip in the same node
+                    // as the label, so the visible text and its hitbox agree.
+                    const textTransform = `translate(${pt.x} ${pt.y}) ${textMatrixCss(path.textMatrix)}`;
 
                     return (
-                      <g key={path.id} opacity={path.opacity ?? 1}>
+                      <g key={path.id} opacity={path.opacity ?? 1} clipPath={clipPath}>
                         {/* Text Hitbox */}
                         <text
-                          x={pt.x}
-                          y={pt.y}
+                          x={0}
+                          y={0}
+                          transform={textTransform}
                           fill="transparent"
-                          pointerEvents={path.locked ? 'none' : undefined}
+                          pointerEvents={pathLocked ? 'none' : undefined}
                           stroke="transparent"
                           strokeWidth={20 / view.zoom}
                           fontSize={fontSize}
                           fontFamily={fontFamily}
                           fontWeight={fontWeight}
+                          letterSpacing={path.letterSpacing ?? 0}
                           className={effectiveTool === 'select' ? 'cursor-move' : 'cursor-pointer'}
                           onPointerDown={(e) => {
                             // The type tool taps an existing label to re-edit it.
@@ -2208,13 +2587,18 @@ export const Canvas: React.FC<CanvasProps> = ({
                             }
                           }}
                         >
-                          {path.text}
+                          {lines.map((line, index) => (
+                            <tspan key={index} x={0} dy={index === 0 ? 0 : lineHeight}>
+                              {line || ' '}
+                            </tspan>
+                          ))}
                         </text>
 
                         {/* Visible Text */}
                         <text
-                          x={pt.x}
-                          y={pt.y}
+                          x={0}
+                          y={0}
+                          transform={textTransform}
                           fill={
                             gradientFill(path) ??
                             (path.fill && path.fill !== 'none' ? path.fill : CANVAS.accent)
@@ -2225,9 +2609,14 @@ export const Canvas: React.FC<CanvasProps> = ({
                           fontSize={fontSize}
                           fontFamily={fontFamily}
                           fontWeight={fontWeight}
+                          letterSpacing={path.letterSpacing ?? 0}
                           className="pointer-events-none select-none"
                         >
-                          {path.text}
+                          {lines.map((line, index) => (
+                            <tspan key={index} x={0} dy={index === 0 ? 0 : lineHeight}>
+                              {line || ' '}
+                            </tspan>
+                          ))}
                         </text>
                       </g>
                     );
@@ -2242,7 +2631,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                         d={ribbonD}
                         fill={path.stroke || CANVAS.accent}
                         opacity={path.strokeOpacity * (path.opacity ?? 1)}
-                        pointerEvents={path.locked ? 'none' : undefined}
+                        clipPath={clipPath}
+                        pointerEvents={pathLocked ? 'none' : undefined}
                         className={effectiveTool === 'select' ? 'cursor-move' : 'cursor-pointer'}
                         onPointerDown={(e) => {
                           if (isShapeBuilder) {
@@ -2303,7 +2693,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                   if (!pathD) return null;
 
                   return (
-                    <g key={path.id} opacity={path.opacity ?? 1}>
+                    <g key={path.id} opacity={path.opacity ?? 1} clipPath={clipPath}>
                       {/* Generous touch hitbox. Closed shapes also catch taps inside
                           their fill, so the object you see on top is the one you
                           select — interior taps used to fall through to objects behind. */}
@@ -2311,7 +2701,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         d={pathD}
                         fill={path.closed ? 'transparent' : 'none'}
                         stroke="transparent"
-                        pointerEvents={path.locked ? 'none' : undefined}
+                        pointerEvents={pathLocked ? 'none' : undefined}
                         strokeWidth={Math.max(34, path.strokeWidth * 3) / view.zoom}
                         className={effectiveTool === 'select' ? 'cursor-move' : 'cursor-pointer'}
                         onPointerDown={(e) => {
@@ -2370,6 +2760,50 @@ export const Canvas: React.FC<CanvasProps> = ({
                         }}
                       />
 
+                      {(() => {
+                        const faces = extrusionFaces(path);
+                        if (faces.length === 0) return null;
+                        const shadow = extrusionShadow(path);
+                        return (
+                          <>
+                            {shadow && (
+                              <>
+                                <defs>
+                                  <filter id={shadow.id} x="-40%" y="-40%" width="180%" height="180%">
+                                    <feGaussianBlur stdDeviation={shadow.blur} />
+                                  </filter>
+                                </defs>
+                                <g
+                                  className="pointer-events-none path-extrusion-shadow"
+                                  transform={`translate(${shadow.dx} ${shadow.dy})`}
+                                  filter={`url(#${shadow.id})`}
+                                  opacity={shadow.opacity}
+                                  clipPath={clipPath}
+                                >
+                                  <path d={pathD} fill="#000" />
+                                  <path d={shadow.d} fill="#000" />
+                                </g>
+                              </>
+                            )}
+                            <g className="pointer-events-none path-extrusion" clipPath={clipPath}>
+                              {faces.map((face, index) => (
+                                <path
+                                  key={`${face.fill}-${index}`}
+                                  d={face.d}
+                                  fill={face.fill}
+                                  stroke={face.fill}
+                                  strokeWidth={1}
+                                  strokeLinejoin="round"
+                                  vectorEffect="non-scaling-stroke"
+                                  fillOpacity={path.fillOpacity}
+                                  fillRule="nonzero"
+                                />
+                              ))}
+                            </g>
+                          </>
+                        );
+                      })()}
+
                       {/* Visible rendered path */}
                       <path
                         d={pathD}
@@ -2409,6 +2843,21 @@ export const Canvas: React.FC<CanvasProps> = ({
           })}
           </g>
 
+          {/* Where the selected objects overlap. This is live editing feedback,
+              never artwork, and it is the same region a clipping mask will use. */}
+          {selectionOverlapD &&
+            (effectiveTool === 'select' || effectiveTool === 'shape-builder') && (
+              <g className="selection-overlap pointer-events-none">
+                <path
+                  d={selectionOverlapD}
+                  fill="url(#selection-overlap-hatch)"
+                  stroke={CANVAS.accent}
+                  strokeWidth={1.8 / view.zoom}
+                  strokeDasharray={`${5 / view.zoom} ${4 / view.zoom}`}
+                />
+              </g>
+            )}
+
           {/* Active Path in progress */}
           {activePathInProgress && (
             <g className="active-path-in-progress pointer-events-none">
@@ -2417,16 +2866,19 @@ export const Canvas: React.FC<CanvasProps> = ({
                   d={generateVariableStrokePolygon(activePathInProgress.points, pressureConfig)}
                   fill={activePathInProgress.stroke}
                   opacity={activePathInProgress.strokeOpacity}
+                  clipPath={drawInsideClipUrl}
                 />
               ) : (
                 <>
                   <path
                     d={pointsToSvgPath(activePathInProgress.points, activePathInProgress.closed)}
                     fill={activePathInProgress.closed ? activePathInProgress.fill : 'none'}
-                    stroke={activePathInProgress.stroke}
-                    strokeWidth={activePathInProgress.strokeWidth}
+                    stroke={penGuideOnly ? CANVAS.accent : activePathInProgress.stroke}
+                    strokeWidth={penGuideOnly ? 1.5 / view.zoom : activePathInProgress.strokeWidth}
+                    strokeDasharray={penGuideOnly ? '7 5' : undefined}
                     strokeLinecap="round"
                     strokeLinejoin="round"
+                    clipPath={penGuideOnly ? undefined : drawInsideClipUrl}
                   />
                   {effectiveTool === 'pen' && currentPointerPoint && activePathInProgress.points.length > 0 && (
                     <>
@@ -2512,6 +2964,53 @@ export const Canvas: React.FC<CanvasProps> = ({
               )}
             </g>
           )}
+
+          {/* Pencil: live trail, plus a cue when releasing would close the shape */}
+          {pencilStroke && pencilStroke.length > 1 && (() => {
+            const first = pencilStroke[0];
+            const lastSample = pencilStroke[pencilStroke.length - 1];
+            const smoothed = smoothPencilSamples(pencilStroke, pencilSmoothing);
+            const path = smoothed.map((p) => `${p.x},${p.y}`).join(' ');
+            const closing =
+              pencilStroke.length > 8 &&
+              distance(first, lastSample) <= PENCIL_CLOSE_RADIUS / view.zoom;
+
+            return (
+              <g className="pencil-preview pointer-events-none">
+                <polyline
+                  points={path}
+                  fill="none"
+                  stroke={strokeColor === 'none' ? CANVAS.accent : strokeColor}
+                  strokeWidth={Math.max(strokeWidth, 1.4 / view.zoom)}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={0.9}
+                  clipPath={drawInsideClipUrl}
+                />
+                {closing && (
+                  <g className="pencil-close-cue">
+                    <circle
+                      cx={first.x}
+                      cy={first.y}
+                      r={12 / view.zoom}
+                      fill="rgba(205, 255, 92, 0.22)"
+                      stroke={CANVAS.accent}
+                      strokeWidth={2 / view.zoom}
+                    />
+                    <text
+                      x={first.x + 16 / view.zoom}
+                      y={first.y - 8 / view.zoom}
+                      fill={CANVAS.accent}
+                      fontSize={11 / view.zoom}
+                      fontWeight="bold"
+                    >
+                      Close Shape
+                    </text>
+                  </g>
+                )}
+              </g>
+            );
+          })()}
 
           {/* ================= TRANSFORM BOUNDING BOX WITH 8 STRETCHING NODES ================= */}
           {effectiveTool === 'select' &&
@@ -2643,9 +3142,8 @@ export const Canvas: React.FC<CanvasProps> = ({
           {/* Build: the objects it is about to work on. A wash on the whole
               object, under the region overlay, so picking Build shows its
               subject immediately instead of only lighting up on hover. */}
-          {tool === 'shape-builder' && participatingPaths.length >= 2 && (
-            <g className="shape-builder-participants pointer-events-none">
-              {participatingPaths.map((p) => {
+          {tool === 'shape-builder' && participatingPaths.length >= 2 && (              <g className="shape-builder-participants pointer-events-none">
+              {participatingPaths.filter((p) => !p.isClippingMask).map((p) => {
                 const d = pathToSvgD(p);
                 if (!d) return null;
                 const picked = selection.selectedPathIds.includes(p.id);
@@ -2659,6 +3157,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                     strokeOpacity={picked ? 0.85 : 0.35}
                     strokeWidth={(picked ? 2 : 1) / view.zoom}
                     strokeDasharray={picked ? undefined : `${4 / view.zoom} ${4 / view.zoom}`}
+                    clipPath={clippingUrlFor(p)}
                   />
                 );
               })}
@@ -2762,12 +3261,14 @@ export const Canvas: React.FC<CanvasProps> = ({
                 selection.selectedPathIds.includes(path.id) ||
                 (activePathInProgress && activePathInProgress.id === path.id);
 
-              if (!isSelected) return null;
+              // A locked object shows no nodes to grab either.
+              if (!isSelected || lockedPathIds.has(path.id)) return null;
 
               return (
                 <g key={`anchors-${path.id}`}>
                   {path.points.map((pt, idx) => {
-                    const isAnchorSelected = selection.selectedAnchorIndex === idx;
+                    const isAnchorSelected =
+                      selection.selectedPathIds[0] === path.id && selectedAnchors.includes(idx);
 
                     return (
                       <g key={pt.id}>
@@ -2835,6 +3336,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                               onSelectionChange({
                                 selectedPathIds: [closedPath.id],
                                 selectedAnchorIndex: 0,
+                                selectedAnchorIndexes: [0],
                                 selectedHandleType: null,
                               });
                               onCommitHistory();
@@ -2883,6 +3385,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                               onSelectionChange({
                                 selectedPathIds: [path.id],
                                 selectedAnchorIndex: idx,
+                                selectedAnchorIndexes: [idx],
                                 selectedHandleType: 'in',
                               });
                               startDragOperation(e, {
@@ -2920,6 +3423,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                               onSelectionChange({
                                 selectedPathIds: [path.id],
                                 selectedAnchorIndex: idx,
+                                selectedAnchorIndexes: [idx],
                                 selectedHandleType: 'out',
                               });
                               startDragOperation(e, {
@@ -3051,7 +3555,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                   endPt.y,
                   { kind: shapeKind, sides: shapeSides, cornerRadius: 24 },
                   'preview-shape',
-                  { fill: fillColor, stroke: strokeColor, strokeWidth }
+                  { fill: fillColor, stroke: 'none', strokeWidth: 0 }
                 );
 
                 return (
@@ -3059,9 +3563,10 @@ export const Canvas: React.FC<CanvasProps> = ({
                     d={pointsToSvgPath(previewShape.points, previewShape.closed)}
                     fill={previewShape.fill}
                     fillOpacity={0.4}
-                    stroke={strokeColor}
-                    strokeWidth={strokeWidth}
+                    stroke={CANVAS.accent}
+                    strokeWidth={1.5 / view.zoom}
                     strokeDasharray="4 4"
+                    clipPath={drawInsideClipUrl}
                   />
                 );
               })()}

@@ -133,13 +133,13 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
       {/* RIGHT — repeat actions */}
       <div className="pointer-events-none absolute bottom-2 right-1.5 z-20 flex flex-col items-end gap-1.5">
         {showNudge && (
-          <div className="anim-pop pointer-events-auto mb-1 w-[132px] rounded-2xl border border-line bg-ink-2/95 p-2 shadow-2xl backdrop-blur">
-            <div className="mx-auto grid w-[92px] grid-cols-3 grid-rows-3 gap-0.5">
+          <div className="anim-pop pointer-events-auto mb-1 w-[158px] rounded-2xl border border-line bg-ink-2/95 p-2 shadow-2xl backdrop-blur">
+            <div className="mx-auto grid w-[116px] grid-cols-3 grid-rows-3 gap-1">
               <span />
               <button
                 type="button"
                 onClick={() => onNudge(0, -step)}
-                className="press grid h-7 place-items-center rounded-md bg-ink-3 text-dim hover:text-accent"
+                className="press grid h-9 place-items-center rounded-md bg-ink-3 text-dim hover:text-accent"
                 aria-label="Nudge up"
               >
                 <ChevronUp size={14} />
@@ -148,18 +148,18 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
               <button
                 type="button"
                 onClick={() => onNudge(-step, 0)}
-                className="press grid h-7 place-items-center rounded-md bg-ink-3 text-dim hover:text-accent"
+                className="press grid h-9 place-items-center rounded-md bg-ink-3 text-dim hover:text-accent"
                 aria-label="Nudge left"
               >
                 <ChevronLeft size={14} />
               </button>
-              <span className="grid h-7 place-items-center rounded-md bg-ink-0 font-mono text-[10px] font-bold text-accent">
+              <span className="grid h-9 place-items-center rounded-md bg-ink-0 font-mono text-[10px] font-bold text-accent">
                 {step}
               </span>
               <button
                 type="button"
                 onClick={() => onNudge(step, 0)}
-                className="press grid h-7 place-items-center rounded-md bg-ink-3 text-dim hover:text-accent"
+                className="press grid h-9 place-items-center rounded-md bg-ink-3 text-dim hover:text-accent"
                 aria-label="Nudge right"
               >
                 <ChevronRight size={14} />
@@ -168,7 +168,7 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
               <button
                 type="button"
                 onClick={() => onNudge(0, step)}
-                className="press grid h-7 place-items-center rounded-md bg-ink-3 text-dim hover:text-accent"
+                className="press grid h-9 place-items-center rounded-md bg-ink-3 text-dim hover:text-accent"
                 aria-label="Nudge down"
               >
                 <ChevronDown size={14} />
@@ -181,7 +181,7 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
                   key={s}
                   type="button"
                   onClick={() => setStep(s)}
-                  className={`press h-6 flex-1 rounded-md font-mono text-[9px] font-bold ${
+                  className={`press h-8 flex-1 rounded-md font-mono text-[10px] font-bold ${
                     step === s ? 'bg-accent text-ink-0' : 'bg-ink-3 text-mute'
                   }`}
                 >

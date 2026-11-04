@@ -1,4 +1,4 @@
-import type { PressureConfig, ShapeKind, StrokeCap, StrokeJoin, ToolType } from '../types/vector';
+import type { PencilSmoothing, PressureConfig, ShapeKind, StrokeCap, StrokeJoin, ToolType } from '../types/vector';
 
 /**
  * Session settings — everything that is a preference rather than artwork.
@@ -24,6 +24,8 @@ export interface UserPrefs {
 
   /* Tool state */
   tool: ToolType;
+  /** Pencil fidelity: how closely the fitted curve follows the finger */
+  pencilSmoothing: PencilSmoothing;
   shapeKind: ShapeKind;
   shapeSides: number;
   sbMode: 'merge' | 'erase';
@@ -39,6 +41,10 @@ export interface UserPrefs {
   strokeJoin: StrokeJoin;
   pressure: PressureConfig;
   selectedFontFamily: string;
+  /** Newest-first colours applied from the picker, so they can be recalled */
+  recentColors: string[];
+  /** Newest-first typefaces chosen in the text sheet */
+  recentFonts: string[];
 }
 
 export const DEFAULT_PREFS: UserPrefs = {
@@ -57,6 +63,7 @@ export const DEFAULT_PREFS: UserPrefs = {
   precisionPad: true,
 
   tool: 'select',
+  pencilSmoothing: 'smooth',
   shapeKind: 'rectangle',
   shapeSides: 6,
   sbMode: 'merge',
@@ -77,6 +84,8 @@ export const DEFAULT_PREFS: UserPrefs = {
     calligraphyAngle: 30,
   },
   selectedFontFamily: 'Plus Jakarta Sans, sans-serif',
+  recentColors: [],
+  recentFonts: ['Plus Jakarta Sans, sans-serif'],
 };
 
 const KEY = 'pentix.prefs.v1';
@@ -98,21 +107,14 @@ const oneOf = <T extends string>(v: unknown, options: readonly T[], fallback: T)
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
 /**
- * Read the stored preferences, falling back field by field so a stale or
- * partially written record can never break startup.
+ * Validate any preference-shaped value, falling back field by field so a
+ * stale record, or a restored backup, can never break startup.
  */
-export function loadUserPrefs(): UserPrefs {
+export function sanitizeUserPrefs(raw: unknown): UserPrefs {
   const d = DEFAULT_PREFS;
-  let raw: unknown = null;
-  try {
-    const text = window.localStorage.getItem(KEY);
-    raw = text ? JSON.parse(text) : null;
-  } catch {
-    raw = null;
-  }
   if (!isRecord(raw)) return { ...d, pressure: { ...d.pressure } };
 
-  const p = raw as Record<string, unknown>;
+  const p = raw;
   const pressure = isRecord(p.pressure) ? p.pressure : {};
 
   return {
@@ -130,12 +132,14 @@ export function loadUserPrefs(): UserPrefs {
     showTransforms: bool(p.showTransforms, d.showTransforms),
     precisionPad: bool(p.precisionPad, d.precisionPad),
 
+    pencilSmoothing: oneOf(p.pencilSmoothing, ['tight', 'smooth', 'loose'] as const, d.pencilSmoothing),
     tool: oneOf(
       p.tool,
       [
         'select',
         'direct-select',
         'pen',
+        'pencil',
         'shape-builder',
         'shape',
         'pressure-brush',
@@ -190,7 +194,29 @@ export function loadUserPrefs(): UserPrefs {
       calligraphyAngle: num(pressure.calligraphyAngle, d.pressure.calligraphyAngle, 0, 360),
     },
     selectedFontFamily: str(p.selectedFontFamily, d.selectedFontFamily),
+    recentColors: Array.isArray(p.recentColors)
+      ? (p.recentColors as unknown[])
+          .filter((c): c is string => typeof c === 'string' && HEX.test(c))
+          .slice(0, 12)
+      : d.recentColors,
+    recentFonts: Array.isArray(p.recentFonts)
+      ? (p.recentFonts as unknown[])
+          .filter((f): f is string => typeof f === 'string' && f.length > 0)
+          .slice(0, 8)
+      : d.recentFonts,
   };
+}
+
+/** Read the stored preferences and validate them against the current schema. */
+export function loadUserPrefs(): UserPrefs {
+  let raw: unknown = null;
+  try {
+    const text = window.localStorage.getItem(KEY);
+    raw = text ? JSON.parse(text) : null;
+  } catch {
+    raw = null;
+  }
+  return sanitizeUserPrefs(raw);
 }
 
 /** Write the preferences back; storage failures (private mode, quota) are non-fatal. */

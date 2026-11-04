@@ -3,6 +3,7 @@ import {
   FolderOpen,
   FilePlus2,
   Save,
+  Database,
   Grid3x3,
   Hand,
   Ruler,
@@ -25,6 +26,8 @@ interface AppMenuProps {
   onClose: () => void;
   projectName: string;
   onSave: () => void;
+  onOpenBackup: () => void;
+  storageHint: string;
   onNewProject: () => void;
   onOpenProjects: () => void;
   onOpenCanvas: () => void;
@@ -97,6 +100,8 @@ export const AppMenu: React.FC<AppMenuProps> = ({
   onClose,
   projectName,
   onSave,
+  onOpenBackup,
+  storageHint,
   onNewProject,
   onOpenProjects,
   onOpenCanvas,
@@ -134,6 +139,12 @@ export const AppMenu: React.FC<AppMenuProps> = ({
           label="Save"
           hint="Stored on this device"
           onClick={onSave}
+        />
+        <Row
+          icon={<Database size={16} />}
+          label="Backup & restore"
+          hint={storageHint}
+          onClick={onOpenBackup}
         />
         <Row icon={<FolderOpen size={16} />} label="Projects" onClick={onOpenProjects} />
         <Row icon={<FilePlus2 size={16} />} label="New document" onClick={onNewProject} />

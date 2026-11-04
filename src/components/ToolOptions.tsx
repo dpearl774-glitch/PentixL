@@ -9,6 +9,7 @@ import {
   Plus,
   CornerDownRight,
   Spline,
+  Box,
   Check,
   X,
   Type as TypeIcon,
@@ -20,6 +21,7 @@ import {
   Star,
   Hexagon,
   Hand,
+  Crop,
   Minus as Line,
   AlignHorizontalJustifyStart,
   AlignHorizontalJustifyCenter,
@@ -30,10 +32,10 @@ import {
   AlignHorizontalSpaceAround,
   AlignVerticalSpaceAround,
 } from 'lucide-react';
-import { ShapeKind, ToolType } from '../types/vector';
+import { PencilSmoothing, ShapeKind, ToolType } from '../types/vector';
 import { BooleanOperation } from '../utils/shapeBuilder';
 import { AlignMode, DistributeAxis } from '../utils/align';
-import { Chip, IconButton } from './ui/primitives';
+import { Chip, IconButton, RangeInput } from './ui/primitives';
 
 interface ToolOptionsProps {
   tool: ToolType;
@@ -42,6 +44,8 @@ interface ToolOptionsProps {
   fillColor: string;
   strokeColor: string;
   strokeWidth: number;
+  pencilSmoothing: PencilSmoothing;
+  onChangePencilSmoothing: (level: PencilSmoothing) => void;
   shapeKind: ShapeKind;
   sbMode: 'merge' | 'erase';
   drawingPointCount: number;
@@ -69,7 +73,32 @@ interface ToolOptionsProps {
   onCopy: () => void;
   onPaste: () => void;
   canPaste: boolean;
-  onRoundCorners: (radius: number) => void;
+  onRoundCorners: (radius: number, cornerId?: string) => void;
+  cornerRadius: number;
+  /** Per-corner overrides keyed by the sharp source anchor id */
+  cornerRadii?: Record<string, number>;
+  /** Sharp corner anchors, in node order, available for individual editing */
+  cornerIds?: string[];
+  onMakeClipMask: () => void;
+  onReleaseClipMask: () => void;
+  canMakeClipMask: boolean;
+  hasClipMask: boolean;
+  canDrawInside: boolean;
+  drawInsideName?: string | null;
+  onStartDrawInside: () => void;
+  onExitDrawInside: () => void;
+  extrudeDepth: number;
+  /** The current selection contains something an extrusion can actually pull */
+  canExtrude?: boolean;
+  onExtrudeDepth: (depth: number) => void;
+  /** Degrees, y-down: 45 pulls down-right, 225 up-left */
+  extrudeAngle?: number;
+  onExtrudeAngle: (angle: number) => void;
+  /** Back-face shrink, 0–0.45; undefined means the default perspective */
+  extrudeTaper?: number;
+  onExtrudeTaper: (taper: number) => void;
+  extrudeShadow?: boolean;
+  onExtrudeShadow: (on: boolean) => void;
   onSimplify: (tolerance: number) => void;
   /** Turns a stroke into a closed fill so the shape builder can use it */
   onExpandStroke?: () => void;
@@ -100,6 +129,26 @@ const ALIGN_BUTTONS: { mode: AlignMode; label: string; icon: React.ReactNode }[]
 const DISTRIBUTE_BUTTONS: { axis: DistributeAxis; label: string; short: string; icon: React.ReactNode }[] = [
   { axis: 'horizontal', label: 'Distribute across', short: 'Even H', icon: <AlignHorizontalSpaceAround size={13} /> },
   { axis: 'vertical', label: 'Distribute down', short: 'Even V', icon: <AlignVerticalSpaceAround size={13} /> },
+];
+
+const EXTRUDE_DIRECTIONS: { angle: number; glyph: string; label: string }[] = [
+  { angle: 225, glyph: '↖', label: 'Extrude up left' },
+  { angle: 270, glyph: '↑', label: 'Extrude up' },
+  { angle: 315, glyph: '↗', label: 'Extrude up right' },
+  { angle: 180, glyph: '←', label: 'Extrude left' },
+  { angle: 0, glyph: '→', label: 'Extrude right' },
+  { angle: 135, glyph: '↙', label: 'Extrude down left' },
+  { angle: 90, glyph: '↓', label: 'Extrude down' },
+  { angle: 45, glyph: '↘', label: 'Extrude down right' },
+];
+
+/** Compass laid out row-major; the null cell is the hub. */
+const EXTRUDE_DIRECTION_GRID: (number | null)[] = [225, 270, 315, 180, null, 0, 135, 90, 45];
+
+const EXTRUDE_DEPTH_PRESETS = [
+  { label: 'Thin', value: 6 },
+  { label: 'Mid', value: 24 },
+  { label: 'Deep', value: 56 },
 ];
 
 const Swatch: React.FC<{
@@ -149,6 +198,8 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   fillColor,
   strokeColor,
   strokeWidth,
+  pencilSmoothing,
+  onChangePencilSmoothing,
   shapeKind,
   sbMode,
   drawingPointCount,
@@ -176,6 +227,26 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   onPaste,
   canPaste,
   onRoundCorners,
+  cornerRadius,
+  cornerRadii,
+  cornerIds = [],
+  onMakeClipMask,
+  onReleaseClipMask,
+  canMakeClipMask,
+  hasClipMask,
+  canDrawInside,
+  drawInsideName,
+  onStartDrawInside,
+  onExitDrawInside,
+  extrudeDepth,
+  canExtrude = true,
+  extrudeAngle = 45,
+  extrudeTaper = 0.16,
+  extrudeShadow = true,
+  onExtrudeDepth,
+  onExtrudeAngle,
+  onExtrudeTaper,
+  onExtrudeShadow,
   onSimplify,
   onExpandStroke,
   canExpandStroke,
@@ -186,6 +257,19 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   const isDrawing = drawingPointCount > 0 && (tool === 'pen' || tool === 'pressure-brush');
   const [alignMenu, setAlignMenu] = React.useState(false);
   const [moreMenu, setMoreMenu] = React.useState(false);
+  const [threeDMenu, setThreeDMenu] = React.useState(false);
+  // Remembered so the Flat/3D toggle can bring the last depth back
+  const [lastExtrudeDepth, setLastExtrudeDepth] = React.useState(24);
+  const [cornerTarget, setCornerTarget] = React.useState<string | null>(null);
+  const cornerTargetIndex = cornerTarget ? cornerIds.indexOf(cornerTarget) : -1;
+  const activeCornerRadius = cornerTarget
+    ? cornerRadii?.[cornerTarget] ?? cornerRadius
+    : cornerRadius;
+  const activeExtrudeAngle = ((Math.round(extrudeAngle / 45) * 45) % 360 + 360) % 360;
+
+  React.useEffect(() => {
+    if (cornerTarget && !cornerIds.includes(cornerTarget)) setCornerTarget(null);
+  }, [cornerIds, cornerTarget]);
 
   if (tool === 'hand' && selectedCount === 0) {
     return (
@@ -205,6 +289,14 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   return (
     <div className="relative z-20 shrink-0 border-t border-line bg-ink-1/95">
       <div className="scroll-x mx-auto flex h-11 max-w-3xl items-center gap-1.5 px-2">
+        {drawInsideName && (
+          <>
+            <Chip active icon={<Crop size={13} />} onClick={onExitDrawInside}>
+              Inside {drawInsideName.length > 12 ? `${drawInsideName.slice(0, 12)}…` : drawInsideName}
+            </Chip>
+            <Divider />
+          </>
+        )}
         {/* ---------------- Drawing a path ---------------- */}
         {isDrawing && (
           <>
@@ -320,6 +412,53 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
               </IconButton>
             </div>
             <Swatch color={strokeColor} label="Stroke colour" hollow width={strokeWidth} onClick={() => onOpenColor('stroke')} />
+            {(strokeColor === 'none' || strokeWidth === 0) && (
+              <span className="shrink-0 whitespace-nowrap font-mono text-[9px] uppercase tracking-wider text-accent">
+                Guide preview · no stroke
+              </span>
+            )}
+          </>
+        )}
+
+        {/* ---------------- Pencil ---------------- */}
+        {tool === 'pencil' && (
+          <>
+            <span className="shrink-0 text-[11px] text-mute">
+              Draw freehand · end on the start to close · fills when closed
+            </span>
+            <Divider />
+            {(['tight', 'smooth', 'loose'] as const).map((level) => (
+              <Chip
+                key={level}
+                active={pencilSmoothing === level}
+                onClick={() => onChangePencilSmoothing(level)}
+              >
+                {level === 'tight' ? 'Tight' : level === 'smooth' ? 'Smooth' : 'Loose'}
+              </Chip>
+            ))}
+            <div className="ml-auto flex shrink-0 items-center gap-1 rounded-lg border border-line bg-ink-0 px-1">
+              <IconButton
+                label="Thinner stroke"
+                size="sm"
+                onClick={() => onChangeStrokeWidth(Math.max(0.5, strokeWidth - 1))}
+              >
+                <Minus size={12} />
+              </IconButton>
+              <span className="w-6 text-center font-mono text-[11px] font-bold text-dim">
+                {strokeWidth}
+              </span>
+              <IconButton
+                label="Thicker stroke"
+                size="sm"
+                onClick={() => onChangeStrokeWidth(strokeWidth + 1)}
+              >
+                <Plus size={12} />
+              </IconButton>
+            </div>
+            <span className="shrink-0 font-mono text-[9px] uppercase tracking-wider text-mute">
+              Stroke
+            </span>
+            <Swatch color={strokeColor} label="Stroke colour" hollow width={strokeWidth} onClick={() => onOpenColor('stroke')} />
           </>
         )}
 
@@ -396,6 +535,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                   icon={<AlignHorizontalJustifyStart size={13} />}
                   onClick={() => {
                     setMoreMenu(false);
+                    setThreeDMenu(false);
                     setAlignMenu((v) => !v);
                   }}
                 >
@@ -406,17 +546,34 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                   icon={<SlidersHorizontal size={13} />}
                   onClick={() => {
                     setAlignMenu(false);
+                    setThreeDMenu(false);
                     setMoreMenu((v) => !v);
                   }}
                 >
                   More
                 </Chip>
-                <IconButton label="Flip horizontal" size="sm" onClick={() => onFlip('horizontal')}>
-                  <FlipHorizontal size={14} />
-                </IconButton>
-                <IconButton label="Flip vertical" size="sm" onClick={() => onFlip('vertical')}>
-                  <FlipVertical size={14} />
-                </IconButton>
+                {/* Named, because two bare mirror glyphs beside More read as
+                    decoration nobody could identify. */}
+                <Chip icon={<FlipHorizontal size={13} />} onClick={() => onFlip('horizontal')}>
+                  Flip H
+                </Chip>
+                <Chip icon={<FlipVertical size={13} />} onClick={() => onFlip('vertical')}>
+                  Flip V
+                </Chip>
+                {/* 3D used to be the second slider inside More, where it read as
+                    a buried extra. It is its own panel now. */}
+                <Chip
+                  active={threeDMenu || extrudeDepth > 0}
+                  icon={<Box size={13} />}
+                  aria-label="3D settings"
+                  onClick={() => {
+                    setAlignMenu(false);
+                    setMoreMenu(false);
+                    setThreeDMenu((v) => !v);
+                  }}
+                >
+                  3D{extrudeDepth > 0 ? ` · ${Math.round(extrudeDepth)}` : ''}
+                </Chip>
                 <IconButton label="Delete" size="sm" tone="danger" onClick={onDelete}>
                   <Trash2 size={14} />
                 </IconButton>
@@ -513,25 +670,59 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
       )}
 
       {moreMenu && (
-        <div className="absolute bottom-[calc(100%+6px)] right-2 z-40 w-[196px] rounded-xl border border-line bg-ink-2 p-1.5 shadow-2xl">
-          <span className="block px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
-            Corner radius
-          </span>
-          <div className="grid grid-cols-5 gap-1">
-            {[0, 8, 16, 28, 48].map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => {
-                  onRoundCorners(r);
-                  setMoreMenu(false);
-                }}
-                className="press h-7 rounded-md bg-ink-3 font-mono text-[9px] font-bold text-dim hover:text-accent"
-              >
-                {r === 0 ? '—' : r}
-              </button>
-            ))}
+        <div className="absolute bottom-[calc(100%+6px)] right-2 z-40 max-h-[72dvh] w-[196px] overflow-y-auto rounded-xl border border-line bg-ink-2 p-1.5 shadow-2xl">
+          <div className="flex items-center justify-between px-1 py-0.5">
+            <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
+              {cornerTarget ? `Corner ${cornerTargetIndex + 1}` : 'Corner radius'}
+            </span>
+            <span className="font-mono text-[10px] font-bold text-accent">
+              {Math.round(activeCornerRadius)}
+            </span>
           </div>
+          <div className="px-1">
+            <RangeInput
+              type="range"
+              min={0}
+              max={Math.max(240, Math.ceil(activeCornerRadius))}
+              step={1}
+              value={Math.round(activeCornerRadius)}
+              onChange={(e) =>
+                onRoundCorners(Number(e.target.value), cornerTarget ?? undefined)
+              }
+              aria-label={cornerTarget ? `Corner ${cornerTargetIndex + 1} radius` : 'Corner radius'}
+            />
+          </div>
+          {cornerIds.length > 0 && (
+            <div className="mt-1 flex max-h-14 flex-wrap gap-1 overflow-y-auto px-1">
+              <button
+                type="button"
+                onClick={() => setCornerTarget(null)}
+                aria-pressed={!cornerTarget}
+                className={`press h-6 rounded-md px-1.5 font-mono text-[9px] font-bold uppercase ${
+                  !cornerTarget ? 'bg-accent/15 text-accent' : 'bg-ink-3 text-dim'
+                }`}
+              >
+                All
+              </button>
+              {cornerIds.map((id, index) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setCornerTarget(id)}
+                  aria-label={`Select corner ${index + 1}`}
+                  aria-pressed={cornerTarget === id}
+                  className={`press h-6 w-6 rounded-md font-mono text-[9px] font-bold ${
+                    cornerTarget === id ? 'bg-accent/15 text-accent' : 'bg-ink-3 text-dim'
+                  }`}
+                >
+                  {index + 1}
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="px-1 pb-0.5 text-[9.5px] leading-snug text-mute">
+            All corners, or pick a number to edit one · 0 restores sharp
+          </p>
           <span className="mt-1.5 block px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
             Simplify
           </span>
@@ -592,6 +783,204 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
               </div>
             </>
           )}
+          {(canMakeClipMask || hasClipMask) && (
+            <>
+              <span className="mt-1.5 block px-1 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
+                Clipping
+              </span>
+              <div className="grid grid-cols-2 gap-1">
+                {canMakeClipMask && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onMakeClipMask();
+                      setMoreMenu(false);
+                    }}
+                    className="press h-8 rounded-lg bg-accent/15 text-[10px] font-semibold text-accent"
+                  >
+                    Make mask
+                  </button>
+                )}
+                {hasClipMask && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onReleaseClipMask();
+                      setMoreMenu(false);
+                    }}
+                    className="press h-8 rounded-lg bg-ink-3 text-[10px] font-semibold text-dim hover:text-accent"
+                  >
+                    Release
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+          {(canDrawInside || drawInsideName) && (
+            <div className="mt-1.5 grid grid-cols-1 gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  if (drawInsideName) onExitDrawInside();
+                  else onStartDrawInside();
+                  setMoreMenu(false);
+                }}
+                className={`press flex h-8 items-center justify-center gap-1.5 rounded-lg text-[10px] font-semibold ${
+                  drawInsideName ? 'bg-accent/15 text-accent' : 'bg-ink-3 text-dim hover:text-accent'
+                }`}
+              >
+                <Crop size={12} /> {drawInsideName ? 'Exit draw inside' : 'Draw inside'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {threeDMenu && (
+        <div className="absolute bottom-[calc(100%+6px)] left-2 z-40 max-h-[72dvh] w-[216px] overflow-y-auto rounded-xl border border-line bg-ink-2 p-2 shadow-2xl">
+          <div className="flex items-center justify-between px-0.5">
+            <span className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
+              <Box size={11} /> 3D extrusion
+            </span>
+            <span className="font-mono text-[10px] font-bold text-accent">
+              {Math.round(extrudeDepth)}
+            </span>
+          </div>
+          <div className="mt-1.5 grid grid-cols-2 gap-1">
+            <button
+              type="button"
+              aria-pressed={extrudeDepth <= 0}
+              onClick={() => onExtrudeDepth(0)}
+              className={`press h-7 rounded-md font-mono text-[9px] font-bold uppercase ${
+                extrudeDepth <= 0 ? 'bg-accent/15 text-accent' : 'bg-ink-3 text-dim'
+              }`}
+            >
+              Flat
+            </button>
+            <button
+              type="button"
+              aria-pressed={extrudeDepth > 0}
+              onClick={() => onExtrudeDepth(extrudeDepth > 0 ? extrudeDepth : lastExtrudeDepth)}
+              className={`press h-7 rounded-md font-mono text-[9px] font-bold uppercase ${
+                extrudeDepth > 0 ? 'bg-accent/15 text-accent' : 'bg-ink-3 text-dim'
+              }`}
+            >
+              3D
+            </button>
+          </div>
+          <div className="mt-1.5 px-0.5">
+            <RangeInput
+              type="range"
+              min={0}
+              max={160}
+              step={1}
+              value={Math.round(extrudeDepth)}
+              disabled={!canExtrude}
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                if (next > 0) setLastExtrudeDepth(next);
+                onExtrudeDepth(next);
+              }}
+              aria-label="3D extrusion depth"
+            />
+          </div>
+          <div className="mt-1 grid grid-cols-3 gap-1">
+            {EXTRUDE_DEPTH_PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                aria-pressed={Math.round(extrudeDepth) === preset.value}
+                onClick={() => {
+                  setLastExtrudeDepth(preset.value);
+                  onExtrudeDepth(preset.value);
+                }}
+                className={`press h-6 rounded-md font-mono text-[9px] font-bold uppercase ${
+                  Math.round(extrudeDepth) === preset.value
+                    ? 'bg-accent/15 text-accent'
+                    : 'bg-ink-3 text-dim hover:text-accent'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <div className="mt-1.5 flex items-center justify-between px-0.5">
+            <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
+              Direction
+            </span>
+            <span className="font-mono text-[9px] text-dim">
+              {EXTRUDE_DIRECTIONS.find((d) => d.angle === activeExtrudeAngle)?.label.replace(
+                'Extrude ',
+                ''
+              )}
+            </span>
+          </div>
+          <div className="mt-1 grid grid-cols-3 gap-1">
+            {EXTRUDE_DIRECTION_GRID.map((angle) => {
+              if (angle === null) {
+                return (
+                  <span
+                    key="hub"
+                    className="grid h-7 place-items-center rounded-md bg-ink-3/50 text-mute"
+                  >
+                    <Box size={10} />
+                  </span>
+                );
+              }
+              const direction = EXTRUDE_DIRECTIONS.find((d) => d.angle === angle);
+              return (
+                <button
+                  key={angle}
+                  type="button"
+                  aria-label={direction?.label}
+                  aria-pressed={activeExtrudeAngle === angle}
+                  onClick={() => onExtrudeAngle(angle)}
+                  className={`press grid h-7 place-items-center rounded-md text-[12px] leading-none ${
+                    activeExtrudeAngle === angle
+                      ? 'bg-accent/15 text-accent'
+                      : 'bg-ink-3 text-dim hover:text-accent'
+                  }`}
+                >
+                  {direction?.glyph}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-1.5 flex items-center justify-between px-0.5">
+            <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-mute">
+              Taper
+            </span>
+            <span className="font-mono text-[9px] text-dim">
+              {Math.round(extrudeTaper * 100)}%
+            </span>
+          </div>
+          <div className="mt-1 px-0.5">
+            <RangeInput
+              type="range"
+              min={0}
+              max={45}
+              step={1}
+              value={Math.round(extrudeTaper * 100)}
+              disabled={!canExtrude}
+              onChange={(e) => onExtrudeTaper(Number(e.target.value) / 100)}
+              aria-label="3D taper"
+            />
+          </div>
+          <button
+            type="button"
+            aria-pressed={extrudeShadow}
+            onClick={() => onExtrudeShadow(!extrudeShadow)}
+            className={`press mt-1.5 flex h-7 w-full items-center justify-center gap-1.5 rounded-md font-mono text-[9px] font-bold uppercase ${
+              extrudeShadow ? 'bg-accent/15 text-accent' : 'bg-ink-3 text-dim'
+            }`}
+          >
+            Shadow {extrudeShadow ? 'on' : 'off'}
+          </button>
+          <p className="mt-1 px-0.5 text-[9.5px] leading-snug text-mute">
+            {canExtrude
+              ? 'Pulls the solid along the arrow · lit from the top left'
+              : 'Closed shapes only — outline a stroke or convert text to curves first'}
+          </p>
         </div>
       )}
     </div>

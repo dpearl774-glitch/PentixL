@@ -30,6 +30,8 @@ interface ProjectsSheetProps {
   onClose: () => void;
   currentProjectId: string;
   onOpenProject: (project: StoredProject) => void;
+  /** Keep App's title in sync when the online document is renamed here. */
+  onRenameProject: (id: string, name: string) => void;
   onCreateNewProject: () => void;
   onOpenTemplate: (template: LogoTemplate) => void;
 }
@@ -41,6 +43,7 @@ export const ProjectsSheet: React.FC<ProjectsSheetProps> = ({
   onClose,
   currentProjectId,
   onOpenProject,
+  onRenameProject,
   onCreateNewProject,
   onOpenTemplate,
 }) => {
@@ -88,6 +91,7 @@ export const ProjectsSheet: React.FC<ProjectsSheetProps> = ({
       const updated = { ...project, name };
       await saveProject(updated);
       setProjects((prev) => prev.map((p) => (p.id === project.id ? { ...p, name } : p)));
+      onRenameProject(project.id, name);
     }
     setRenamingId(null);
   };
@@ -277,9 +281,16 @@ export const ProjectsSheet: React.FC<ProjectsSheetProps> = ({
                         size="sm"
                         variant="danger"
                         onClick={async () => {
+                          const wasCurrent = project.id === currentProjectId;
                           await deleteProject(project.id);
                           setProjects((prev) => prev.filter((p) => p.id !== project.id));
                           setConfirmDeleteId(null);
+                          // Leaving the deleted id open let autosave recreate the
+                          // document on the next edit. Start a fresh one first.
+                          if (wasCurrent) {
+                            onCreateNewProject();
+                            onClose();
+                          }
                         }}
                       >
                         Delete

@@ -1,7 +1,7 @@
 import polygonClipping, { MultiPolygon, Polygon, Ring } from 'polygon-clipping';
 import { AnchorPoint, Point, VectorPath } from '../types/vector';
 import { pathToPolygon } from './bezier';
-import { ringToVectorPath, vectorPathToClippingPolygon } from './shapeBuilder';
+import { ringToVectorPath, visibleClippingGeometry } from './shapeBuilder';
 
 export interface SubRegion {
   id: string;
@@ -114,7 +114,10 @@ export function isPointInPolygon(pt: Point, poly: Polygon): boolean {
 /**
  * Decomposes an array of overlapping VectorPaths into atomic, non-overlapping planar sub-regions
  */
-export function computeAtomicSubRegions(paths: VectorPath[]): SubRegion[] {
+export function computeAtomicSubRegions(
+  paths: VectorPath[],
+  allPaths: VectorPath[] = paths
+): SubRegion[] {
   if (paths.length === 0) return [];
 
   interface IntermediateRegion {
@@ -123,73 +126,76 @@ export function computeAtomicSubRegions(paths: VectorPath[]): SubRegion[] {
     topPath: VectorPath;
   }
 
+  const byId = new Map(allPaths.map((path) => [path.id, path]));
   let currentRegions: IntermediateRegion[] = [];
 
   for (const path of paths) {
-    const pathPoly = vectorPathToClippingPolygon(path);
-    if (!pathPoly || pathPoly.length === 0 || pathPoly[0].length < 3) continue;
+    // A clipped path contributes only the pieces inside its clip chain.
+    for (const pathPoly of visibleClippingGeometry(path, byId)) {
+      if (!pathPoly || pathPoly.length < 3) continue;
 
-    if (currentRegions.length === 0) {
-      currentRegions.push({
-        poly: pathPoly,
-        sourcePathIds: [path.id],
-        topPath: path,
-      });
-      continue;
-    }
-
-    const nextRegions: IntermediateRegion[] = [];
-    let remainder: MultiPolygon = [pathPoly];
-
-    for (const region of currentRegions) {
-      try {
-        const intersection = polygonClipping.intersection(region.poly, pathPoly);
-        const difference = polygonClipping.difference(region.poly, pathPoly);
-
-        // Pieces of existing region that do NOT overlap with new path
-        for (const diffPoly of difference) {
-          if (diffPoly && diffPoly.length > 0 && diffPoly[0].length >= 3) {
-            nextRegions.push({
-              poly: diffPoly,
-              sourcePathIds: [...region.sourcePathIds],
-              topPath: region.topPath,
-            });
-          }
-        }
-
-        // Overlapping intersection pieces
-        for (const interPoly of intersection) {
-          if (interPoly && interPoly.length > 0 && interPoly[0].length >= 3) {
-            nextRegions.push({
-              poly: interPoly,
-              sourcePathIds: Array.from(new Set([...region.sourcePathIds, path.id])),
-              topPath: path, // newer path on top
-            });
-          }
-        }
-
-        // Subtract the intersection from remainder of new path
-        if (intersection.length > 0) {
-          remainder = polygonClipping.difference(remainder, intersection);
-        }
-      } catch (err) {
-        console.warn('Polygon subdivision step failed, preserving region', err);
-        nextRegions.push(region);
-      }
-    }
-
-    // Remainder of the new path that did not overlap with any previous region
-    for (const remPoly of remainder) {
-      if (remPoly && remPoly.length > 0 && remPoly[0].length >= 3) {
-        nextRegions.push({
-          poly: remPoly,
+      if (currentRegions.length === 0) {
+        currentRegions.push({
+          poly: pathPoly,
           sourcePathIds: [path.id],
           topPath: path,
         });
+        continue;
       }
-    }
 
-    currentRegions = nextRegions;
+      const nextRegions: IntermediateRegion[] = [];
+      let remainder: MultiPolygon = [pathPoly];
+
+      for (const region of currentRegions) {
+        try {
+          const intersection = polygonClipping.intersection(region.poly, pathPoly);
+          const difference = polygonClipping.difference(region.poly, pathPoly);
+
+          // Pieces of existing region that do NOT overlap with new path
+          for (const diffPoly of difference) {
+            if (diffPoly && diffPoly.length > 0 && diffPoly[0].length >= 3) {
+              nextRegions.push({
+                poly: diffPoly,
+                sourcePathIds: [...region.sourcePathIds],
+                topPath: region.topPath,
+              });
+            }
+          }
+
+          // Overlapping intersection pieces
+          for (const interPoly of intersection) {
+            if (interPoly && interPoly.length > 0 && interPoly[0].length >= 3) {
+              nextRegions.push({
+                poly: interPoly,
+                sourcePathIds: Array.from(new Set([...region.sourcePathIds, path.id])),
+                topPath: path, // newer path on top
+              });
+            }
+          }
+
+          // Subtract the intersection from remainder of new path
+          if (intersection.length > 0) {
+            remainder = polygonClipping.difference(remainder, intersection);
+          }
+        } catch (err) {
+          console.warn('Polygon subdivision step failed, preserving region', err);
+          nextRegions.push(region);
+        }
+      }
+
+      // Remainder of the new path that did not overlap with any previous region
+      for (const remPoly of remainder) {
+        if (remPoly && remPoly.length > 0 && remPoly[0].length >= 3) {
+          nextRegions.push({
+            poly: remPoly,
+            sourcePathIds: [path.id],
+            topPath: path,
+          });
+        }
+      }
+
+      currentRegions = nextRegions;
+    }
   }
 
   // Format into final SubRegion structures

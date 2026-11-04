@@ -1,3 +1,4 @@
+import { RangeInput } from './ui/primitives';
 import React, { useEffect, useState } from 'react';
 import { Lock, LockOpen, Ruler, Trash2, Grid3x3, Magnet, Maximize2 } from 'lucide-react';
 import { Guide } from '../types/vector';
@@ -353,7 +354,7 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
 
           <div className={`flex items-center gap-2 ${gridLocked ? 'opacity-50' : ''}`}>
             <span className="w-20 font-mono text-[10px] uppercase tracking-wider text-mute">Lines</span>
-            <input
+            <RangeInput
               type="range"
               min={5}
               max={100}
@@ -413,16 +414,30 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
                   <span className="min-w-0 flex-1 font-mono text-[12px] text-text">
                     {Math.round(g.position)} px
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => onUpdateGuide(g.id, { locked: !g.locked })}
-                    aria-label={g.locked ? 'Unlock guide' : 'Lock guide'}
-                    className={`press grid h-7 w-7 place-items-center rounded-lg border ${
-                      g.locked ? 'border-accent bg-accent text-ink-0' : 'border-line bg-ink-2 text-dim'
-                    }`}
-                  >
-                    {g.locked ? <Lock size={12} /> : <LockOpen size={12} />}
-                  </button>
+                  {(() => {
+                    // "Lock all guides" freezes every guide, so each row has to
+                    // read locked as well instead of showing an open padlock.
+                    const locked = guidesLocked || g.locked;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateGuide(g.id, { locked: !g.locked })}
+                        disabled={guidesLocked}
+                        aria-label={
+                          guidesLocked
+                            ? 'Locked by Lock all guides'
+                            : locked
+                              ? 'Unlock guide'
+                              : 'Lock guide'
+                        }
+                        className={`press grid h-7 w-7 place-items-center rounded-lg border disabled:opacity-60 ${
+                          locked ? 'border-accent bg-accent text-ink-0' : 'border-line bg-ink-2 text-dim'
+                        }`}
+                      >
+                        {locked ? <Lock size={12} /> : <LockOpen size={12} />}
+                      </button>
+                    );
+                  })()}
                   <button
                     type="button"
                     onClick={() => onRemoveGuide(g.id)}

@@ -1,3 +1,4 @@
+import { RangeInput } from './ui/primitives';
 import React, { useRef, useState } from 'react';
 import {
   Eye,
@@ -128,7 +129,7 @@ export const ReferencesSheet: React.FC<ReferencesSheetProps> = ({
                 </IconButton>
               </div>
               <div className="mt-2 flex items-center gap-2">
-                <input
+                <RangeInput
                   type="range"
                   min={0.05}
                   max={1}

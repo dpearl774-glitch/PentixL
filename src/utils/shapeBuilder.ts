@@ -1,6 +1,8 @@
 import polygonClipping, { MultiPolygon, Polygon, Ring } from 'polygon-clipping';
 import { AnchorPoint, VectorPath } from '../types/vector';
 import { pathToPolygon } from './bezier';
+import { computePathsBoundingBox } from './transform';
+import type { BoundingBox } from './transform';
 
 /**
  * Converts a VectorPath to a polygon format recognized by polygon-clipping
@@ -51,6 +53,12 @@ export function ringToVectorPath(
     id: `${basePath.id}-res-${idSuffix}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     points,
     closed: true,
+    cornerRadius: undefined,
+    cornerRadii: undefined,
+    cornerSource: undefined,
+    // A Boolean result is a new editable object, not a mask or a clipped child.
+    clipPathId: undefined,
+    isClippingMask: false,
   };
 }
 
@@ -75,16 +83,95 @@ export function multiPolygonToVectorPaths(
 
 export type BooleanOperation = 'union' | 'subtract' | 'intersect' | 'exclude' | 'divide';
 
+/** Visible geometry after a clip chain, for destructive operations. */
+export function visibleClippingGeometry(
+  path: VectorPath,
+  byId: Map<string, VectorPath>,
+  seen: Set<string> = new Set()
+): MultiPolygon {
+  if (seen.has(path.id)) return [];
+  const polygon = vectorPathToClippingPolygon(path);
+  if (!polygon.length || polygon[0].length < 3) return [];
+  if (!path.clipPathId) return [polygon];
+
+  const source = byId.get(path.clipPathId);
+  if (!source || !source.closed || source.text || source.points.length < 3) return [];
+  const sourceGeometry = visibleClippingGeometry(
+    source,
+    byId,
+    new Set(seen).add(path.id)
+  );
+  if (!sourceGeometry.length) return [];
+  return polygonClipping.intersection([polygon], sourceGeometry);
+}
+
+/** Visible selection bounds, excluding geometry hidden by a clip chain. */
+export function computeVisiblePathsBoundingBox(
+  paths: VectorPath[],
+  allPaths: VectorPath[] = paths
+): BoundingBox | null {
+  const byId = new Map(allPaths.map((path) => [path.id, path]));
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let hasPoints = false;
+
+  const include = (x: number, y: number) => {
+    hasPoints = true;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  };
+
+  for (const path of paths) {
+    // Text has a real glyph box that the polygon sampler cannot reconstruct.
+    if (path.text || !path.clipPathId) {
+      const box = computePathsBoundingBox([path]);
+      if (!box) continue;
+      include(box.minX, box.minY);
+      include(box.maxX, box.maxY);
+      continue;
+    }
+
+    for (const polygon of visibleClippingGeometry(path, byId)) {
+      for (const ring of polygon) {
+        for (const [x, y] of ring) include(x, y);
+      }
+    }
+  }
+
+  if (!hasPoints) return null;
+  const width = Math.max(2, maxX - minX);
+  const height = Math.max(2, maxY - minY);
+  return {
+    minX,
+    minY,
+    maxX,
+    maxY,
+    width,
+    height,
+    centerX: minX + width / 2,
+    centerY: minY + height / 2,
+  };
+}
+
 /**
- * Executes a Boolean operation on selected paths (Illustrator Pathfinder & Shape Builder core)
+ * Executes a Boolean operation on selected paths (Illustrator Pathfinder core).
+ * Clipped inputs use their visible region; the result is a new unclipped object.
  */
 export function executeBooleanOperation(
   paths: VectorPath[],
-  operation: BooleanOperation
+  operation: BooleanOperation,
+  allPaths: VectorPath[] = paths
 ): VectorPath[] {
   if (paths.length < 2) return paths;
 
-  const polys = paths.map((p) => vectorPathToClippingPolygon(p)).filter((p) => p.length > 0);
+  const byId = new Map(allPaths.map((path) => [path.id, path]));
+  const polys = paths
+    .map((path) => visibleClippingGeometry(path, byId))
+    .filter((geometry) => geometry.length > 0);
   if (polys.length < 2) return paths;
 
   const baseStyle = paths[0];
@@ -101,7 +188,7 @@ export function executeBooleanOperation(
 
       case 'subtract': {
         // Subtract paths 1..n from path 0 (Minus Front)
-        let currentResult: MultiPolygon = [polys[0]];
+        let currentResult: MultiPolygon = polys[0];
         for (let i = 1; i < polys.length; i++) {
           currentResult = polygonClipping.difference(currentResult, polys[i]);
         }
@@ -112,7 +199,7 @@ export function executeBooleanOperation(
       }
 
       case 'intersect': {
-        let currentResult: MultiPolygon = [polys[0]];
+        let currentResult: MultiPolygon = polys[0];
         for (let i = 1; i < polys.length; i++) {
           currentResult = polygonClipping.intersection(currentResult, polys[i]);
         }
@@ -123,7 +210,7 @@ export function executeBooleanOperation(
       }
 
       case 'exclude': {
-        let currentResult: MultiPolygon = [polys[0]];
+        let currentResult: MultiPolygon = polys[0];
         for (let i = 1; i < polys.length; i++) {
           currentResult = polygonClipping.xor(currentResult, polys[i]);
         }

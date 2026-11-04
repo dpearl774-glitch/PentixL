@@ -1,8 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { Copy, Download, Check, FileCode2, Image as ImageIcon } from 'lucide-react';
+import { Copy, Download, Check, FileCode2, Image as ImageIcon, Share2 } from 'lucide-react';
 import { Layer, PressureConfig, VectorPath } from '../types/vector';
-import { downloadSvg, exportToPng, generateSvgCode } from '../utils/svgExport';
-import { computePathsBoundingBox } from '../utils/transform';
+import { downloadSvg, exportToPng, generateSvgCode, renderPngBlob } from '../utils/svgExport';
+import { computeVisiblePathsBoundingBox } from '../utils/shapeBuilder';
+import { withClipSourcesForExport } from '../utils/clipping';
+import { includeExtrusionInBounds } from '../utils/extrusion';
 import { Button, SectionLabel, Sheet } from './ui/primitives';
 
 interface ExportSheetProps {
@@ -46,21 +48,40 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
   const [scope, setScope] = useState<Scope>('artboard');
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const hasSelection = selectedPaths.length > 0;
+  // Hidden layers and hidden objects do not export. Derive the selection from
+  // what is actually visible, so a stale selection cannot crop the artwork to
+  // an invisible object or leave an empty selection scope active.
+  const exportableSelectedPaths = useMemo(() => {
+    const visibleIds = new Set(
+      layers
+        .filter((layer) => layer.visible !== false)
+        .flatMap((layer) =>
+          layer.paths.filter((path) => path.visible !== false).map((path) => path.id)
+        )
+    );
+    return selectedPaths.filter((path) => visibleIds.has(path.id));
+  }, [layers, selectedPaths]);
+
+  const hasSelection = exportableSelectedPaths.length > 0;
   const activeScope: Scope = hasSelection ? scope : 'artboard';
 
   // Selection export crops to the selected artwork plus a small breathing gap,
   // which is what a logo mark handed to someone else actually needs.
   const selectedIds = useMemo(
-    () => new Set(selectedPaths.map((p) => p.id)),
-    [selectedPaths]
+    () => new Set(exportableSelectedPaths.map((p) => p.id)),
+    [exportableSelectedPaths]
   );
 
   const crop = useMemo(() => {
     if (activeScope !== 'selection' || !hasSelection) return null;
-    const box = computePathsBoundingBox(selectedPaths);
-    if (!box) return null;
+    const flatBox = computeVisiblePathsBoundingBox(
+      exportableSelectedPaths,
+      layers.flatMap((layer) => layer.paths)
+    );
+    if (!flatBox) return null;
+    const box = includeExtrusionInBounds(exportableSelectedPaths, flatBox);
     const pad = Math.max(2, Math.round(Math.max(box.width, box.height) * 0.04));
     return {
       x: box.minX - pad,
@@ -68,15 +89,12 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
       width: box.width + pad * 2,
       height: box.height + pad * 2,
     };
-  }, [activeScope, hasSelection, selectedPaths]);
+  }, [activeScope, hasSelection, exportableSelectedPaths, layers]);
 
   const exportLayers = useMemo(
     () =>
       activeScope === 'selection' && hasSelection
-        ? layers.map((layer) => ({
-            ...layer,
-            paths: layer.paths.filter((p) => selectedIds.has(p.id)),
-          }))
+        ? withClipSourcesForExport(layers, selectedIds)
         : layers,
     [activeScope, hasSelection, layers, selectedIds]
   );
@@ -116,26 +134,92 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
     [svg]
   );
 
+  /** Exports are self-contained: live text becomes outlines, not a font lookup. */
+  const outputSvg = () =>
+    generateSvgCode(
+      exportLayers,
+      {
+        width: outWidth,
+        height: outHeight,
+        includeBackground: !transparent,
+        backgroundColor,
+        monoColor,
+        crop: crop ?? undefined,
+        outlineText: true,
+      },
+      pressureConfig
+    );
+
   const slug =
     projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'pentix';
   const suffix = `${activeScope === 'selection' ? '-mark' : ''}${mono !== 'off' ? '-mono' : ''}`;
 
   const copy = async () => {
+    setError(null);
+    const svgOutput = outputSvg();
     try {
-      await navigator.clipboard.writeText(svg);
+      await navigator.clipboard.writeText(svgOutput);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
-      setCopied(false);
+      // Older iOS and non-secure local previews have no clipboard API. A
+      // temporary textarea still gives them a way to copy the markup.
+      const area = document.createElement('textarea');
+      area.value = svgOutput;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(area);
+      setCopied(ok);
+      if (!ok) setError('Could not copy automatically. Select the markup above.');
     }
   };
 
   const savePng = async () => {
     setBusy(true);
+    setError(null);
     try {
-      await exportToPng(svg, outWidth, outHeight, scale, `${slug}${suffix}-${scale}x.png`);
+      await exportToPng(outputSvg(), outWidth, outHeight, scale, `${slug}${suffix}-${scale}x.png`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'PNG export failed on this device.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const share = async () => {
+    setError(null);
+    const svgOutput = outputSvg();
+    let file: File;
+    if (tab === 'png') {
+      try {
+        const blob = await renderPngBlob(svgOutput, outWidth, outHeight, scale);
+        file = new File([blob], `${slug}${suffix}-${scale}x.png`, { type: 'image/png' });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'PNG sharing failed on this device.');
+        return;
+      }
+    } else {
+      file = new File([svgOutput], `${slug}${suffix}.svg`, { type: 'image/svg+xml' });
+    }
+    const nav = navigator as Navigator & {
+      canShare?: (data: { files: File[] }) => boolean;
+      share?: (data: { files: File[]; title: string }) => Promise<void>;
+    };
+    if (nav.share && (!nav.canShare || nav.canShare({ files: [file] }))) {
+      try {
+        await nav.share({ files: [file], title: projectName });
+        return;
+      } catch (err) {
+        if ((err as DOMException)?.name === 'AbortError') return;
+      }
+    }
+    if (tab === 'png') {
+      await exportToPng(svgOutput, outWidth, outHeight, scale, file.name);
+    } else {
+      downloadSvg(svgOutput, file.name);
     }
   };
 
@@ -192,7 +276,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
               {(
                 [
                   ['artboard', 'Whole artboard'],
-                  ['selection', `Selection · ${selectedPaths.length}`],
+                  ['selection', `Selection · ${exportableSelectedPaths.length}`],
                 ] as [Scope, string][]
               ).map(([value, label]) => (
                 <button
@@ -283,11 +367,17 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
               </Button>
               <Button
                 variant="primary"
-                onClick={() => downloadSvg(svg, `${slug}${suffix}.svg`)}
+                onClick={() => downloadSvg(outputSvg(), `${slug}${suffix}.svg`)}
               >
                 <Download size={14} /> Download
               </Button>
             </div>
+            <Button variant="secondary" block onClick={share}>
+              <Share2 size={14} /> Share or save
+            </Button>
+            <p className="text-[10.5px] leading-snug text-mute">
+              Text is converted to outlines on export, so it stays identical without the font.
+            </p>
           </div>
         ) : (
           <div className="flex flex-col gap-2">
@@ -314,6 +404,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
             <Button variant="primary" block onClick={savePng} disabled={busy}>
               <Download size={15} /> {busy ? 'Rendering…' : `Download ${scale}× PNG`}
             </Button>
+            {error && <p className="text-[11.5px] leading-snug text-danger">{error}</p>}
           </div>
         )}
       </div>

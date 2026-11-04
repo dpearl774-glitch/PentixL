@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Layers, Menu, Pencil, Redo2, Share2, Undo2 } from 'lucide-react';
+import { Eye, Layers, Menu, Pencil, Redo2, Share2, Undo2 } from 'lucide-react';
 import { IconButton } from './ui/primitives';
 
 interface TopBarProps {
@@ -14,6 +14,8 @@ interface TopBarProps {
   onOpenMenu: () => void;
   onOpenLayers: () => void;
   onOpenExport: () => void;
+  /** Shows only the artboard, hiding every panel and editing aid */
+  onPreview: () => void;
 }
 
 /**
@@ -32,6 +34,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenMenu,
   onOpenLayers,
   onOpenExport,
+  onPreview,
 }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(projectName);
@@ -109,6 +112,10 @@ export const TopBar: React.FC<TopBarProps> = ({
             {layersCount}
           </span>
         )}
+      </IconButton>
+
+      <IconButton label="Preview artboard" onClick={onPreview}>
+        <Eye size={17} />
       </IconButton>
 
       <button

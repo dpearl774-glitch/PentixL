@@ -1,3 +1,4 @@
+import { RangeInput } from './ui/primitives';
 import React, { useMemo } from 'react';
 import { RotateCcw, Check } from 'lucide-react';
 import { AnchorPoint, PressureConfig } from '../types/vector';
@@ -78,7 +79,7 @@ export const PressureSheet: React.FC<PressureSheetProps> = ({ open, onClose, con
             <SectionLabel>Thin end</SectionLabel>
             <span className="font-mono text-[11px] font-bold text-accent">{config.minWidth} px</span>
           </div>
-          <input
+          <RangeInput
             type="range"
             min={1}
             max={16}
@@ -98,7 +99,7 @@ export const PressureSheet: React.FC<PressureSheetProps> = ({ open, onClose, con
             <SectionLabel>Thick end</SectionLabel>
             <span className="font-mono text-[11px] font-bold text-accent">{config.maxWidth} px</span>
           </div>
-          <input
+          <RangeInput
             type="range"
             min={Math.max(6, config.minWidth + 2)}
             max={64}
@@ -113,7 +114,7 @@ export const PressureSheet: React.FC<PressureSheetProps> = ({ open, onClose, con
               {config.calligraphyAngle}°
             </span>
           </div>
-          <input
+          <RangeInput
             type="range"
             min={0}
             max={90}
@@ -128,7 +129,7 @@ export const PressureSheet: React.FC<PressureSheetProps> = ({ open, onClose, con
               {Math.round(config.smoothing * 100)}%
             </span>
           </div>
-          <input
+          <RangeInput
             type="range"
             min={0}
             max={0.92}

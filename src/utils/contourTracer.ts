@@ -1,4 +1,5 @@
 import { AnchorPoint, Point, VectorPath } from '../types/vector';
+import { applyTextMatrix, TextMatrix } from './textGeometry';
 import { fitBezierPath } from './curveFit';
 
 /**
@@ -617,11 +618,15 @@ export function expandTextToVectorPaths(
     fontSize?: number;
     fontFamily?: string;
     fontWeight?: string;
+    /** Extra letter spacing in pixels, matching the on-canvas label */
+    letterSpacing?: number;
     fillColor?: string;
     strokeColor?: string;
     strokeWidth?: number;
     originX?: number;
     originY?: number;
+    /** Local-to-world transform stored on a live text object */
+    matrix?: TextMatrix;
   } = {}
 ): VectorPath[] {
   if (!text || text.trim().length === 0) return [];
@@ -630,11 +635,13 @@ export function expandTextToVectorPaths(
     fontSize = 72,
     fontFamily = 'Plus Jakarta Sans, sans-serif',
     fontWeight = 'bold',
+    letterSpacing = 0,
     fillColor = '#4C8DFF',
     strokeColor = '#E8EAED',
     strokeWidth = 2,
     originX = 100,
     originY = 200,
+    matrix,
   } = options;
 
   if (typeof document === 'undefined') return [];
@@ -646,6 +653,11 @@ export function expandTextToVectorPaths(
   // Setup font
   const fontSpec = `${fontWeight} ${fontSize}px ${fontFamily}`;
   ctx.font = fontSpec;
+  // Canvas letter spacing matches the SVG attribute, so a tracked label traces
+  // with the same rhythm it is drawn with.
+  if (letterSpacing) {
+    (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${letterSpacing}px`;
+  }
   const metrics = ctx.measureText(text);
 
   const pad = 24;
@@ -704,23 +716,27 @@ export function expandTextToVectorPaths(
     namePrefix: `Glyph "${text}"`,
   });
 
-  const mapPoint = (pt: AnchorPoint): AnchorPoint => ({
-    ...pt,
-    x: pt.x / scale + originX - pad,
-    y: pt.y / scale + originY - (pad + ascent),
-    handleIn: pt.handleIn
-      ? {
-          x: pt.handleIn.x / scale + originX - pad,
-          y: pt.handleIn.y / scale + originY - (pad + ascent),
-        }
-      : undefined,
-    handleOut: pt.handleOut
-      ? {
-          x: pt.handleOut.x / scale + originX - pad,
-          y: pt.handleOut.y / scale + originY - (pad + ascent),
-        }
-      : undefined,
-  });
+  // Convert raster pixels back to the label's local baseline space, then run
+  // the same matrix the live <text> uses. A scaled or rotated label therefore
+  // converts to curves exactly where it sits on the canvas.
+  const toWorld = (x: number, y: number): Point => {
+    const local = { x: x / scale - pad, y: y / scale - (pad + ascent) };
+    const mapped = matrix ? applyTextMatrix(matrix, local) : local;
+    return { x: mapped.x + originX, y: mapped.y + originY };
+  };
+
+  const mapPoint = (pt: AnchorPoint): AnchorPoint => {
+    const anchor = toWorld(pt.x, pt.y);
+    const handleIn = pt.handleIn ? toWorld(pt.handleIn.x, pt.handleIn.y) : undefined;
+    const handleOut = pt.handleOut ? toWorld(pt.handleOut.x, pt.handleOut.y) : undefined;
+    return {
+      ...pt,
+      x: anchor.x,
+      y: anchor.y,
+      handleIn,
+      handleOut,
+    };
+  };
 
   return tracedPaths.map((p) => ({
     ...p,

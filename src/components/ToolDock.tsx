@@ -1,5 +1,5 @@
 import React from 'react';
-import { MousePointer2, PenTool, Square, Type, Brush, Crosshair } from 'lucide-react';
+import { MousePointer2, PenTool, Pencil, Square, Type, Brush, Crosshair, Hand } from 'lucide-react';
 import { ToolType } from '../types/vector';
 import { haptic } from '../theme';
 
@@ -39,8 +39,10 @@ interface Slot {
  * must never be hidden behind a gesture. */
 const SLOTS: Slot[] = [
   { id: 'select', label: 'Select', aria: 'Select and move', icon: <MousePointer2 size={21} /> },
+  { id: 'hand', label: 'Pan', aria: 'Pan canvas', icon: <Hand size={21} /> },
   { id: 'direct-select', label: 'Nodes', aria: 'Direct select nodes', icon: <Crosshair size={21} /> },
   { id: 'pen', label: 'Pen', aria: 'Pen tool', icon: <PenTool size={21} /> },
+  { id: 'pencil', label: 'Pencil', aria: 'Pencil tool', icon: <Pencil size={20} /> },
   { id: 'pressure-brush', label: 'Brush', aria: 'Pressure brush', icon: <Brush size={21} /> },
   {
     id: 'shape-builder',

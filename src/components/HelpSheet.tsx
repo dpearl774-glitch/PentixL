@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   PenTool,
+  Pencil,
   Combine,
   MousePointer2,
   Hand,
@@ -100,6 +101,13 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
         <Item term="Check button">Commits the path — right thumb rail, or “Done” in the strip.</Item>
       </Group>
 
+      <Group icon={<Pencil size={14} />} title="Pencil">
+        <Item term="Draw">Freehand stroke, fitted to smooth curves with a handful of nodes when you lift.</Item>
+        <Item term="Close">Finish where you started — the cue ring means it will close into a filled shape.</Item>
+        <Item term="Smoothness">Tight follows your finger closest, Smooth evens out wobble, Loose is the softest.</Item>
+        <Item term="Tap">Places a single dot in the stroke colour.</Item>
+      </Group>
+
       <Group icon={<Combine size={14} />} title="Shape builder & pathfinder">
         <Item term="Build tool">With two or more shapes on the layer, drag across the regions you want to merge — release to commit.</Item>
         <Item term="Erase">Flip the Build strip to Erase, or hold Alt, then tap regions to remove them.</Item>
@@ -128,8 +136,12 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
         <Item term="References">Saved with the document, and locked behind the artwork until unlocked.</Item>
         <Item term="Pressure">Auto uses stylus pressure or finger speed, Speed follows motion, Uniform is constant.</Item>
         <Item term="Simplify">Reduces anchors on paths and traces you have already made. Lives in More.</Item>
+        <Item term="Preview">
+          The eye in the top bar hides every panel, ruler, grid, guide and selection, leaving only
+          the artboard. Drag to pan, pinch to zoom, and tap Exit or press Esc to come back.
+        </Item>
         <Item term="Pad">
-          Optional trackpad for pen, node and select work: steer the crosshair, click to press,
+          Optional trackpad for pen, pencil, node and select work: steer the crosshair, click to press,
           drag to move what it landed on, scroll to pan and ⌘-scroll to zoom. Hide it from the menu.
         </Item>
       </Group>
@@ -142,6 +154,7 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
           <Key>V</Key> select
           <Key>A</Key> direct
           <Key>P</Key> pen
+          <Key>N</Key> pencil
           <Key>B</Key> brush
           <Key>M</Key> build
           <Key>U</Key> shapes
