@@ -2,15 +2,15 @@
   "name": "Pentix — Vector Logo Studio",
   "short_name": "Pentix",
   "description": "A local-first mobile vector logo studio.",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#08090b",
   "theme_color": "#08090b",
   "orientation": "any",
   "icons": [
     {
-      "src": "/icon.svg",
+      "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

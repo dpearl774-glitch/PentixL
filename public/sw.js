@@ -1,6 +1,11 @@
-// Bumped so every existing install drops the old v1 shell on activation.
-const CACHE = 'pentix-shell-v2';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
+// The worker is served from the app root, which is "/" on a domain deploy and
+// "/<repo>/" on GitHub project pages. Deriving the root from the script URL
+// keeps every cache key and route correct at either base.
+const ROOT = self.location.pathname.replace(/[^/]*$/, '');
+const at = (path) => ROOT + path;
+// Bumped whenever the shell changes so existing installs repopulate.
+const CACHE = 'pentix-shell-v3';
+const SHELL = [at(''), at('index.html'), at('manifest.webmanifest'), at('icon.svg')];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -17,8 +22,8 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-/** Vite emits content-hashed files under /assets/, so their bytes never change. */
-const isHashedAsset = (url) => url.pathname.startsWith('/assets/');
+/** Vite emits content-hashed files under <root>assets/, so their bytes never change. */
+const isHashedAsset = (url) => url.pathname.startsWith(at('assets/'));
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
@@ -32,10 +37,10 @@ self.addEventListener('fetch', (event) => {
       fetch(request)
         .then((response) => {
           const copy = response.clone();
-          caches.open(CACHE).then((cache) => cache.put('/index.html', copy));
+          caches.open(CACHE).then((cache) => cache.put(at('index.html'), copy));
           return response;
         })
-        .catch(() => caches.match('/index.html').then((cached) => cached || caches.match('/')))
+        .catch(() => caches.match(at('index.html')).then((cached) => cached || caches.match(at(''))))
     );
     return;
   }

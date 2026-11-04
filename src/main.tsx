@@ -63,7 +63,10 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     // updateViaCache: 'none' keeps the browser from holding a stale worker
     // script, which would pin the old shell long after a deploy.
-    void navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {
+    // BASE_URL is "/" at the domain root and "/<repo>/" on GitHub project pages.
+    void navigator.serviceWorker
+      .register(`${import.meta.env.BASE_URL}sw.js`, { updateViaCache: 'none' })
+      .catch(() => {
       /* offline support is optional; the editor still works */
     });
   });

@@ -5,6 +5,10 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // GitHub project pages serve from https://<user>.github.io/<repo>/, so the
+    // Pages workflow sets VITE_BASE_PATH. Netlify and local dev have no env
+    // var and keep the domain root.
+    base: process.env.VITE_BASE_PATH || '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
