@@ -313,30 +313,72 @@ const ICE: Array<[number, string]> = [
   [1, '#9FB6D4'],
 ];
 
+/** A twelve-vertex cross, which reads as an x once it is turned 45°. */
+const crossed = (
+  id: string,
+  cx: number,
+  cy: number,
+  half: number,
+  width: number,
+  angle: number
+): AnchorPoint[] => {
+  const outline: Array<[number, number]> = [
+    [width, -width],
+    [width, -half],
+    [half, -width],
+    [half, width],
+    [width, width],
+    [width, half],
+    [-width, half],
+    [-width, width],
+    [-half, width],
+    [-half, -width],
+    [-width, -width],
+    [-width, -half],
+  ];
+  const rad = (angle * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return outline.map(([x, y], index) =>
+    corner(`${id}-${index}`, cx + x * cos - y * sin, cy + x * sin + y * cos)
+  );
+};
+
 /**
- * The studio monogram: a geometric P whose counter is a real hole, so the
- * letter stays one object and the bowl can be reshaped by its own nodes.
+ * The studio monogram: a geometric Px. The P keeps its counter as a real hole
+ * and the x is one closed cross, so the pair stays two editable objects — and
+ * reads as Pentix rather than as a lone P.
  */
 const pentixMark = (): VectorPath[] => {
   // Outer ring runs clockwise: top edge, around the bowl, down the stem, back up.
   const outer: AnchorPoint[] = [
-    corner('p-0', 214, 150),
-    corner('p-1', 330, 150, undefined, { x: 389, y: 150 }),
-    corner('p-2', 448, 258, { x: 448, y: 199 }, { x: 448, y: 317 }),
-    corner('p-3', 330, 362, { x: 389, y: 362 }),
-    corner('p-4', 286, 362),
-    corner('p-5', 286, 450),
-    corner('p-6', 214, 450),
+    corner('p-0', 150, 156),
+    corner('p-1', 288, 156, undefined, { x: 356, y: 156 }),
+    corner('p-2', 384, 252, { x: 384, y: 200 }, { x: 384, y: 304 }),
+    corner('p-3', 288, 348, { x: 356, y: 348 }),
+    corner('p-4', 216, 348),
+    corner('p-5', 216, 444),
+    corner('p-6', 150, 444),
   ];
   // Counter runs the other way, so nonzero leaves the bowl hollow.
   const counter: AnchorPoint[] = [
-    corner('p-h0', 286, 292),
-    corner('p-h1', 330, 292, undefined, { x: 345, y: 292 }),
-    corner('p-h2', 354, 258, { x: 354, y: 276 }, { x: 354, y: 240 }),
-    corner('p-h3', 330, 224, { x: 345, y: 224 }),
-    corner('p-h4', 286, 224),
+    corner('p-h0', 216, 296),
+    corner('p-h1', 288, 296, undefined, { x: 306, y: 296 }),
+    corner('p-h2', 326, 252, { x: 326, y: 276 }, { x: 326, y: 228 }),
+    corner('p-h3', 288, 208, { x: 306, y: 208 }),
+    corner('p-h4', 216, 208),
   ];
-  return [mark('mark-pentix', outer, { stops: IRIS, name: 'Pentix mark', holes: [counter] })];
+  return [
+    mark('mark-pentix', outer, { stops: IRIS, name: 'Pentix P', holes: [counter] }),
+    reid(
+      mark('mark-pentix-x', crossed('pentix-x', 474, 354, 94, 32, 45), {
+        stops: IRIS,
+        name: 'Pentix x',
+        angle: 100,
+      }),
+      'x'
+    ),
+  ];
 };
 
 /** Orbit: a shaded ring and a bead, the classic “platform” mark. */
@@ -452,8 +494,8 @@ const apexMark = (): VectorPath[] => [
 export const LOGO_TEMPLATES: LogoTemplate[] = [
   {
     id: 'pentix-monogram',
-    name: 'Pentix Monogram',
-    description: 'Geometric P with a live counter, gradient body and glossy bevel.',
+    name: 'Pentix Px',
+    description: 'Px monogram: a hollow P and a crossed x, with a glossy bevel.',
     category: 'Monogram',
     layers: [layer('layer-pentix', 'Monogram', pentixMark())],
   },

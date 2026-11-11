@@ -14,9 +14,17 @@
       <stop offset="0" stop-color="#151821"/>
       <stop offset="1" stop-color="#08090b"/>
     </linearGradient>
+    <path id="p" d="M96 130H228C298 130 332 172 332 222C332 272 298 314 228 314H158V400H96Z M158 178H228C258 178 270 196 270 222C270 248 258 266 228 266H158Z"/>
+    <path id="x" transform="rotate(45 398 317)" d="M427 288L427 229L486 288L486 346L427 346L427 405L369 405L369 346L310 346L310 288L369 288L369 229Z"/>
   </defs>
   <rect width="512" height="512" rx="112" fill="url(#plate)"/>
   <rect x="1" y="1" width="510" height="510" rx="111" fill="none" stroke="#ffffff" stroke-opacity="0.06"/>
-  <path d="M168 130H286C350 130 392 172 392 232C392 292 350 334 286 334H222V382H168Z M222 182H286C318 182 334 202 334 232C334 262 318 282 286 282H222Z" fill="url(#body)" fill-rule="evenodd"/>
-  <path d="M168 130H286C350 130 392 172 392 232C392 292 350 334 286 334H222V382H168Z M222 182H286C318 182 334 202 334 232C334 262 318 282 286 282H222Z" fill="url(#gloss)" fill-rule="evenodd"/>
+  <g fill="url(#body)" fill-rule="evenodd">
+    <use href="#p"/>
+    <use href="#x"/>
+  </g>
+  <g fill="url(#gloss)" fill-rule="evenodd">
+    <use href="#p"/>
+    <use href="#x"/>
+  </g>
 </svg>
