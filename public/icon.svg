@@ -6,16 +6,16 @@
       <stop offset="1" stop-color="#8B5CF6"/>
     </linearGradient>
     <linearGradient id="gloss" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42"/>
-      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.07"/>
       <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
     <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#151821"/>
       <stop offset="1" stop-color="#08090b"/>
     </linearGradient>
-    <path id="p" d="M96 130H228C298 130 332 172 332 222C332 272 298 314 228 314H158V400H96Z M158 178H228C258 178 270 196 270 222C270 248 258 266 228 266H158Z"/>
-    <path id="x" transform="rotate(45 398 317)" d="M427 288L427 229L486 288L486 346L427 346L427 405L369 405L369 346L310 346L310 288L369 288L369 229Z"/>
+    <path id="p" d="M92 138H219C282 138 300 176 300 219C300 262 282 300 219 300H150V396H92Z M150 182H219C246 182 256 199 256 219C256 239 246 256 219 256H150Z"/>
+    <path id="x" transform="rotate(45 380 325)" d="M406 299L406 245L460 299L460 351L406 351L406 405L354 405L354 351L300 351L300 299L354 299L354 245Z"/>
   </defs>
   <rect width="512" height="512" rx="112" fill="url(#plate)"/>
   <rect x="1" y="1" width="510" height="510" rx="111" fill="none" stroke="#ffffff" stroke-opacity="0.06"/>

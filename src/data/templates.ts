@@ -371,7 +371,7 @@ const pentixMark = (): VectorPath[] => {
   return [
     mark('mark-pentix', outer, { stops: IRIS, name: 'Pentix P', holes: [counter] }),
     reid(
-      mark('mark-pentix-x', crossed('pentix-x', 474, 354, 94, 32, 45), {
+      mark('mark-pentix-x', crossed('pentix-x', 492, 354, 92, 32, 45), {
         stops: IRIS,
         name: 'Pentix x',
         angle: 100,
