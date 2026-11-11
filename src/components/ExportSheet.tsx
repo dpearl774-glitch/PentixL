@@ -235,7 +235,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
       <div className="flex flex-col gap-4">
         {/* Preview */}
         <div
-          className="grid h-40 place-items-center overflow-hidden rounded-xl border border-line"
+          className="grid h-40 place-items-center overflow-hidden rounded-lg border border-line"
           style={{
             backgroundImage:
               'linear-gradient(45deg,#191d23 25%,transparent 25%,transparent 75%,#191d23 75%),linear-gradient(45deg,#191d23 25%,transparent 25%,transparent 75%,#191d23 75%)',
@@ -251,7 +251,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
           <button
             type="button"
             onClick={() => setTab('svg')}
-            className={`press flex h-10 items-center justify-center gap-2 rounded-xl border text-[12.5px] font-semibold ${
+            className={`press flex h-10 items-center justify-center gap-2 rounded-lg border text-[12.5px] font-semibold ${
               tab === 'svg' ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-ink-2 text-dim'
             }`}
           >
@@ -260,7 +260,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
           <button
             type="button"
             onClick={() => setTab('png')}
-            className={`press flex h-10 items-center justify-center gap-2 rounded-xl border text-[12.5px] font-semibold ${
+            className={`press flex h-10 items-center justify-center gap-2 rounded-lg border text-[12.5px] font-semibold ${
               tab === 'png' ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-ink-2 text-dim'
             }`}
           >
@@ -283,7 +283,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
                   key={value}
                   type="button"
                   onClick={() => setScope(value)}
-                  className={`press h-9 truncate rounded-xl border px-2 text-[12px] font-semibold ${
+                  className={`press h-9 truncate rounded-lg border px-2 text-[12px] font-semibold ${
                     activeScope === value
                       ? 'border-accent bg-accent/10 text-accent'
                       : 'border-line bg-ink-2 text-dim'
@@ -311,7 +311,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
                 key={value}
                 type="button"
                 onClick={() => setMono(value)}
-                className={`press flex h-9 items-center justify-center gap-1.5 truncate rounded-xl border px-2 text-[12px] font-semibold ${
+                className={`press flex h-9 items-center justify-center gap-1.5 truncate rounded-lg border px-2 text-[12px] font-semibold ${
                   mono === value
                     ? 'border-accent bg-accent/10 text-accent'
                     : 'border-line bg-ink-2 text-dim'
@@ -329,7 +329,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center justify-between rounded-xl border border-line bg-ink-0 px-3 py-2.5">
+        <div className="flex items-center justify-between rounded-lg border border-line bg-ink-0 px-3 py-2.5">
           <div className="min-w-0 pr-3">
             <div className="text-[12.5px] font-semibold text-text">Transparent background</div>
             <div className="text-[11px] text-mute">
@@ -356,7 +356,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
         {tab === 'svg' ? (
           <div className="flex flex-col gap-2">
             <SectionLabel>Markup</SectionLabel>
-            <pre className="no-scrollbar max-h-24 overflow-auto rounded-xl border border-line bg-ink-0 p-2.5 font-mono text-[10px] leading-relaxed text-mute">
+            <pre className="no-scrollbar max-h-24 overflow-auto rounded-lg border border-line bg-ink-0 p-2.5 font-mono text-[10px] leading-relaxed text-mute">
               {svg.slice(0, 700)}
               {svg.length > 700 ? '\n…' : ''}
             </pre>
@@ -388,7 +388,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
                   key={s}
                   type="button"
                   onClick={() => setScale(s)}
-                  className={`press rounded-xl border px-2 py-2.5 text-left ${
+                  className={`press rounded-lg border px-2 py-2.5 text-left ${
                     scale === s ? 'border-accent bg-accent/10' : 'border-line bg-ink-2'
                   }`}
                 >

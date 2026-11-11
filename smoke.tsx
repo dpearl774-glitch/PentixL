@@ -2,6 +2,7 @@
  * Render-level smoke test for the new canvas features.
  * Run: bun smoke.tsx
  */
+import fs from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -12,31 +13,87 @@ import { TextSheet } from './src/components/TextSheet';
 import { TopBar } from './src/components/TopBar';
 import { FontsSheet } from './src/components/FontsSheet';
 import { fitBezierPath } from './src/utils/curveFit';
+import {
+  compoundFromContours,
+  fromVectorPaths,
+  signedArea,
+  toSVGPathData,
+  toVectorPaths,
+} from './src/utils/compoundPath';
+import { simplifyAndFitCurves } from './src/utils/simplifyAndFit';
 import { CanvasSettingsSheet } from './src/components/CanvasSettingsSheet';
 import { ColorSheet } from './src/components/ColorSheet';
 import { AppMenu } from './src/components/AppMenu';
 import { BackupSheet } from './src/components/BackupSheet';
 import { HelpSheet } from './src/components/HelpSheet';
 import { ExportSheet } from './src/components/ExportSheet';
+import { offsetPaths } from './src/utils/offsetPath';
+import { splitPathsIntoGrid } from './src/utils/gridSplit';
+import {
+  computeAtomicSubRegions,
+  executeShapeBuilderMerge,
+  regionUnionOutline,
+} from './src/utils/shapeBuilderRegions';
+import { patternFromSwatch, patternLayout, syncPatternInstances } from './src/utils/effects';
+import type { WarpSpec } from './src/utils/warp';
+import {
+  applyShapeWarp,
+  clearShapeWarp,
+  WARP_KINDS,
+  warpPaths,
+  warpPathsInBox,
+  warpPoint,
+} from './src/utils/warp';
+import { warpLocalMatrix } from './src/utils/warpMath';
+import { PathAlignThumb, WarpThumb } from './src/components/EffectPreviews';
+import { warpFold } from './src/utils/warpFold';
+import { reversedAnchors, textPathDy } from './src/utils/textPath';
+import { measureTextMetrics, textWorldBox, textLineHeight } from './src/utils/textGeometry';
+import { textInShapeLayout } from './src/utils/textInShape';
+import {
+  textWarpBounds,
+  warpTextGlyphs,
+  warpTextPlacements,
+} from './src/utils/textWarp';
 import { generateSvgCode } from './src/utils/svgExport';
 import { generateProjectThumbnailSvg } from './src/utils/thumbnailGenerator';
-import { computePathsBoundingBox, copyPathsWithNewIds, scalePaths } from './src/utils/transform';
+import {
+  computePathsBoundingBox,
+  copyPathsWithNewIds,
+  scalePaths,
+  translatePaths,
+} from './src/utils/transform';
 import { alignPaths, distributePaths } from './src/utils/align';
-import { fitSmoothBezierCurves, traceFieldRegions } from './src/utils/contourTracer';
-import { roundPathCorners, sampleCubicBezier } from './src/utils/bezier';
+import {
+  expandTextToVectorPaths,
+  traceImageToVectorPaths,
+  fitSmoothBezierCurves,
+  traceFieldRegions,
+} from './src/utils/contourTracer';
+import { registerOutlineFont, textOutlineSource, fontOutlinePaths, outlineFontWeight } from './src/utils/fontOutlines';
+import { outlineLayoutText } from './src/utils/textOutlineConversion';
+import opentype from 'opentype.js';
+import { pathToSvgD, roundPathCorners, sampleCubicBezier, simplifyPath } from './src/utils/bezier';
 import { computeSelectionOverlapD } from './src/utils/overlap';
 import {
   sanitizeClipReferences,
   withClipSources,
   withClipSourcesForExport,
 } from './src/utils/clipping';
-import { extrusionFaces, extrusionShadow, includeExtrusionInBounds } from './src/utils/extrusion';
+import {
+  extrudeLightAngle,
+  extrusionFaces,
+  extrusionFrontPath,
+  extrusionShadow,
+  extrusionSheen,
+  includeExtrusionInBounds,
+} from './src/utils/extrusion';
 import {
   computeVisiblePathsBoundingBox,
   executeBooleanOperation,
 } from './src/utils/shapeBuilder';
 import { defaultGradient, gradientCss, gradientCoords } from './src/utils/gradients';
-import { Layer, SelectionState, VectorPath } from './src/types/vector';
+import { Layer, SelectionState, VectorPath, PatternFill, PatternSwatch} from './src/types/vector';
 
 const emptySelection: SelectionState = {
   selectedPathIds: [],
@@ -239,11 +296,25 @@ const toolOptionsBase: React.ComponentProps<typeof ToolOptions> = {
   onExtrudeDepth: noop,
   onExtrudeAngle: noop,
   onExtrudeTaper: noop,
+  onExtrudeTilt: noop,
+  onExtrudeTurn: noop,
+  onExtrudePerspective: noop,
   onExtrudeShadow: noop,
   onSimplify: noop,
   onExitPan: noop,
   onAlign: noop,
   onDistribute: noop,
+  onSplitGrid: noop,
+  onOffsetPath: noop,
+  onBlurSelection: noop,
+  onPattern: noop,
+  onClearPattern: noop,
+  onExtrudeBevel: noop,
+  onExtrudeBevelStyle: noop,
+  onExtrudeLight: noop,
+  onExtrudeGloss: noop,
+  onExtrudeShadowSoft: noop,
+  onExtrudeShadowLift: noop,
 };
 
 const pencilOptions = renderToStaticMarkup(<ToolOptions {...toolOptionsBase} />);
@@ -509,6 +580,451 @@ const extrudeSvg = generateSvgCode(
 );
 check('3D extrusion exports side walls', extrudeSvg.includes('id="extrude-extruded"'));
 check('3D extrusion keeps thumbnails', generateProjectThumbnailSvg(extrudeLayers).includes('id="extrude-extruded"'));
+
+const photoPath: VectorPath = {
+  ...squarePath,
+  id: 'photo',
+  fill: 'none',
+  stroke: 'none',
+  strokeWidth: 0,
+  image: { url: 'data:image/png;base64,iVBORw0KGgo=', width: 400, height: 400 },
+};
+const photoSvg = generateSvgCode(
+  [{ id: 'photo-layer', name: 'Photo', visible: true, locked: false, opacity: 1, paths: [photoPath] }],
+  { width: 600, height: 600, includeBackground: false, backgroundColor: 'transparent' },
+  { source: 'fixed', minWidth: 2, maxWidth: 10, smoothing: 0.5, calligraphyAngle: 0 }
+);
+check(
+  'image paint exports cropped to its own shape',
+  photoSvg.includes('<image href="data:image/png') &&
+    photoSvg.includes('<clipPath id="pentix-image-photo"') &&
+    photoSvg.includes('clip-path="url(#pentix-image-photo)"'),
+  photoSvg.slice(0, 200)
+);
+check('image paint replaces the shape fill instead of stacking on it', !photoSvg.includes('fill="#'));
+
+const blurOpts = {
+  width: 600,
+  height: 600,
+  includeBackground: false,
+  backgroundColor: 'transparent',
+} as const;
+const pressure = { source: 'fixed', minWidth: 2, maxWidth: 10, smoothing: 0.5, calligraphyAngle: 0 } as const;
+const gaussianSvg = generateSvgCode(
+  [
+    {
+      id: 'blur-layer',
+      name: 'Blur',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      paths: [{ ...squarePath, id: 'soft', blur: { kind: 'gaussian', amount: 8, angle: 0 } }],
+    },
+  ],
+  blurOpts,
+  pressure
+);
+check(
+  'gaussian blur exports as a filter on the object',
+  gaussianSvg.includes('id="pentix-blur-soft"') &&
+    gaussianSvg.includes('stdDeviation="8.00 8.00"') &&
+    gaussianSvg.includes('filter="url(#pentix-blur-soft)"'),
+  gaussianSvg.slice(0, 160)
+);
+const motionSvg = generateSvgCode(
+  [
+    {
+      id: 'motion-layer',
+      name: 'Motion',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      paths: [{ ...squarePath, id: 'smear', blur: { kind: 'motion', amount: 20, angle: 0 } }],
+    },
+  ],
+  blurOpts,
+  pressure
+);
+check(
+  'motion blur smears along its angle',
+  motionSvg.includes('stdDeviation="20.00 0.01"') && motionSvg.includes('id="pentix-blur-smear"'),
+  motionSvg.slice(0, 160)
+);
+const patternSvg = generateSvgCode(
+  [
+    {
+      id: 'pattern-layer',
+      name: 'Pattern',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      paths: [
+        {
+          ...squarePath,
+          id: 'tiled',
+          pattern: {
+            paths: [{ ...squarePath, id: 'tile', fill: '#112233' }],
+            tileW: 200,
+            tileH: 200,
+            scale: 0.5,
+            rotation: 0,
+          },
+        },
+      ],
+    },
+  ],
+  blurOpts,
+  pressure
+);
+check(
+  'pattern fill exports a tile and paints with it',
+  patternSvg.includes('<pattern id="pentix-pattern-tiled"') &&
+    patternSvg.includes('width="100.00" height="100.00"') &&
+    patternSvg.includes('fill="url(#pentix-pattern-tiled)"'),
+  patternSvg.slice(0, 220)
+);
+
+// The preview rectangle sits on the canvas so the tiling can be judged, but it
+// is scaffolding: a file or a project card must show the artwork alone.
+const previewRect: VectorPath = {
+  ...squarePath,
+  id: 'pattern-preview-1',
+  name: 'Pattern preview',
+  pattern: {
+    paths: [{ ...squarePath, id: 'tile', fill: '#112233' }],
+    tileW: 200,
+    tileH: 200,
+    scale: 0.5,
+    rotation: 0,
+  },
+};
+const withPreview: Layer[] = [
+  {
+    id: 'preview-layer',
+    name: 'Preview',
+    visible: true,
+    locked: false,
+    opacity: 1,
+    paths: [{ ...squarePath, id: 'artwork', fill: '#445566' }, previewRect],
+  },
+];
+const previewExport = generateSvgCode(withPreview, blurOpts, pressure);
+check(
+  'the pattern preview never reaches an export',
+  previewExport.includes('id="path-artwork"') &&
+    !previewExport.includes('pattern-preview-1') &&
+    !previewExport.includes('pentix-pattern-pattern-preview-1'),
+  previewExport.slice(0, 200)
+);
+const previewThumb = generateProjectThumbnailSvg(withPreview);
+check(
+  'the pattern preview stays off project cards',
+  // Thumbnails paint paths without ids, so prove the artwork is there and the
+  // tiled rectangle is not.
+  previewThumb.includes('pentix-grad-artwork') &&
+    !previewThumb.includes('#112233') &&
+    !previewThumb.includes('pattern-preview-1')
+);
+
+/* ------------------------- Type in shape (area type) ------------------------- */
+console.log('Text in shape');
+const areaCircle: VectorPath = {
+  ...squarePath,
+  id: 'area-circle',
+  points: Array.from({ length: 48 }, (_, index) => {
+    const angle = (index / 48) * Math.PI * 2;
+    return {
+      id: `area-circle-${index}`,
+      x: 200 + Math.cos(angle) * 100,
+      y: 200 + Math.sin(angle) * 100,
+      type: 'corner' as const,
+    };
+  }),
+  closed: true,
+};
+const areaLabel: VectorPath = {
+  ...squarePath,
+  id: 'area-label',
+  text: 'Pentix school of art badge',
+  textPath: undefined,
+  warp: undefined,
+  fontSize: 18,
+  letterSpacing: 0,
+  points: [{ id: 'area-anchor', x: 0, y: 0, type: 'corner' }],
+  closed: false,
+};
+const areaLayout = textInShapeLayout(areaCircle, areaLabel, areaLabel.text!);
+check('a circle wraps a sentence onto several lines', !!areaLayout && areaLayout.lines.length >= 3, JSON.stringify(areaLayout?.lines));
+check('wrapping keeps every word in order', areaLayout?.lines.join(' ') === areaLabel.text, areaLayout?.lines.join(' '));
+check(
+  'every wrapped line stays inside the circle',
+  !!areaLayout &&
+    areaLayout.lines.every((line, index) => {
+      const width = measureTextMetrics({
+        text: line,
+        fontSize: 18,
+        fontFamily: areaLabel.fontFamily,
+        fontWeight: areaLabel.fontWeight,
+        letterSpacing: 0,
+      }).width;
+      const left = areaLayout.originX + (areaLayout.lineX[index] ?? 0);
+      return left >= 99 && left + width <= 301;
+    }),
+  JSON.stringify(areaLayout?.lines.map((line, index) => [areaLayout?.lineX[index], line]))
+);
+check(
+  'the block starts near the top of the shape',
+  !!areaLayout && areaLayout.baseline > 100 && areaLayout.baseline < 200
+);
+
+const warpBox = { minX: 0, minY: 0, width: 100, height: 100 };
+// An arch is a real circular bend: the bottom edge bows up by the amount in
+// the middle, both ends stay pinned, and the letters turn with the curve.
+const archBase = (x: number) => warpPoint(x, 100, warpBox, { kind: 'arch', amount: 20 }).y;
+// The bend's circle runs a little past the box, so the ends lift slightly
+// instead of sitting dead on the pivot — that margin is what keeps the outer
+// letters from peeling away from the rest.
+check(
+  'arch warp lifts the middle far more than the ends',
+  Math.abs(archBase(50) - 80) < 1e-9 &&
+    archBase(0) > archBase(50) + 10 &&
+    archBase(100) > archBase(50) + 10 &&
+    Math.abs(archBase(0) - archBase(100)) < 1e-6,
+  `${archBase(0)} / ${archBase(50)} / ${archBase(100)}`
+);
+check(
+  'arch turns the letters at the ends so the word bends',
+  Math.abs(warpLocalMatrix(2, 100, warpBox, { kind: 'arch', amount: 20 }).b) > 0.2 &&
+    Math.abs(warpLocalMatrix(50, 100, warpBox, { kind: 'arch', amount: 20 }).b) < 0.01
+);
+check(
+  'wave warp oscillates across the selection',
+  Math.abs(warpPoint(25, 50, warpBox, { kind: 'wave', amount: 40, cycles: 1 }).y - 70) < 0.001
+);
+check(
+  'bulge warp pushes the rim outward',
+  warpPoint(75, 50, warpBox, { kind: 'bulge', amount: 25 }).x > 76
+);
+check(
+  'slant warp narrows one edge into perspective',
+  Math.abs(warpPoint(0, 0, warpBox, { kind: 'perspective', amount: 50 }).x - 25) < 0.001
+);
+const warpDensePath: VectorPath = {
+  ...squarePath,
+  id: 'dense',
+  closed: false,
+  points: [
+    { id: 'dense-0', x: 0, y: 0, type: 'corner' },
+    { id: 'dense-1', x: 50, y: 0, type: 'corner' },
+    { id: 'dense-2', x: 100, y: 0, type: 'corner' },
+  ],
+};
+const warpedDense = warpPaths([warpDensePath], { kind: 'arch', amount: 20 })[0];
+check(
+  'warp bakes into the points',
+  Math.abs(warpedDense.points[1].y + 20) < 0.001 &&
+    warpedDense.points[0].y > warpedDense.points[1].y + 10 &&
+    Math.abs(warpedDense.points[0].y - warpedDense.points[2].y) < 1e-6 &&
+    Math.abs(warpedDense.points[1].x - 50) < 0.001,
+  JSON.stringify(warpedDense.points.map((point) => [point.x, point.y]))
+);
+
+const curvePath: VectorPath = { ...squarePath, id: 'curve', fill: 'none', stroke: 'none' };
+const captionPath: VectorPath = {
+  ...squarePath,
+  id: 'caption',
+  text: 'PENTIX',
+  stroke: 'none',
+  fill: '#ffffff',
+  points: [{ id: 'caption-0', x: 10, y: 20, type: 'corner' }],
+  textPath: { pathId: 'curve', offset: 10 },
+};
+const captionSvg = generateSvgCode(
+  [
+    {
+      id: 'caption-layer',
+      name: 'Caption',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      paths: [curvePath, captionPath],
+    },
+  ],
+  blurOpts,
+  pressure
+);
+check(
+  'type on a path exports a textPath over its outline',
+  captionSvg.includes('<textPath href="#pentix-textpath-caption"') &&
+    captionSvg.includes('startOffset="10.00%"') &&
+    captionSvg.includes('id="pentix-textpath-caption"'),
+  captionSvg.slice(0, 200)
+);
+
+const gridTile = { ...squarePath, id: 'grid-tile', fill: '#112233' };
+const gridFill: PatternFill = {
+  paths: [gridTile],
+  tileW: 100,
+  tileH: 100,
+  scale: 1,
+  rotation: 0,
+  spacing: 10,
+};
+const gridLayout = patternLayout(gridFill);
+check(
+  'grid tiling sizes the box from the tile plus spacing',
+  gridLayout.width === 110 && gridLayout.height === 110 && gridLayout.copies.length === 1
+);
+const brickLayout = patternLayout({ ...gridFill, tileType: 'brick-row' });
+check(
+  'brick tiling uses a w x 2h cell with a half-tile stagger',
+  brickLayout.width === 110 &&
+    brickLayout.height === 220 &&
+    brickLayout.copies.some((c) => Math.abs(c.dx - 55) < 0.01 && Math.abs(c.dy - 110) < 0.01) &&
+    brickLayout.copies.some((c) => Math.abs(c.dx + 55) < 0.01 && Math.abs(c.dy - 110) < 0.01)
+);
+const columnLayout = patternLayout({ ...gridFill, tileType: 'brick-column' });
+check(
+  'column tiling staggers sideways instead',
+  columnLayout.width === 220 &&
+    columnLayout.height === 110 &&
+    columnLayout.copies.some((c) => Math.abs(c.dx - 110) < 0.01 && Math.abs(c.dy - 55) < 0.01) &&
+    columnLayout.copies.some((c) => Math.abs(c.dx - 110) < 0.01 && Math.abs(c.dy + 55) < 0.01)
+);
+const brickSvg = generateSvgCode(
+  [
+    {
+      id: 'brick-layer',
+      name: 'Brick',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      paths: [{ ...squarePath, id: 'brick', pattern: { ...gridFill, tileType: 'brick-row' } }],
+    },
+  ],
+  blurOpts,
+  pressure
+);
+check(
+  'brick pattern exports wrapped copies, padded artwork and a pivoted rotation',
+  (brickSvg.match(/<path d=/g) ?? []).length >= 3 &&
+    brickSvg.includes('translate(-50.00 115.00)') &&
+    brickSvg.includes('<g transform="scale(1.0000)">') &&
+    /patternTransform="translate\([^)]*\) rotate\(0 /.test(brickSvg),
+  brickSvg.slice(0, 240)
+);
+check(
+  'pattern scale grows the tile artwork, not just the gap between tiles',
+  (() => {
+    const base = {
+      paths: [squarePath],
+      tileW: 100,
+      tileH: 100,
+      scale: 1,
+      rotation: 0,
+      tileType: 'grid' as const,
+    };
+    const one = patternLayout(base);
+    const two = patternLayout({ ...base, scale: 2 });
+    return (
+      two.scale === 2 &&
+      Math.abs(two.width - one.width * 2) < 0.001 &&
+      two.copies.length === one.copies.length &&
+      Math.abs(two.centerX - two.width / 2) < 0.001
+    );
+  })()
+);
+check(
+  'shifted text on a path exports its baseline nudge',
+  (() => {
+    const nudged = generateSvgCode(
+      [
+        {
+          id: 'nudge-layer',
+          name: 'Nudge',
+          visible: true,
+          locked: false,
+          opacity: 1,
+          paths: [
+            { ...squarePath, id: 'nudge-path', fill: 'none', stroke: 'none' },
+            {
+              ...squarePath,
+              id: 'nudge-text',
+              text: 'PENTIX',
+              fill: '#ffffff',
+              stroke: 'none',
+              points: [{ id: 'nudge-0', x: 10, y: 20, type: 'corner' }],
+              textPath: { pathId: 'nudge-path', offset: 0, baselineOffset: 12 },
+            },
+          ],
+        },
+      ],
+      blurOpts,
+      pressure
+    );
+    return nudged.includes('dy="12.00"');
+  })()
+);
+
+const librarySwatch: PatternSwatch = {
+  id: 'sw-lib',
+  name: 'Library',
+  paths: [{ ...squarePath, id: 'lib-tile', fill: '#112233' }],
+  tileW: 100,
+  tileH: 100,
+  tileType: 'brick-row',
+  spacing: 4,
+};
+const libraryFill = patternFromSwatch(librarySwatch, { scale: 2 });
+check(
+  'a swatch stamps its tile and settings onto a fill',
+  libraryFill.swatchId === 'sw-lib' &&
+    libraryFill.tileType === 'brick-row' &&
+    libraryFill.scale === 2 &&
+    libraryFill.paths.length === 1 &&
+    libraryFill.spacing === 4
+);
+const linkedLayers: Layer[] = [
+  {
+    id: 'linked',
+    name: 'Linked',
+    visible: true,
+    locked: false,
+    opacity: 1,
+    paths: [{ ...squarePath, id: 'p-linked', pattern: patternFromSwatch(librarySwatch) }],
+  },
+];
+const editedLayers = syncPatternInstances(linkedLayers, [
+  { ...librarySwatch, tileW: 50, tileType: 'grid', spacing: 0 },
+]);
+check(
+  'editing a swatch repaints every shape that uses it',
+  editedLayers[0].paths[0].pattern?.tileW === 50 &&
+    editedLayers[0].paths[0].pattern?.tileType === 'grid' &&
+    editedLayers[0].paths[0].pattern?.spacing === 0
+);
+const clearedLayers = syncPatternInstances(linkedLayers, []);
+check('deleting a swatch clears the fills that used it', clearedLayers[0].paths[0].pattern === undefined);
+const unlinkedLayers: Layer[] = [
+  {
+    id: 'unlinked',
+    name: 'Unlinked',
+    visible: true,
+    locked: false,
+    opacity: 1,
+    paths: [
+      {
+        ...squarePath,
+        id: 'p-legacy',
+        pattern: { ...patternFromSwatch(librarySwatch), swatchId: undefined },
+      },
+    ],
+  },
+];
+check(
+  'a fill with no swatch link keeps its embedded tile',
+  !!syncPatternInstances(unlinkedLayers, [])[0].paths[0].pattern
+);
 const wallFaces = extrusionFaces(extrudedPath);
 const wallFills = new Set(wallFaces.map((f) => f.fill));
 const luminanceOf = (hex: string) => {
@@ -519,14 +1035,52 @@ const wallLums = wallFaces.map((f) => luminanceOf(f.fill));
 const faceLum = luminanceOf(squarePath.fill);
 const wallOnlyLums = wallLums.slice(1);
 check(
-  '3D walls are flat facets, not depth slices',
-  wallFills.size >= 3 && wallFaces.length <= 6,
+  '3D walls merge into shaded facets instead of one path per edge',
+  wallFills.size >= 3 && wallFaces.length <= 24,
   `faces=${wallFaces.length} shades=${wallFills.size}`
 );
 check(
   '3D walls shade between a lit edge and a shaded one',
   (Math.max(...wallOnlyLums) - Math.min(...wallOnlyLums)) / Math.max(...wallOnlyLums) > 0.25,
   `range=${Math.min(...wallOnlyLums).toFixed(2)}..${Math.max(...wallOnlyLums).toFixed(2)}`
+);
+// One edge is visible on a flat bar pulled straight down. It must come out as a
+// single facet: bands of tone across the depth are what look like stacked sheets.
+const barPoints = [
+  { id: 'bar-0', x: 100, y: 100, type: 'corner' as const },
+  { id: 'bar-1', x: 400, y: 100, type: 'corner' as const },
+  { id: 'bar-2', x: 400, y: 110, type: 'corner' as const },
+  { id: 'bar-3', x: 100, y: 110, type: 'corner' as const },
+];
+const barPath: VectorPath = {
+  ...squarePath,
+  id: 'bar',
+  points: barPoints,
+  extrudeDepth: 36,
+  extrudeAngle: 0,
+};
+const barFaces = extrusionFaces(barPath);
+const barWallLums = barFaces
+  .filter((f) => f.part === 'wall')
+  .map((f) => luminanceOf(f.fill));
+check(
+  '3D wall is one continuous facet, not a stack of depth bands',
+  barWallLums.length === 1,
+  `wallFaces=${barWallLums.length}`
+);
+const bevelLums = barFaces.filter((f) => f.part === 'bevel').map((f) => luminanceOf(f.fill));
+// The chamfer is a turned edge: it has to roll from a dark side into a lit one
+// rather than reading as a flat, always-bright outline.
+check(
+  '3D chamfers the front rim',
+  bevelLums.length >= 2 &&
+    Math.max(...bevelLums) > Math.min(...bevelLums) * 1.15 &&
+    Math.max(...bevelLums) > faceLum * 0.75,
+  `bevelFaces=${bevelLums.length} range=${Math.min(...bevelLums).toFixed(2)}..${Math.max(...bevelLums).toFixed(2)}`
+);
+check(
+  '3D bevel can be turned off',
+  extrusionFaces({ ...barPath, id: 'bar-flat', extrudeBevel: 0 }).every((f) => f.part !== 'bevel')
 );
 check(
   '3D closes the solid with a back cap',
@@ -546,10 +1100,15 @@ const starPoints = Array.from({ length: 10 }, (_, i) => {
 });
 const starPath: VectorPath = { ...squarePath, id: 'star', points: starPoints, extrudeDepth: 40 };
 const starFaces = extrusionFaces(starPath);
+const starWallQuads = starFaces
+  .filter((f) => f.part === 'wall')
+  .reduce((n, f) => n + (f.d.match(/M /g)?.length ?? 0), 0);
+// One quad per surviving wall: all ten edges would be 10, so a lower count
+// proves the hidden-line cull still drops the far walls.
 check(
   '3D culls the walls hidden behind the face',
-  starFaces.length <= 7,
-  `faces=${starFaces.length} for 10 edges`
+  starWallQuads > 0 && starWallQuads < 10,
+  `wallQuads=${starWallQuads} for 10 edges`
 );
 const shadowOn = extrusionShadow({ ...extrudedPath, extrudeShadow: true });
 check(
@@ -557,7 +1116,122 @@ check(
   !!shadowOn && shadowOn.blur > 1 && shadowOn.opacity > 0.1 && shadowOn.d.length > 10,
   shadowOn ? `blur=${shadowOn.blur.toFixed(1)}` : 'missing'
 );
+// The solid is a card tipped back in space: the face has to foreshorten along
+// the pull, or the object reads as a flat shape with a thick edge behind it.
+const projectBox = (d: string) => {
+  const points = [...d.matchAll(/(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g)].map((m) => [
+    Number(m[1]),
+    Number(m[2]),
+  ]);
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  return {
+    width: Math.max(...xs) - Math.min(...xs),
+    height: Math.max(...ys) - Math.min(...ys),
+    minX: Math.min(...xs),
+    maxX: Math.max(...xs),
+  };
+};
+
+// No bevel here: a chamfer insets the face, which is a different question from
+// foreshortening, and the numbers are only clean on the bare rectangle.
+const uprightPath: VectorPath = {
+  ...squarePath,
+  id: 'upright',
+  extrudeDepth: 40,
+  extrudeAngle: 0,
+  extrudeBevel: 0,
+};
+const uprightBox = computePathsBoundingBox([uprightPath])!;
+check(
+  'a face with no tilt is still the artwork',
+  extrusionFrontPath({ ...uprightPath, extrudeTilt: 0 }) === null
+);
+// Orthographic for the exact invariants: a perspective divide would shrink the
+// far side of the face and no longer land on width × cos(tilt) to the pixel.
+const orthoUpright: VectorPath = { ...uprightPath, extrudePerspective: 0 };
+const tiltedFace = extrusionFrontPath({ ...orthoUpright, extrudeTilt: 60 });
+check('a tilted solid paints its own face', !!tiltedFace);
+if (tiltedFace) {
+  const box = projectBox(tiltedFace);
+  const squash = Math.cos((60 * Math.PI) / 180);
+  check(
+    'tilt foreshortens the face along the pull and nowhere else',
+    Math.abs(box.width - uprightBox.width * squash) < 0.6 &&
+      Math.abs(box.height - uprightBox.height) < 0.6,
+    `${box.width.toFixed(1)}×${box.height.toFixed(1)}`
+  );
+}
+
+// Depth shows as depth × sin(tilt): a card laid flat has nothing to show.
+// Taper off: it shrinks the back face toward the centre, which would show up
+// in this measurement as a shorter reach than the depth provides.
+const uprightShadow = extrusionShadow({ ...orthoUpright, extrudeTilt: 60, extrudeTaper: 0 });
+if (uprightShadow && tiltedFace) {
+  const face = projectBox(tiltedFace);
+  const back = projectBox(uprightShadow.d);
+  const expected = 40 * Math.sin((60 * Math.PI) / 180);
+  check(
+    'the back face travels depth × sin(tilt) along the pull',
+    Math.abs((back.maxX - face.maxX) - expected) < 1.2,
+    `reach=${(back.maxX - face.maxX).toFixed(1)} expected=${expected.toFixed(1)}`
+  );
+}
+
+// The turn is the second axis: it foreshortens across the vertical, and it is
+// what brings one side of the solid toward the viewer.
+const turnedFace = extrusionFrontPath({ ...orthoUpright, extrudeTilt: 0, extrudeTurn: 40 });
+if (turnedFace) {
+  const box = projectBox(turnedFace);
+  check(
+    'turn foreshortens across the vertical axis and leaves height alone',
+    Math.abs(box.width - uprightBox.width * Math.cos((40 * Math.PI) / 180)) < 0.6 &&
+      Math.abs(box.height - uprightBox.height) < 0.6,
+    `${box.width.toFixed(1)}×${box.height.toFixed(1)}`
+  );
+}
+const turnedBack = extrusionShadow({
+  ...orthoUpright,
+  extrudeTilt: 0,
+  extrudeTurn: 40,
+  extrudeTaper: 0,
+});
+check(
+  'turn alone shows the depth sideways instead of hiding it',
+  !!turnedBack && projectBox(turnedBack.d).maxX > uprightBox.maxX + 5,
+  turnedBack ? projectBox(turnedBack.d).maxX.toFixed(1) : 'null'
+);
+
+// A tilt with perspective on must keystone: the near edge is taller than the
+// far one, which is the giveaway that the camera is real and not a squash.
+const keystoned = extrusionFrontPath({ ...uprightPath, extrudeTilt: 60, extrudePerspective: 0.9 });
+if (keystoned) {
+  const box = projectBox(keystoned);
+  const ortho = projectBox(tiltedFace!);
+  check(
+    'perspective keystones the face instead of only squashing it',
+    box.height > ortho.height + 4 && Math.abs(box.width - ortho.width) < 6,
+    `${box.width.toFixed(1)}×${box.height.toFixed(1)} vs ${ortho.width.toFixed(1)}×${ortho.height.toFixed(1)}`
+  );
+}
+
+check(
+  'the key light stays in the room when the direction turns',
+  extrudeLightAngle({ ...uprightPath, extrudeAngle: 10 }) ===
+    extrudeLightAngle({ ...uprightPath, extrudeAngle: 250 }) &&
+    extrudeLightAngle(uprightPath) === 305
+);
+
 check('3D keeps a shadow by default', extrusionShadow(extrudedPath) !== null);
+check(
+  '3D front face catches the light',
+  extrusionSheen(barPath) !== null && extrusionSheen({ ...barPath, extrudeDepth: 0 }) === null
+);
+check('3D export paints the same light', extrudeSvg.includes('extrude-sheen-extruded'));
+check(
+  '3D thumbnail paints the same light',
+  generateProjectThumbnailSvg(extrudeLayers).includes('extrude-sheen-extruded')
+);
 check(
   '3D shadow can be turned off',
   extrusionShadow({ ...extrudedPath, extrudeShadow: false }) === null
@@ -568,9 +1242,14 @@ check(
   tapered[1].d !== wallFaces[1].d && tapered[0].d !== wallFaces[0].d
 );
 const turnedWalls = extrusionFaces({ ...extrudedPath, id: 'turned', extrudeAngle: 225 });
+// Counts are not compared: the rim is bucketed by facing, so the number of tone
+// groups legitimately changes with the direction. The walls themselves must.
 check(
   '3D direction turns the walls',
-  turnedWalls.length === wallFaces.length && turnedWalls[0].d !== wallFaces[0].d
+  turnedWalls.filter((face) => face.part === 'wall').length ===
+    wallFaces.filter((face) => face.part === 'wall').length &&
+    turnedWalls.find((face) => face.part === 'wall')!.d !==
+      wallFaces.find((face) => face.part === 'wall')!.d
 );
 const flatBox = computePathsBoundingBox([extrudedPath])!;
 const turnedBox = includeExtrusionInBounds(
@@ -590,6 +1269,110 @@ const flatStrip = renderToStaticMarkup(
   <ToolOptions {...toolOptionsBase} tool="select" selectedCount={1} extrudeDepth={0} />
 );
 check('3D button reads as off when nothing is pulled', flatStrip.includes('>3D<'));
+
+const offsetSquare = offsetPaths(
+  [
+    {
+      id: 'offset-square',
+      name: 'Square',
+      points: [
+        { id: 'a', x: 0, y: 0 },
+        { id: 'b', x: 100, y: 0 },
+        { id: 'c', x: 100, y: 100 },
+        { id: 'd', x: 0, y: 100 },
+      ],
+      closed: true,
+      fill: '#4c8dff',
+      stroke: 'none',
+      strokeWidth: 0,
+    } as VectorPath,
+  ],
+  10
+)[0];
+check(
+  'offset path grows the outline by exactly the distance',
+  Math.max(...offsetSquare.points.map((p) => p.x)) === 110 &&
+    Math.min(...offsetSquare.points.map((p) => p.y)) === -10,
+  `maxX=${Math.max(...offsetSquare.points.map((p) => p.x))}`
+);
+// The cut has to leave a real seam: cells cut flush share a fill and read as one
+// object, which is why the gap is carried all the way through the split call.
+const gutterBase: VectorPath = {
+  ...squarePath,
+  id: 'gutter-base',
+  points: [
+    { id: 'g0', x: 0, y: 0, type: 'corner' },
+    { id: 'g1', x: 200, y: 0, type: 'corner' },
+    { id: 'g2', x: 200, y: 200, type: 'corner' },
+    { id: 'g3', x: 0, y: 200, type: 'corner' },
+  ],
+  closed: true,
+};
+const gutterPieces = splitPathsIntoGrid([gutterBase], [gutterBase], {
+  rows: 2,
+  cols: 2,
+  gutter: 4,
+});
+const pieceWidth = Math.max(...(gutterPieces[0]?.points ?? []).map((p) => p.x)) -
+  Math.min(...(gutterPieces[0]?.points ?? []).map((p) => p.x));
+check(
+  'split grid leaves the gap that was asked for',
+  gutterPieces.length === 4 && Math.abs(pieceWidth - 96) < 0.01,
+  `cells=${gutterPieces.length} width=${pieceWidth.toFixed(2)} (want 96 = 200/2 - 4)`
+);
+
+// Building a logo out of a grid split: cells cut flush share their edges, so the
+// shape builder can dissolve them into one silhouette. A gap is what stops that,
+// which is why the panel warns about it.
+const flushPieces = splitPathsIntoGrid([gutterBase], [gutterBase], {
+  rows: 2,
+  cols: 2,
+  gutter: 0,
+});
+const flushRegions = computeAtomicSubRegions(flushPieces, flushPieces);
+const flushMerged = executeShapeBuilderMerge(
+  flushRegions.map((region) => region.id),
+  flushRegions,
+  flushPieces,
+  { fill: '#4c8dff', stroke: 'none', strokeWidth: 0 }
+);
+check(
+  'flush split cells merge back into one shape',
+  flushRegions.length === 4 && flushMerged.length === 1 && flushMerged[0].points.length >= 4,
+  `regions=${flushRegions.length} merged=${flushMerged.length}`
+);
+
+// Shape Builder used to show only the region under the cursor, so the shape you
+// were building was invisible until the mouse came up. The union outline is that
+// result, drawn live: one continuous ring for a merge, not one per region.
+const sbA: VectorPath = {
+  ...squarePath,
+  id: 'sb-a',
+  points: [
+    { id: 'a0', x: 0, y: 0, type: 'corner' },
+    { id: 'a1', x: 100, y: 0, type: 'corner' },
+    { id: 'a2', x: 100, y: 100, type: 'corner' },
+    { id: 'a3', x: 0, y: 100, type: 'corner' },
+  ],
+  closed: true,
+};
+const sbB: VectorPath = {
+  ...sbA,
+  id: 'sb-b',
+  points: sbA.points.map((p, i) => ({ ...p, id: `b${i}`, x: p.x + 50, y: p.y + 50 })),
+};
+const sbRegions = computeAtomicSubRegions([sbA, sbB], [sbA, sbB]);
+const sbIds = sbRegions.map((region) => region.id);
+const sbUnionD = regionUnionOutline(sbRegions, sbIds);
+check(
+  'shape builder previews the merged result before release',
+  sbRegions.length >= 3 &&
+    sbUnionD.length > 0 &&
+    (sbUnionD.match(/M /g)?.length ?? 0) === 1 &&
+    regionUnionOutline(sbRegions, [sbIds[0]]) === '',
+  `regions=${sbRegions.length} outlineRings=${(sbUnionD.match(/M /g)?.length ?? 0)}`
+);
+
 check(
   '3D walls are clipped with their object',
   extrudeSvg.includes('<g id="extrude-extruded"')
@@ -608,7 +1391,8 @@ const denseStart = performance.now();
 const denseFaces = extrusionFaces(densePath);
 const denseMs = performance.now() - denseStart;
 const denseQuads = denseFaces.reduce((n, f) => n + (f.d.match(/M /g)?.length ?? 0), 0);
-check('dense extrusion geometry stays bounded', denseQuads <= 240, `quads=${denseQuads}`);
+// The depth slices triple the wall quads, so the cap triples with them.
+check('dense extrusion geometry stays bounded', denseQuads <= 240 * 3, `quads=${denseQuads}`);
 check('dense extrusion builds without stalling', denseMs < 120, `${denseMs.toFixed(1)}ms`);
 const ringHole = squarePath.points.map((p) => ({ ...p, id: `ring-${p.id}`, x: p.x * 0.4 + 30, y: p.y * 0.4 + 30 }));
 const plainQuads = wallFaces.reduce((n, f) => n + (f.d.match(/M /g)?.length ?? 0), 0);
@@ -617,6 +1401,41 @@ const ringQuads = extrusionFaces({ ...extrudedPath, id: 'ring', holes: [ringHole
   0
 );
 check('extrusion adds walls inside counter holes', ringQuads > plainQuads, `${plainQuads}->${ringQuads}`);
+const ringFaces = extrusionFaces({ ...extrudedPath, id: 'ring-open', holes: [ringHole] });
+const ringCap = ringFaces.find((f) => f.part === 'cap');
+const ringCapSubpaths = ringCap?.d.match(/Z/g)?.length ?? 0;
+check(
+  '3D counters stay open through the solid',
+  ringCapSubpaths === 2,
+  `capSubpaths=${ringCapSubpaths}`
+);
+const litOneWay = extrusionFaces({ ...barPath, id: 'light-a', extrudeLight: 0 });
+const litOtherWay = extrusionFaces({ ...barPath, id: 'light-b', extrudeLight: 180 });
+check(
+  '3D light direction moves the shading',
+  litOneWay.map((f) => f.fill).join() !== litOtherWay.map((f) => f.fill).join()
+);
+const roundRim = extrusionFaces({ ...barPath, id: 'round-rim', extrudeBevelStyle: 'round' });
+check(
+  '3D round rim adds rings to the edge',
+  roundRim.filter((f) => f.part === 'bevel').length >
+    barFaces.filter((f) => f.part === 'bevel').length
+);
+const softShadow = extrusionShadow({
+  ...extrudedPath,
+  id: 'soft-shadow',
+  extrudeShadowSoft: 2,
+  extrudeShadowLift: 1.5,
+});
+const hardShadow = extrusionShadow({ ...extrudedPath, id: 'hard-shadow', extrudeShadowSoft: 0.5 });
+check(
+  '3D shadow softness and distance are adjustable',
+  !!softShadow &&
+    !!hardShadow &&
+    softShadow.blur > hardShadow.blur &&
+    softShadow.dx > extrusionShadow(extrudedPath)!.dx,
+  softShadow ? `blur=${softShadow.blur.toFixed(1)} dx=${softShadow.dx.toFixed(1)}` : 'missing'
+);
 const flatExportBounds = computePathsBoundingBox([extrudedPath]);
 check(
   'selection export bounds include extrusion side walls',
@@ -718,11 +1537,14 @@ const topBarHtml = renderToStaticMarkup(
     onRenameProject={noop}
     onOpenMenu={noop}
     onOpenLayers={noop}
+    gridVisible={false}
+    onToggleGrid={noop}
     onOpenExport={noop}
     onPreview={noop}
   />
 );
 check('top bar offers artboard preview', topBarHtml.includes('aria-label="Preview artboard"'));
+check('top bar toggles the grid in one tap', topBarHtml.includes('aria-label="Alignment grid"'));
 check(
   'closed shapes catch taps in their fill',
   (canvasHtml.match(/fill="transparent" stroke="transparent"/g) ?? []).length === 2
@@ -819,6 +1641,30 @@ for (let i = 0; i < discAnchors.length; i++) {
 }
 check('fitted circle keeps its original shape', radiusError < 1.5, `error=${radiusError.toFixed(2)}`);
 check(
+  'traced output can be scaled back to artboard units',
+  (() => {
+    const imageData = { width: FW, height: FH, data: new Uint8ClampedArray(FW * FH * 4) } as ImageData;
+    for (let i = 0; i < FW * FH; i++) {
+      const coverage = discField[i];
+      const level = Math.round((1 - coverage) * 255);
+      imageData.data[i * 4] = level;
+      imageData.data[i * 4 + 1] = level;
+      imageData.data[i * 4 + 2] = level;
+      imageData.data[i * 4 + 3] = 255;
+    }
+    const unit = traceImageToVectorPaths(imageData, { outputScale: 1 });
+    const half = traceImageToVectorPaths(imageData, { outputScale: 0.5 });
+    const span = (paths: VectorPath[]) => {
+      const xs = paths.flatMap((path) => path.points.map((point) => point.x));
+      return xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
+    };
+    const first = span(unit);
+    const second = span(half);
+    return first > 1 && Math.abs(second - first / 2) < 0.5;
+  })()
+);
+
+check(
   'anchors are far fewer than the polyline',
   discRegions.length > 0 && discRegions[0].points.length >= discAnchors.length * 4,
   `${discRegions[0]?.points.length ?? 0} pts → ${discAnchors.length} anchors`
@@ -908,6 +1754,8 @@ const sheetHtml = renderToStaticMarkup(
     onToggleGridLock={noop}
     rulersVisible
     onToggleRulers={noop}
+    guidesVisible
+    onToggleGuides={noop}
     guidesLocked
     onToggleGuidesLock={noop}
     guides={[
@@ -928,6 +1776,7 @@ check('single global lock present', sheetHtml.includes('aria-label="Unlock grid"
 check('locked spacing inputs disabled', /aria-label="Horizontal"[\s\S]{0,120}disabled/.test(sheetHtml));
 check('snap toggle independent', sheetHtml.includes('aria-label="Snap to grid"'));
 check('visibility toggle independent', sheetHtml.includes('aria-label="Show grid"'));
+check('guides can be hidden without deleting them', sheetHtml.includes('aria-label="Show guides"'));
 check('line visibility slider', sheetHtml.includes('aria-label="Grid line visibility"'));
 check(
   'lock all guides reads locked on every row',
@@ -1016,6 +1865,7 @@ const menuHtml = renderToStaticMarkup(
     projectName="Logo"
     onSave={noop}
     onOpenBackup={noop}
+    onOpenPatterns={noop}
     storageHint="Not protected — keep a backup"
     onNewProject={noop}
     onOpenProjects={noop}
@@ -1126,6 +1976,896 @@ const bgHtml = renderToStaticMarkup(
 check('background uses the same picker', bgHtml.includes('aria-label="Saturation and brightness"') && bgHtml.includes('aria-label="Hex value"'));
 check('background reset button', bgHtml.includes('Reset') && bgHtml.includes('#123456'));
 check('background hides stroke-only sections', !bgHtml.includes('aria-label="Stroke weight"'));
+
+check(
+  'warp bends outlined letterforms and keeps every path',
+  (() => {
+    // Headless runs have no glyph rasteriser, so real letters come back empty
+    // here; the browser path uses the letters, this uses the same kind of
+    // many-point outline they expand into.
+    const letters = expandTextToVectorPaths('A', {
+      originX: 0,
+      originY: 0,
+      fontSize: 64,
+      fontFamily: 'Plus Jakarta Sans, sans-serif',
+      fontWeight: 'bold',
+      letterSpacing: 0,
+      fillColor: '#000000',
+      strokeColor: 'none',
+      strokeWidth: 0,
+    });
+    const subject = letters.length ? letters : [warpDensePath];
+    const spec: WarpSpec = { kind: 'arch', amount: 40 };
+    const warped = warpPaths(subject, spec);
+    if (warped.length !== subject.length) return false;
+    const before = subject.flatMap((path) => path.points);
+    const after = warped.flatMap((path) => path.points);
+    if (before.length !== after.length) return false;
+    return after.some((point, index) => Math.abs(point.y - before[index].y) > 0.5);
+  })()
+);
+
+
+/* ------------------------------------------------------------------------ *
+ * Non-destructive shape warps
+ *
+ * The Amount control has to be absolute: 20 after 10 is a 20 bend, not 30, and
+ * zero has to put the artwork back. These numbers are the contract, and they
+ * cover the preview too — what the artboard draws while dialling must be the
+ * geometry Apply writes.
+ * ------------------------------------------------------------------------ */
+const warpSubject = (id: string): VectorPath =>
+  ({
+    id,
+    name: id,
+    points: [
+      { id: `${id}-0`, x: 0, y: 0, type: 'corner' },
+      { id: `${id}-1`, x: 50, y: 0, type: 'corner' },
+      { id: `${id}-2`, x: 100, y: 0, type: 'corner' },
+      { id: `${id}-3`, x: 100, y: 100, type: 'corner' },
+      { id: `${id}-4`, x: 50, y: 100, type: 'corner' },
+      { id: `${id}-5`, x: 0, y: 100, type: 'corner' },
+    ],
+    closed: true,
+    fill: '#ffffff',
+    fillOpacity: 1,
+    stroke: 'none',
+    strokeWidth: 0,
+    strokeOpacity: 0,
+    strokeCap: 'round',
+    strokeJoin: 'round',
+    pressureProfile: 'uniform',
+  }) as VectorPath;
+
+const maxDrift = (a: VectorPath, b: VectorPath) =>
+  Math.max(
+    ...a.points.map((point, index) =>
+      Math.hypot(point.x - b.points[index].x, point.y - b.points[index].y)
+    )
+  );
+
+const oneBend = (amount: number) =>
+  applyShapeWarp([warpSubject('w')], { kind: 'arch', amount })[0];
+
+check(
+  'warp amount is absolute: 10 then 20 is one 20 bend',
+  maxDrift(applyShapeWarp([oneBend(10)], { kind: 'arch', amount: 20 })[0], oneBend(20)) < 0.01
+);
+check(
+  'warp amount is absolute when it comes back down: 20 then 10 is one 10 bend',
+  maxDrift(applyShapeWarp([oneBend(20)], { kind: 'arch', amount: 10 })[0], oneBend(10)) < 0.01
+);
+check(
+  'zero amount gives the artwork back',
+  maxDrift(applyShapeWarp([oneBend(40)], { kind: 'arch', amount: 0 })[0], warpSubject('w')) < 0.01
+);
+check(
+  'removing the warp drops its record',
+  clearShapeWarp([oneBend(30)])[0].warpSource === undefined &&
+    maxDrift(clearShapeWarp([oneBend(30)])[0], warpSubject('w')) < 0.01
+);
+check(
+  'a bend survives being moved: the next amount bends it where it now is',
+  maxDrift(
+    applyShapeWarp(translatePaths([oneBend(20)], 120, 0), { kind: 'arch', amount: 30 })[0],
+    translatePaths([oneBend(30)], 120, 0)[0]
+  ) < 0.01
+);
+check(
+  'an edited bent shape is not snapped back to the old geometry',
+  (() => {
+    const bent = oneBend(20);
+    const edited = { ...bent, points: bent.points.map((point, index) =>
+      index === 4 ? { ...point, y: point.y + 25 } : point
+    ) };
+    const rewarped = applyShapeWarp([edited], { kind: 'arch', amount: 40 })[0];
+    // The edit is still in there, so this differs from bending the original.
+    return maxDrift(rewarped, oneBend(40)) > 1;
+  })()
+);
+// The bug that made this feel broken: the canvas previewed the shape that was
+// already bent while Apply bent the original, so the artboard and the result
+// disagreed. Render the real canvas and compare it with what Apply writes.
+check(
+  'the canvas preview bends the same geometry Apply commits',
+  (() => {
+    const bent = oneBend(20);
+    const spec: WarpSpec = { kind: 'arch', amount: 40 };
+    const layers: Layer[] = [
+      { id: 'warp-preview-layer', name: 'Warp', visible: true, locked: false, opacity: 1, paths: [bent] },
+    ];
+    const html = renderToStaticMarkup(
+      <Canvas
+        {...canvasProps}
+        layers={layers}
+        warpPreview={spec}
+        selection={{ selectedPathIds: [bent.id], selectedAnchorIndex: null, selectedHandleType: null }}
+      />
+    );
+    const expected = pathToSvgD(applyShapeWarp([bent], spec)[0]);
+    return !!expected && html.includes(expected);
+  })()
+);
+
+check(
+  'the preview and Apply agree for a multi-shape selection',
+  (() => {
+    const shapes = [warpSubject('a'), { ...warpSubject('b'), points: warpSubject('b').points.map((p) => ({ ...p, x: p.x + 150 })) }];
+    const spec: WarpSpec = { kind: 'wave', amount: 30, cycles: 2 };
+    // Canvas preview: same bases, same shared box, one path at a time.
+    const bases = shapes;
+    const box = computePathsBoundingBox(bases)!;
+    const preview = bases.map((base) => warpPathsInBox([base], box, spec)[0]);
+    const applied = applyShapeWarp(shapes, spec);
+    return applied.every((path, index) => maxDrift(path, preview[index]) < 0.01);
+  })()
+);
+
+/* ------------------------------------------------------------------------ *
+ * Exact text outlines
+ *
+ * An imported font is converted from its own file instead of from a picture of
+ * it. A font is generated here so the expected numbers are the font's numbers:
+ * a stem from (100,0) to (100,700) in a 1000-upem face, scaled to 100px, has to
+ * arrive as a point at (10,0) and one at (10,-70) — not somewhere near them.
+ * ------------------------------------------------------------------------ */
+const probeFontBytes = (() => {
+  const stem = new opentype.Path();
+  stem.moveTo(100, 0);
+  stem.lineTo(100, 700);
+  stem.quadraticCurveTo(300, 900, 500, 700);
+  stem.lineTo(500, 0);
+  stem.closePath();
+
+  const bowl = new opentype.Path();
+  bowl.moveTo(600, 0);
+  bowl.lineTo(600, 700);
+  bowl.lineTo(900, 700);
+  bowl.lineTo(900, 0);
+  bowl.closePath();
+  bowl.moveTo(660, 60);
+  bowl.lineTo(660, 640);
+  bowl.lineTo(840, 640);
+  bowl.lineTo(840, 60);
+  bowl.closePath();
+
+  const glyphs = [
+    new opentype.Glyph({ name: '.notdef', unicode: 0, advanceWidth: 620, path: new opentype.Path() }),
+    new opentype.Glyph({ name: 'A', unicode: 65, advanceWidth: 620, path: stem }),
+    new opentype.Glyph({ name: 'O', unicode: 79, advanceWidth: 360, path: bowl }),
+  ];
+  return new opentype.Font({
+    familyName: 'Probe Sans',
+    styleName: 'Regular',
+    unitsPerEm: 1000,
+    ascender: 800,
+    descender: -200,
+    glyphs,
+  }).toArrayBuffer();
+})();
+
+const probe = registerOutlineFont('Probe Sans', probeFontBytes);
+check('an imported font parses into outlines', !!probe, probe ? `weight=${probe.weightClass}` : 'unparsed');
+
+const exactLabel = expandTextToVectorPaths('A', {
+  originX: 0,
+  originY: 0,
+  fontSize: 100,
+  fontFamily: 'Probe Sans, sans-serif',
+  fontWeight: String(probe?.weightClass ?? 500),
+  letterSpacing: 0,
+  fillColor: '#000000',
+  strokeColor: 'none',
+  strokeWidth: 0,
+});
+check('exact outlines keep the font\'s own nodes', exactLabel.length === 1 && exactLabel[0].points.length === 4, `paths=${exactLabel.length} nodes=${exactLabel[0]?.points.length}`);
+check(
+  'exact outlines land on the font\'s coordinates',
+  !!exactLabel[0] &&
+    Math.abs(exactLabel[0].points[0].x - 10) < 0.01 &&
+    Math.abs(exactLabel[0].points[1].y + 70) < 0.01 &&
+    // opentype hands back its own rounded control points, so compare within
+    // the precision the file itself carries rather than inventing more.
+    Math.abs((exactLabel[0].points[1].handleOut?.x ?? 0) - 23.3) < 0.01 &&
+    Math.abs((exactLabel[0].points[2].handleIn?.y ?? 0) + 83.3) < 0.01,
+  JSON.stringify(exactLabel[0]?.points[1])
+);
+
+const exactCounter = expandTextToVectorPaths('O', {
+  originX: 0,
+  originY: 0,
+  fontSize: 100,
+  fontFamily: 'Probe Sans, sans-serif',
+  fontWeight: String(probe?.weightClass ?? 500),
+  fillColor: '#000000',
+  strokeColor: 'none',
+  strokeWidth: 0,
+});
+check(
+  'exact outlines keep the counter as a hole',
+  exactCounter.length === 1 && (exactCounter[0].holes?.length ?? 0) === 1,
+  `paths=${exactCounter.length} holes=${exactCounter[0]?.holes?.length}`
+);
+
+const exactTracking = expandTextToVectorPaths('OA', {
+  originX: 0,
+  originY: 0,
+  fontSize: 100,
+  fontFamily: 'Probe Sans, sans-serif',
+  fontWeight: String(probe?.weightClass ?? 500),
+  letterSpacing: 10,
+  fillColor: '#000000',
+  strokeColor: 'none',
+  strokeWidth: 0,
+});
+const secondGlyphX = exactTracking[1]?.points.reduce((min, point) => Math.min(min, point.x), Infinity);
+check(
+  'exact outlines follow the label\'s own tracking',
+  // O advances 36px and the label adds 10px of tracking; A starts 10px in.
+  Math.abs((secondGlyphX ?? 0) - 56) < 0.01,
+  `x=${secondGlyphX}`
+);
+
+check(
+  'a readable font file always supplies the outlines, whatever the weight',
+  textOutlineSource({ fontFamily: 'Probe Sans, sans-serif', fontWeight: 'bold' }) === 'font' &&
+    textOutlineSource({ fontFamily: 'Probe Sans, sans-serif', fontWeight: String(probe?.weightClass) }) === 'font'
+);
+
+check(
+  'a family with no readable file still falls back to tracing',
+  textOutlineSource({ fontFamily: 'Unregistered Display, sans-serif', fontWeight: 'bold' }) === 'trace'
+);
+
+// The default family ships with the app, so its type must convert from the
+// font's own curves rather than from a traced picture of them.
+for (const file of ['Regular', 'Bold']) {
+  const bytes = fs.readFileSync(`public/fonts/PlusJakartaSans-${file}.woff`);
+  registerOutlineFont(
+    'Plus Jakarta Sans',
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+  );
+}
+const bundledOutlines = fontOutlinePaths({
+  text: 'Pentix',
+  fontFamily: 'Plus Jakarta Sans, sans-serif',
+  fontWeight: 'bold',
+  fontSize: 200,
+}) ?? [];
+const bundledAnchors = bundledOutlines.reduce(
+  (total, path) => total + path.points.length + (path.holes?.reduce((count, hole) => count + hole.length, 0) ?? 0),
+  0
+);
+check(
+  'the bundled family converts to the file\u2019s own outlines, not a trace',
+  // Six glyphs, seven shapes: P and e keep their counters as holes, and the
+  // dot of the i is its own shape. A traced conversion needs hundreds of nodes
+  // for the same word.
+  bundledOutlines.length >= 6 &&
+    bundledOutlines.length <= 8 &&
+    bundledAnchors > 40 &&
+    bundledAnchors < 220
+);
+check(
+  'a bold label converts from the bold face, not the regular one',
+  outlineFontWeight('Plus Jakarta Sans, sans-serif', 'bold') === 700 &&
+    outlineFontWeight('Plus Jakarta Sans, sans-serif', 'regular') === 400
+);
+
+// Font conversion performs a guarded low-node fit up front, so a freshly
+// outlined word is already manageable in node mode. Simplify remains usable
+// for a second pass and must never add anchors or remove a glyph counter.
+const heaviestGlyph = bundledOutlines.reduce((a, b) => (b.points.length > a.points.length ? b : a));
+const simplifiedGlyph = simplifyPath(heaviestGlyph, 0.5);
+const anchorTotal = (glyph: VectorPath) =>
+  glyph.points.length + (glyph.holes?.reduce((count, hole) => count + hole.length, 0) ?? 0);
+check(
+  'font outlines arrive fitted and Simplify preserves their contours',
+  heaviestGlyph.points.length <= 20 &&
+    anchorTotal(simplifiedGlyph) <= anchorTotal(heaviestGlyph) &&
+    (simplifiedGlyph.holes?.length ?? 0) === (heaviestGlyph.holes?.length ?? 0)
+);
+
+// A TrueType contour repeats points as zero-length lines. Each repeat used to
+// arrive as two anchors on one spot — one with the incoming handle, one with the
+// outgoing — so a converted glyph carried nearly twice the nodes it needs and
+// the extra pairs sat exactly where it is hardest to grab a node.
+const coincidentPairs = (anchors: { x: number; y: number }[]) => {
+  let pairs = 0;
+  for (let i = 1; i < anchors.length; i++) {
+    if (Math.hypot(anchors[i].x - anchors[i - 1].x, anchors[i].y - anchors[i - 1].y) < 0.05) {
+      pairs += 1;
+    }
+  }
+  return pairs;
+};
+const repeatedPointOutlines = fontOutlinePaths({
+  text: 'The',
+  fontFamily: 'Plus Jakarta Sans, sans-serif',
+  fontWeight: 'bold',
+  fontSize: 96,
+}) ?? [];
+const repeatedPairs = repeatedPointOutlines.reduce(
+  (total, path) =>
+    total +
+    coincidentPairs(path.points) +
+    (path.holes?.reduce((count, hole) => count + coincidentPairs(hole), 0) ?? 0),
+  0
+);
+check(
+  'converted glyphs carry no two nodes on one spot',
+  repeatedPairs === 0,
+  `pairs=${repeatedPairs}`
+);
+const eOutline = repeatedPointOutlines.find((path) => path.name.includes('3'));
+check(
+  'a converted e is not doubled up',
+  !!eOutline && eOutline.points.length <= 18 && eOutline.points.length >= 10,
+  `anchors=${eOutline?.points.length}`
+);
+
+// A glyph's own contours touch where a stem meets a bowl, so the file's winding
+// has to decide the fill: painted even-odd, a bold e closed its mouth into a
+// wedge. Converted outlines therefore ask for nonzero, and their counters are
+// wound against the outer contour so the rule still reads as holes.
+check(
+  'converted glyphs ask for the nonzero fill rule',
+  !!eOutline && eOutline.fillRule === 'nonzero',
+  `fillRule=${eOutline?.fillRule}`
+);
+{
+  const signedArea = (ring: { x: number; y: number }[]) => {
+    let sum = 0;
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i];
+      const b = ring[(i + 1) % ring.length];
+      sum += a.x * b.y - b.x * a.y;
+    }
+    return sum / 2;
+  };
+  const oOutline = fontOutlinePaths({
+    text: 'o',
+    fontFamily: 'Plus Jakarta Sans, sans-serif',
+    fontWeight: 'bold',
+    fontSize: 120,
+    originX: 0,
+    originY: 0,
+  })?.[0];
+  const outer = oOutline ? signedArea(oOutline.points) : 0;
+  const hole = oOutline?.holes?.[0] ? signedArea(oOutline.holes[0]) : 0;
+  check(
+    'a nonzero counter is wound against its outer contour',
+    !!oOutline?.holes?.length && Math.sign(outer) !== Math.sign(hole) && Math.abs(hole) > 1,
+    `outer=${outer.toFixed(1)} hole=${hole.toFixed(1)}`
+  );
+}
+
+// The bundled family has a real bold file, so a bold label must convert to that
+// drawing unchanged. It used to be picked from the bold face and then grown
+// again against the family's regular weight, which made every outlined bold
+// word heavier than the type it replaced.
+const inkWidthOf = (paths: { points: { x: number }[]; holes?: { x: number }[][] }[]) => {
+  const xs = paths.flatMap((path) => [
+    ...path.points.map((point) => point.x),
+    ...(path.holes ?? []).flatMap((hole) => hole.map((point: { x: number }) => point.x)),
+  ]);
+  return xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
+};
+const boldDirect =
+  fontOutlinePaths({
+    text: 'e',
+    fontFamily: 'Plus Jakarta Sans, sans-serif',
+    fontWeight: 'bold',
+    fontSize: 200,
+    originX: 0,
+    originY: 0,
+    fillColor: '#000000',
+    strokeColor: 'none',
+    strokeWidth: 0,
+  }) ?? [];
+const boldExpanded = expandTextToVectorPaths('e', {
+  originX: 0,
+  originY: 0,
+  fontSize: 200,
+  fontFamily: 'Plus Jakarta Sans, sans-serif',
+  fontWeight: 'bold',
+  fillColor: '#000000',
+  strokeColor: 'none',
+  strokeWidth: 0,
+});
+check(
+  'a label with a real bold face is not inflated a second time',
+  boldDirect.length === boldExpanded.length &&
+    Math.abs(inkWidthOf(boldDirect) - inkWidthOf(boldExpanded)) < 0.01,
+  `direct=${inkWidthOf(boldDirect).toFixed(2)} expanded=${inkWidthOf(boldExpanded).toFixed(2)}`
+);
+
+// A weight the file does not contain is faked by growing the contour. The ring
+// is kept exactly as offset: refitting it thinned the letter back to regular.
+// A weight the file *does* contain is not grown at all — see the check below.
+const regularBytes = fs.readFileSync('public/fonts/PlusJakartaSans-Regular.woff');
+registerOutlineFont(
+  'Single Weight Probe',
+  regularBytes.buffer.slice(
+    regularBytes.byteOffset,
+    regularBytes.byteOffset + regularBytes.byteLength
+  ) as ArrayBuffer
+);
+const bakeFakedRegular = expandTextToVectorPaths('e', {
+  originX: 0,
+  originY: 0,
+  fontSize: 200,
+  fontFamily: 'Single Weight Probe, sans-serif',
+  fontWeight: 'regular',
+  fillColor: '#000000',
+  strokeColor: 'none',
+  strokeWidth: 0,
+});
+const bakeFakedBold = expandTextToVectorPaths('e', {
+  originX: 0,
+  originY: 0,
+  fontSize: 200,
+  fontFamily: 'Single Weight Probe, sans-serif',
+  fontWeight: 'bold',
+  fillColor: '#000000',
+  strokeColor: 'none',
+  strokeWidth: 0,
+});
+const inkWidth = (paths: VectorPath[]) => {
+  const xs = paths.flatMap((path) => path.points.map((point) => point.x));
+  return Math.max(...xs) - Math.min(...xs);
+};
+// A weight the file does not contain is grown, not approximated: the outline
+// has to stay wider than the regular face it came from. Refitting the ring
+// used to shave that growth away, so the check looks at the ink, not the count.
+check(
+  'a faked bold keeps the weight it drew',
+  bakeFakedBold.length === 1 &&
+    bakeFakedRegular.length === 1 &&
+    inkWidth(bakeFakedBold) > inkWidth(bakeFakedRegular) + 2,
+  `${inkWidth(bakeFakedRegular).toFixed(1)} -> ${inkWidth(bakeFakedBold).toFixed(1)} px`
+);
+
+// Type on a path has to be laid along the curve. A straight layout would put
+// every glyph on one baseline; these follow the ring instead.
+const KAPPA = 0.5522847498;
+const bakeProbeRing: VectorPath = {
+  id: 'ring-probe',
+  name: 'Ring',
+  points: [
+    {
+      id: 'ring-1',
+      x: 300,
+      y: 100,
+      type: 'smooth',
+      handleIn: { x: 300, y: 100 - 100 * KAPPA },
+      handleOut: { x: 300, y: 100 + 100 * KAPPA },
+    },
+    {
+      id: 'ring-2',
+      x: 200,
+      y: 200,
+      type: 'smooth',
+      handleIn: { x: 200 + 100 * KAPPA, y: 200 },
+      handleOut: { x: 200 - 100 * KAPPA, y: 200 },
+    },
+    {
+      id: 'ring-3',
+      x: 100,
+      y: 100,
+      type: 'smooth',
+      handleIn: { x: 100, y: 100 + 100 * KAPPA },
+      handleOut: { x: 100, y: 100 - 100 * KAPPA },
+    },
+    {
+      id: 'ring-4',
+      x: 200,
+      y: 0,
+      type: 'smooth',
+      handleIn: { x: 200 - 100 * KAPPA, y: 0 },
+      handleOut: { x: 200 + 100 * KAPPA, y: 0 },
+    },
+  ],
+  closed: true,
+  fill: 'none',
+  fillOpacity: 1,
+  stroke: '#000000',
+  strokeWidth: 1,
+  strokeOpacity: 1,
+  strokeCap: 'round',
+  strokeJoin: 'round',
+  pressureProfile: 'uniform',
+};
+const bakePathProbeLabel: VectorPath = {
+  id: 'label-on-path',
+  name: 'Label on a path',
+  points: [{ id: 'label-on-path-anchor', x: 200, y: 100, type: 'corner' }],
+  closed: false,
+  fill: '#000000',
+  fillOpacity: 1,
+  stroke: 'none',
+  strokeWidth: 0,
+  strokeOpacity: 1,
+  strokeCap: 'round',
+  strokeJoin: 'round',
+  pressureProfile: 'uniform',
+  text: 'abc',
+  fontSize: 40,
+  fontFamily: 'Plus Jakarta Sans, sans-serif',
+  fontWeight: 'bold',
+  letterSpacing: 0,
+  textMatrix: [1, 0, 0, 1, 0, 0],
+  textPath: { pathId: 'ring-probe', offset: 0 },
+};
+const bakeOnPathOutlines =
+  outlineLayoutText(bakePathProbeLabel, (id) => (id === 'ring-probe' ? bakeProbeRing : null)) ?? [];
+const bakeOnPathRadii = bakeOnPathOutlines.map((glyph) => {
+  const cx = glyph.points.reduce((sum, point) => sum + point.x, 0) / glyph.points.length;
+  const cy = glyph.points.reduce((sum, point) => sum + point.y, 0) / glyph.points.length;
+  return Math.hypot(cx - 200, cy - 100);
+});
+check(
+  'type on a path is baked along the curve, not along a straight line',
+  bakeOnPathOutlines.length === 3 && bakeOnPathRadii.every((radius) => radius > 80 && radius < 140),
+  `radii ${bakeOnPathRadii.map((radius) => radius.toFixed(0)).join(', ')}`
+);
+check(
+  'a label on a path still falls back when the path is gone',
+  outlineLayoutText(bakePathProbeLabel, () => null) === null
+);
+
+// Area type: every line keeps its own left edge and its own baseline.
+const bakeAreaProbeLabel: VectorPath = {
+  ...bakePathProbeLabel,
+  id: 'area-probe',
+  text: 'aa\naa',
+  textLineX: [0, 30],
+  textPath: undefined,
+  points: [{ id: 'area-probe-anchor', x: 100, y: 300, type: 'corner' }],
+  fontSize: 60,
+};
+const bakeAreaOutlines = outlineLayoutText(bakeAreaProbeLabel, () => null) ?? [];
+const minXOf = (paths: VectorPath[]) =>
+  Math.min(...paths.flatMap((glyph) => glyph.points.map((point) => point.x)));
+const meanYOf = (paths: VectorPath[]) =>
+  paths.reduce(
+    (total, glyph) =>
+      total + glyph.points.reduce((sum, point) => sum + point.y, 0) / glyph.points.length,
+    0
+  ) / Math.max(1, paths.length);
+const rowGap = meanYOf(bakeAreaOutlines.slice(2)) - meanYOf(bakeAreaOutlines.slice(0, 2));
+const lineIndent = minXOf(bakeAreaOutlines.slice(2)) - minXOf(bakeAreaOutlines.slice(0, 2));
+check(
+  'area type keeps its per-line left edges when baked',
+  bakeAreaOutlines.length === 4 &&
+    Math.abs(rowGap - textLineHeight(60)) < 3 &&
+    Math.abs(lineIndent - 30) < 3,
+  `gap ${rowGap.toFixed(1)}, indent ${lineIndent.toFixed(1)}`
+);
+
+const warpedLabel: VectorPath = {
+  id: 'text-warp-check',
+  name: 'Warped label',
+  points: [{ id: 'text-warp-anchor', x: 100, y: 300, type: 'corner' }],
+  closed: false,
+  fill: '#111111',
+  fillOpacity: 1,
+  stroke: 'none',
+  strokeWidth: 0,
+  strokeOpacity: 1,
+  strokeCap: 'round',
+  strokeJoin: 'round',
+  pressureProfile: 'uniform',
+  text: 'ABC',
+  fontSize: 64,
+  fontFamily: 'sans-serif',
+  fontWeight: 'bold',
+  letterSpacing: 0,
+  warp: { kind: 'arch', amount: 40 },
+};
+const warpPlacements = warpTextPlacements(warpedLabel) ?? [];
+check('a warped label still holds one glyph per letter', warpPlacements.length === 3);
+check(
+  'arch lifts the middle of the type',
+  warpPlacements.length === 3 && warpPlacements[1].y < warpPlacements[0].y - 1
+);
+check(
+  'the bend rotates letters along the curve',
+  warpPlacements.some((glyph) => {
+    const parts = glyph.transform.match(/matrix\(([^)]+)\)/)?.[1].split(' ').map(Number) ?? [];
+    return Math.abs(parts[1] ?? 0) > 0.01;
+  })
+);
+check('a label without a warp renders as plain text', warpTextGlyphs({ ...warpedLabel, warp: undefined }) === null);
+check(
+  'warped bounds reach past the straight box',
+  (textWarpBounds(warpedLabel)?.minY ?? 0) < (textWorldBox(warpedLabel)?.minY ?? 0)
+);
+
+const spanOf = (placements: { x: number }[]) =>
+  placements.length ? Math.max(...placements.map((g) => g.x)) - Math.min(...placements.map((g) => g.x)) : 0;
+const bulgeSpan = spanOf(warpTextPlacements({ ...warpedLabel, warp: { kind: 'bulge', amount: 40 } }) ?? []);
+const plainSpan = spanOf(warpTextPlacements({ ...warpedLabel, warp: { kind: 'perspective', amount: 40 } }) ?? []);
+check('bulge opens the spacing around the centre of the line', bulgeSpan > plainSpan + 2);
+const pinchSpan = spanOf(warpTextPlacements({ ...warpedLabel, warp: { kind: 'pinch', amount: 40 } }) ?? []);
+check('pinch closes the spacing', pinchSpan < plainSpan - 2);
+
+/* ------------------- Warp catalogue, type on a path, hex tiles ------------------- */
+console.log('Illustrator parity');
+check('the warp catalogue carries the full style set', WARP_KINDS.length >= 12);
+
+const shapeBox = { minX: 0, minY: 0, width: 200, height: 100 };
+const midY = warpPoint(100, 50, shapeBox, { kind: 'flag', amount: 40 }).y;
+check(
+  'flag sends the two ends opposite ways',
+  warpPoint(0, 50, shapeBox, { kind: 'flag', amount: 40 }).y < midY &&
+    warpPoint(200, 50, shapeBox, { kind: 'flag', amount: 40 }).y > midY
+);
+check(
+  'rise lifts the far end of the selection',
+  warpPoint(0, 50, shapeBox, { kind: 'rise', amount: 40 }).y -
+    warpPoint(200, 50, shapeBox, { kind: 'rise', amount: 40 }).y > 30
+);
+check(
+  'twist turns the artwork around its centre',
+  Math.abs(warpPoint(100, 0, shapeBox, { kind: 'twist', amount: 60 }).x - 100) > 2
+);
+check(
+  'inflate swells the body',
+  warpPoint(150, 50, shapeBox, { kind: 'inflate', amount: 40 }).x > 150.5
+);
+check(
+  'fisheye squeezes the rim',
+  warpPoint(190, 50, shapeBox, { kind: 'fisheye', amount: 40 }).x < 189.5
+);
+
+const placementMatrix = (transform: string) =>
+  transform.match(/matrix\(([^)]+)\)/)?.[1].split(' ').map(Number) ?? [];
+const placementAngle = (transform: string) => {
+  const parts = placementMatrix(transform);
+  return Math.atan2(parts[1] ?? 0, parts[0] ?? 1);
+};
+const archApex = placementAngle((warpTextPlacements(warpedLabel) ?? [])[1]?.transform ?? '');
+check(
+  'an arch turns the middle letters less than the ends',
+  Math.abs(archApex) < Math.abs(placementAngle((warpTextPlacements(warpedLabel) ?? [])[0]?.transform ?? ''))
+);
+const archEdge = placementMatrix((warpTextPlacements(warpedLabel) ?? [])[0]?.transform ?? '');
+check('the same arch shears the letters at the ends', Math.abs(archEdge[1] ?? 0) > 0.01);
+
+const perspectiveEdge = placementMatrix(
+  (warpTextPlacements({ ...warpedLabel, warp: { kind: 'perspective', amount: 60 } }) ?? [])[0]?.transform ?? ''
+);
+check('perspective leans each letter instead of ignoring type', Math.abs(perspectiveEdge[2] ?? 0) > 0.05);
+check(
+  'the perspective lean keeps the line length',
+  (warpTextPlacements({ ...warpedLabel, warp: { kind: 'perspective', amount: 60 } }) ?? []).every(
+    (glyph) => Math.abs(glyph.x - glyph.anchorX) < 0.5
+  )
+);
+const inflateSpan = spanOf(warpTextPlacements({ ...warpedLabel, warp: { kind: 'inflate', amount: 60 } }) ?? []);
+check('inflate pushes the letters out from the middle', inflateSpan > spanOf(warpTextPlacements({ ...warpedLabel, warp: { kind: 'perspective', amount: 60 } }) ?? []) + 2);
+
+const hexFill = patternFromSwatch({
+  id: 'hex-swatch',
+  name: 'Hex',
+  paths: [],
+  tileW: 100,
+  tileH: 100,
+  tileType: 'hex',
+});
+const hexLayout = patternLayout(hexFill);
+check(
+  'hex tiles stagger by half a tile and root 3 over 2 of a row',
+  hexLayout.copies.some(
+    (c) => Math.abs(c.dx - 50) < 0.01 && Math.abs(c.dy - 100 * (Math.sqrt(3) / 2)) < 0.01
+  ) && Math.abs(hexLayout.width - 100) < 0.01
+);
+check('hex rows sit closer than square rows', hexLayout.height < 200);
+
+// Spacing must pad the cell, keeping the art whole, rather than moving tiles
+// apart where the neighbouring tile clips it.
+check(
+  'spacing pads the cell and centres the art inside it',
+  gridLayout.artOffsetX === 5 &&
+    gridLayout.cellW === 110 &&
+    gridLayout.width === 110
+);
+check(
+  'a motif that crosses the cell edge is cloned on the opposite side',
+  gridLayout.copies.length === 1 &&
+    brickLayout.copies.some((c) => c.dx < 0) &&
+    brickLayout.copies.some((c) => c.dx > 0)
+);
+
+const pathLabel = { ...warpedLabel, textPath: { pathId: 'outline', offset: 0 } };
+check(
+  'centre alignment lifts the string by 0.32em',
+  Math.abs(textPathDy({ ...pathLabel, textPath: { ...pathLabel.textPath, align: 'center' } }) - 0.32 * 64) < 0.01
+);
+check(
+  'top alignment lifts it above centre',
+  textPathDy({ ...pathLabel, textPath: { ...pathLabel.textPath, align: 'ascender' } }) >
+    textPathDy({ ...pathLabel, textPath: { ...pathLabel.textPath, align: 'center' } })
+);
+check(
+  'bottom alignment drops it under the baseline',
+  textPathDy({ ...pathLabel, textPath: { ...pathLabel.textPath, align: 'descender' } }) < 0
+);
+const reversedPair = reversedAnchors([
+  { id: 'a', x: 0, y: 0, type: 'corner', handleOut: { x: 1, y: 2 } },
+  { id: 'b', x: 10, y: 0, type: 'corner' },
+]);
+check(
+  'reversing a path flips the direction, not the shape',
+  reversedPair[0].id === 'b' && reversedPair[1].handleIn?.x === 1
+);
+
+check(
+  'every warp style draws its own preview instead of only a name',
+  renderToStaticMarkup(<WarpThumb kind="arch" />).includes('<polyline') &&
+    renderToStaticMarkup(<WarpThumb kind="twist" />).includes('<polyline')
+);
+check(
+  'text-on-path alignments draw where the string sits',
+  renderToStaticMarkup(<PathAlignThumb align="center" />).includes('center alignment') &&
+    renderToStaticMarkup(<PathAlignThumb align="baseline" />).includes('baseline alignment')
+);
+
+const foldBox = { minX: 0, minY: 0, width: 200, height: 80 };
+check(
+  'a normal bend does not fold',
+  !warpFold(foldBox, { kind: 'arch', amount: 24 }).folded &&
+    !warpFold(foldBox, { kind: 'wave', amount: 30, cycles: 2 }).folded
+);
+check(
+  'an over-driven bulge is reported as folding',
+  warpFold(foldBox, { kind: 'bulge', amount: -140 }).folded
+);
+check(
+  'the fold report says how much of the box is inverted',
+  warpFold(foldBox, { kind: 'bulge', amount: -140 }).ratio > 0
+);
+
+/* ---------------- compound path engine ---------------- */
+
+const engineOuter = [
+  { x: 0, y: 0 },
+  { x: 100, y: 0 },
+  { x: 100, y: 100 },
+  { x: 0, y: 100 },
+];
+const engineHole = [
+  { x: 30, y: 30 },
+  { x: 30, y: 70 },
+  { x: 70, y: 70 },
+  { x: 70, y: 30 },
+];
+const engineCompounds = compoundFromContours([engineOuter, engineHole], { idPrefix: 'letter-o' });
+check(
+  'a glyph with a counter becomes one compound path',
+  engineCompounds.length === 1 &&
+    engineCompounds[0].subpaths.length === 2 &&
+    engineCompounds[0].fillRule === 'nonzero',
+  `compounds=${engineCompounds.length} subpaths=${engineCompounds[0]?.subpaths.length}`
+);
+
+const ringAreas = engineCompounds[0].subpaths.map((subpath) =>
+  signedArea(subpath.points.map((point) => ({ x: point.x, y: point.y })))
+);
+check(
+  'outer contour and counter wind opposite ways',
+  Math.sign(ringAreas[0]) !== Math.sign(ringAreas[1]),
+  ringAreas.map((area) => area.toFixed(0)).join(' / ')
+);
+
+const engineD = toSVGPathData(engineCompounds[0]);
+check(
+  'a compound path writes clean M, L and Z data',
+  engineD.startsWith('M ') && engineD.endsWith('Z') && !engineD.includes('C'),
+  engineD.slice(0, 42)
+);
+
+const enginePaint = {
+  fill: '#000000',
+  fillOpacity: 1,
+  stroke: 'none',
+  strokeWidth: 0,
+  strokeOpacity: 0,
+  strokeCap: 'round' as const,
+  strokeJoin: 'round' as const,
+  pressureProfile: 'uniform' as const,
+  name: 'O',
+};
+const engineObjects = toVectorPaths(engineCompounds, enginePaint);
+check(
+  'compound paths come back as editable objects with their hole',
+  engineObjects.length === 1 && engineObjects[0].points.length === 4 && engineObjects[0].holes?.length === 1
+);
+const engineRoundTrip = fromVectorPaths(engineObjects);
+check(
+  'converted objects round-trip through the engine model',
+  engineRoundTrip[0].subpaths.length === 2 &&
+    Math.abs(engineRoundTrip[0].subpaths[0].points[1].x - 100) < 0.001,
+  `subpaths=${engineRoundTrip[0].subpaths.length}`
+);
+
+// A traced square arrives as dozens of collinear samples: four corners must
+// survive as corner nodes and the samples between them must not survive at all.
+const tracedSquare: { x: number; y: number }[] = [];
+const squareRing = [
+  { x: 0, y: 0 },
+  { x: 200, y: 0 },
+  { x: 200, y: 200 },
+  { x: 0, y: 200 },
+];
+for (let edge = 0; edge < 4; edge++) {
+  const from = squareRing[edge];
+  const to = squareRing[(edge + 1) % 4];
+  for (let step = 0; step < 12; step++) {
+    tracedSquare.push({
+      x: from.x + ((to.x - from.x) * step) / 12,
+      y: from.y + ((to.y - from.y) * step) / 12,
+    });
+  }
+}
+const squareFit = simplifyAndFitCurves(tracedSquare, 1, { closed: true, idPrefix: 'square' });
+const squareNodes = squareFit.subpaths[0].points;
+check(
+  'a traced square keeps exactly four corner nodes',
+  squareNodes.length === 4 && squareNodes.every((node) => node.type === 'corner'),
+  `nodes=${squareNodes.length} corners=${squareNodes.filter((node) => node.type === 'corner').length}`
+);
+check(
+  'its corners stay on the traced geometry',
+  squareNodes.every((node) =>
+    squareRing.some((corner) => Math.hypot(corner.x - node.x, corner.y - node.y) < 0.5)
+  ),
+  squareNodes.map((node) => `${node.x},${node.y}`).join(' ')
+);
+
+const tracedCircle = Array.from({ length: 240 }, (_, index) => {
+  const angle = (index / 240) * Math.PI * 2;
+  return { x: 100 + 80 * Math.cos(angle), y: 100 + 80 * Math.sin(angle) };
+});
+const circleFit = simplifyAndFitCurves(tracedCircle, 0.6, { closed: true, idPrefix: 'circle' });
+const circleNodes = circleFit.subpaths[0].points;
+check(
+  'a traced circle fits to a handful of smooth nodes',
+  circleNodes.length >= 4 &&
+    circleNodes.length <= 12 &&
+    circleNodes.filter((node) => node.type === 'smooth').length >= 4,
+  `nodes=${circleNodes.length}`
+);
+check(
+  'fitted curves export as cubic segments',
+  toSVGPathData(circleFit).includes('C '),
+  toSVGPathData(circleFit).slice(0, 42)
+);
+check(
+  'a closed fit does not repeat its first node',
+  Math.hypot(circleNodes[0].x - circleNodes[circleNodes.length - 1].x, circleNodes[0].y - circleNodes[circleNodes.length - 1].y) > 0.001
+);
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 if (failures > 0) process.exit(1);

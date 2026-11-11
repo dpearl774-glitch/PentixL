@@ -67,13 +67,13 @@ export const FontsSheet: React.FC<FontsSheetProps> = ({
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
-          className="press flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-line-strong px-4 py-6 text-center hover:border-accent/50"
+          className="press flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-line-strong px-4 py-6 text-center hover:border-accent/50"
         >
           <Upload size={18} className="text-accent" />
           <span className="text-[12.5px] font-semibold text-text">
             {busy ? 'Loading typeface…' : 'Import a font file'}
           </span>
-          <span className="font-mono text-[10px] uppercase tracking-wider text-mute">
+          <span className="font-sans text-[10px] uppercase tracking-wider text-mute">
             ttf · otf · woff · woff2
           </span>
         </button>
@@ -106,7 +106,7 @@ export const FontsSheet: React.FC<FontsSheetProps> = ({
             visibleFonts.map((family) => (
               <div
                 key={family}
-                className="flex items-center gap-2 rounded-xl border border-line bg-ink-2 px-3 py-2"
+                className="flex items-center gap-2 rounded-lg border border-line bg-ink-2 px-3 py-2"
               >
                 <span className="min-w-0 flex-1 truncate text-[13px] text-text" style={{ fontFamily: family }}>
                   {family}

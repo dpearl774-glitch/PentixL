@@ -7,10 +7,12 @@
 export const CANVAS = {
   /** Artboard paper */
   artboard: '#101216',
-  artboardEdge: '#2c3138',
+  /** Hairline around the paper — a border, not a drawn shape */
+  artboardEdge: '#23272f',
   /** Page behind the artboard */
   page: '#08090b',
-  grid: '#3c424b',
+  /** Alignment grid: present when asked for, never competing with artwork */
+  grid: '#2e343c',
   /** Single accent used for selection, handles, smart guides */
   accent: '#4c8dff',
   accentSoft: 'rgba(76, 141, 255, 0.16)',

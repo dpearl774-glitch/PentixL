@@ -1,0 +1,6 @@
+/** Static host for the built Pentix app: every route falls back to index.html. */
+export default {
+  async fetch(request, env) {
+    return env.ASSETS.fetch(request);
+  },
+};

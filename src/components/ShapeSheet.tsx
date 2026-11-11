@@ -60,7 +60,7 @@ export const ShapeSheet: React.FC<ShapeSheetProps> = ({
             key={s.kind}
             type="button"
             onClick={() => onSelectShape(s.kind)}
-            className={`press flex aspect-square flex-col items-center justify-center gap-1 rounded-xl border ${
+            className={`press flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border ${
               active
                 ? 'border-accent/60 bg-accent/10 text-accent'
                 : 'border-line bg-ink-2 text-dim hover:border-line-strong hover:text-text'
@@ -76,14 +76,14 @@ export const ShapeSheet: React.FC<ShapeSheetProps> = ({
                 strokeLinejoin="round"
               />
             </svg>
-            <span className="font-mono text-[8.5px] uppercase tracking-wide">{s.label}</span>
+            <span className="font-sans text-[8.5px] uppercase tracking-wide">{s.label}</span>
           </button>
         );
       })}
     </div>
 
     {selectedShape === 'polygon' && (
-      <div className="mt-4 flex items-center justify-between rounded-xl border border-line bg-ink-0 px-3 py-2">
+      <div className="mt-4 flex items-center justify-between rounded-lg border border-line bg-ink-0 px-3 py-2">
         <SectionLabel>Sides</SectionLabel>
         <div className="flex items-center gap-2">
           <IconButton

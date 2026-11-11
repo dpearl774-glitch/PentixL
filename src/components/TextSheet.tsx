@@ -99,10 +99,10 @@ export const TextSheet: React.FC<TextSheetProps> = ({
         onClick={() => setFontFamily(f.value)}
         aria-pressed={active}
         className={`press flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left ${
-          active ? 'bg-accent/15 text-accent' : 'text-dim hover:bg-ink-2 hover:text-text'
+          active ? 'bg-line-strong text-text' : 'text-dim hover:bg-ink-2 hover:text-text'
         }`}
       >
-        <span className="w-5 shrink-0 text-center font-mono text-[9px] uppercase opacity-60">
+        <span className="w-5 shrink-0 text-center font-sans text-[9px] uppercase opacity-60">
           Aa
         </span>
         <span className="min-w-0 flex-1 truncate text-[14px]" style={{ fontFamily: f.value }}>
@@ -150,7 +150,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
           rows={2}
           placeholder="Brand name"
           autoFocus
-          className="w-full resize-none rounded-xl border border-line bg-ink-0 px-3 py-2.5 text-[15px] font-semibold leading-snug text-text outline-none placeholder:text-mute focus:border-accent/60"
+          className="w-full resize-none rounded-lg border border-line bg-ink-0 px-3 py-2.5 text-[15px] font-semibold leading-snug text-text outline-none placeholder:text-mute focus:border-accent/60"
         />
 
         <section className="flex flex-col gap-2">
@@ -167,7 +167,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
             className="h-9 w-full rounded-lg border border-line bg-ink-0 px-3 text-[12.5px] text-text outline-none placeholder:text-mute focus:border-accent/60"
           />
 
-          <div className="max-h-56 overflow-y-auto rounded-xl border border-line bg-ink-0/50 p-1">
+          <div className="max-h-56 overflow-y-auto rounded-lg border border-line bg-ink-0/50 p-1">
             {!q && recentOptions.length > 0 && (
               <div className="mb-1">
                 <div className="label-mono px-2 py-1">Recent</div>
@@ -250,7 +250,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
         </section>
 
         {/* Preview */}
-        <div className="grid min-h-[86px] place-items-center overflow-hidden rounded-xl border border-line bg-ink-0 px-3 py-4">
+        <div className="grid min-h-[86px] place-items-center overflow-hidden rounded-lg border border-line bg-ink-0 px-3 py-4">
           <p
             className="max-w-full break-words text-center font-bold leading-tight"
             style={{

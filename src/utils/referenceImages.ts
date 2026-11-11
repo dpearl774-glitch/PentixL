@@ -22,7 +22,9 @@ export function referenceImageFromSrc(src: string, name = 'Reference'): Promise<
         width: Math.max(40, Math.round(img.width * scale)),
         height: Math.max(40, Math.round(img.height * scale)),
         opacity: 0.45,
-        locked: true,
+        // Movable on arrival: a reference you cannot position is not a reference.
+        // The lock is for when it is finally aligned and tracing begins.
+        locked: false,
         visible: true,
       });
     };
@@ -59,7 +61,7 @@ export function referenceImageFromFile(file: File): Promise<ReferenceImage> {
           width: Math.round(img.width * scale),
           height: Math.round(img.height * scale),
           opacity: 0.45,
-          locked: true,
+          locked: false,
           visible: true,
         });
       };

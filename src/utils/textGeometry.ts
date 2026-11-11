@@ -20,7 +20,7 @@ export function textLineHeight(fontSize?: number): number {
   return Math.max(1, fontSize || 48) * 1.2;
 }
 
-interface TextMetricsInput {
+export interface TextMetricsInput {
   text?: string;
   fontSize?: number;
   fontFamily?: string;
@@ -46,7 +46,10 @@ function context(): CanvasRenderingContext2D | null {
 // Fonts can finish loading after the first measurement; drop cached fallbacks
 // once the font set settles so a typed label gets its real ink box.
 if (typeof document !== 'undefined' && document.fonts?.ready) {
-  void document.fonts.ready.then(() => metricsCache.clear());
+  void document.fonts.ready.then(() => {
+    metricsCache.clear();
+    advanceCache.clear();
+  });
 }
 
 /**
@@ -117,6 +120,45 @@ export function measureTextMetrics(input: TextMetricsInput): TextMetricsBox {
 
   if (cacheable) metricsCache.set(key, result);
   return result;
+}
+
+const advanceCache = new Map<string, number[]>();
+
+/**
+ * Left edge of every glyph on one line, in the label's local space. Prefix
+ * widths keep the kerning the browser applies, so a warped string sits exactly
+ * where the plain <text> node would have put each letter.
+ */
+export function measureLineOffsets(line: string, input: TextMetricsInput): number[] {
+  const size = Math.max(1, input.fontSize || 48);
+  const letterSpacing = input.letterSpacing ?? 0;
+  const family = input.fontFamily || 'sans-serif';
+  const weight = input.fontWeight || 'bold';
+  const key = `${weight}|${size}|${family}|${letterSpacing}|${line}`;
+  const cacheable = typeof document === 'undefined' || document.fonts?.status === 'loaded';
+  const cached = cacheable ? advanceCache.get(key) : undefined;
+  if (cached) return cached;
+
+  const offsets: number[] = [];
+  const ctx = context();
+  if (ctx) {
+    try {
+      ctx.font = `${weight} ${size}px ${family}`;
+      for (let index = 0; index < line.length; index += 1) {
+        offsets.push(ctx.measureText(line.slice(0, index)).width + index * letterSpacing);
+      }
+    } catch {
+      offsets.length = 0;
+    }
+  }
+  if (!offsets.length) {
+    for (let index = 0; index < line.length; index += 1) {
+      offsets.push(index * (size * 0.6 + letterSpacing));
+    }
+  }
+
+  if (cacheable) advanceCache.set(key, offsets);
+  return offsets;
 }
 
 export function normalizeTextMatrix(matrix?: readonly number[]): TextMatrix {

@@ -10,8 +10,10 @@ import { haptic } from '../../theme';
 type ButtonVariant = 'primary' | 'secondary' | 'quiet' | 'danger';
 type ButtonSize = 'sm' | 'md' | 'lg';
 
+/* Spectrum keeps 1px borders, 4–6px radii and one shadow for transient
+   surfaces. The studio follows that: square-ish controls, hairlines, no glow. */
 const BTN_BASE =
-  'press inline-flex items-center justify-center gap-2 font-semibold whitespace-nowrap rounded-xl ' +
+  'press inline-flex items-center justify-center gap-2 font-semibold whitespace-nowrap rounded-md ' +
   'disabled:opacity-35 disabled:pointer-events-none select-none';
 
 const BTN_VARIANT: Record<ButtonVariant, string> = {
@@ -77,11 +79,11 @@ export const IconButton: React.FC<IconButtonProps> = ({
       haptic(6);
       onClick?.(e);
     }}
-    className={`press grid place-items-center rounded-xl border disabled:pointer-events-none disabled:opacity-30 ${
+    className={`press grid place-items-center rounded-md border disabled:pointer-events-none disabled:opacity-30 ${
       size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'
     } ${
       active
-        ? 'bg-accent text-ink-0 border-accent'
+        ? 'bg-line-strong text-text border-line-strong'
         : tone === 'danger'
           ? 'bg-transparent text-danger border-transparent hover:bg-ink-3'
           : 'bg-transparent text-dim border-transparent hover:text-text hover:bg-ink-3'
@@ -112,9 +114,9 @@ export const Chip: React.FC<ChipProps> = ({
       haptic(6);
       onClick?.(e);
     }}
-    className={`press inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12px] font-semibold disabled:opacity-35 disabled:pointer-events-none ${
+    className={`press inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-3 text-[12px] font-semibold disabled:opacity-35 disabled:pointer-events-none ${
       active
-        ? 'border-accent bg-accent text-ink-0'
+        ? 'border-line-strong bg-line-strong text-text'
         : 'border-line bg-ink-2 text-dim hover:text-text hover:border-line-strong'
     } ${className}`}
     {...rest}
@@ -142,7 +144,7 @@ export function Segmented<T extends string>({
   className?: string;
 }) {
   return (
-    <div className={`flex items-center gap-1 rounded-xl border border-line bg-ink-0 p-1 ${className}`}>
+    <div className={`flex items-center gap-1 rounded-md border border-line bg-ink-0 p-[3px] ${className}`}>
       {options.map((o) => (
         <button
           key={o.value}
@@ -151,8 +153,8 @@ export function Segmented<T extends string>({
             haptic(6);
             onChange(o.value);
           }}
-          className={`press h-8 min-w-0 flex-1 truncate rounded-lg px-1.5 text-[11.5px] font-semibold ${
-            value === o.value ? 'bg-accent text-ink-0' : 'text-dim hover:text-text'
+          className={`press h-8 min-w-0 flex-1 truncate rounded-[5px] px-1.5 text-[11.5px] font-semibold ${
+            value === o.value ? 'bg-ink-3 text-text' : 'text-dim hover:text-text'
           }`}
         >
           {o.label}
@@ -331,7 +333,7 @@ export const Sheet: React.FC<SheetProps> = ({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`anim-sheet sheet-surface relative flex max-h-[88dvh] w-full flex-col overflow-hidden rounded-t-sheet md:rounded-2xl ${SHEET_WIDTH[size]} md:anim-pop`}
+        className={`anim-sheet sheet-surface relative flex max-h-[88dvh] w-full flex-col overflow-hidden rounded-t-sheet md:rounded-xl ${SHEET_WIDTH[size]} md:anim-pop`}
         style={{
           maxHeight: viewportHeight ? Math.min(window.innerHeight * 0.88, viewportHeight - 12) : undefined,
           transform: dragY > 0 ? `translateY(${dragY}px)` : undefined,
@@ -455,10 +457,10 @@ export const Panel: React.FC<PanelProps> = ({
       <aside
         role="dialog"
         aria-label={title}
-        className={`anim-rise absolute inset-x-2 bottom-[calc(100px+env(safe-area-inset-bottom,0px))] flex max-h-[42dvh] flex-col overflow-hidden rounded-2xl border shadow-[0_24px_60px_-24px_rgba(0,0,0,0.95)] md:inset-x-auto md:bottom-[112px] md:right-3 md:top-14 md:max-h-none md:w-[336px] ${
+        className={`anim-rise absolute inset-x-2 bottom-[calc(100px+env(safe-area-inset-bottom,0px))] flex max-h-[42dvh] flex-col overflow-hidden rounded-[10px] border shadow-[0_12px_32px_-16px_rgba(0,0,0,0.85)] md:inset-x-auto md:bottom-[112px] md:right-3 md:top-14 md:max-h-none md:w-[336px] ${
           interactive
-            ? 'pointer-events-auto border-line/80 bg-ink-1/55 backdrop-blur-[3px]'
-            : 'border-line bg-ink-1/80 backdrop-blur-xl'
+            ? 'pointer-events-auto border-line/80 bg-ink-1/75 backdrop-blur-[2px]'
+            : 'border-line bg-ink-1/95'
         }`}
       >
         <header className="flex items-center justify-between gap-2 border-b border-line/70 bg-ink-1/70 px-3 py-2">
@@ -485,7 +487,7 @@ export const Toast: React.FC<{ message: string | null }> = ({ message }) => {
   if (!message) return null;
   return (
     <div className="pointer-events-none fixed inset-x-0 top-14 z-40 flex justify-center px-4">
-      <div className="anim-rise flex items-center gap-2 rounded-full border border-line bg-ink-2/95 px-3.5 py-2 text-[12px] font-medium text-text shadow-2xl backdrop-blur">
+      <div className="anim-rise flex items-center gap-2 rounded-md border border-line bg-ink-2/95 px-3.5 py-2 text-[12px] font-medium text-text shadow-lg">
         <span className="h-1.5 w-1.5 rounded-full bg-accent" />
         {message}
       </div>

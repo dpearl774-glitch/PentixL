@@ -30,7 +30,8 @@ import {
   pathToSvgD,
 } from '../utils/bezier';
 import { generateShapePath } from '../utils/shapeGenerator';
-import { fitBezierPath } from '../utils/curveFit';
+import { simplifyAndFitCurves } from '../utils/simplifyAndFit';
+import { toEditorAnchors } from '../utils/compoundPath';
 import {
   computePathsBoundingBox,
   scalePaths,
@@ -40,6 +41,10 @@ import {
   HandleType,
 } from '../utils/transform';
 import { textLineHeight, textLines, textMatrixCss } from '../utils/textGeometry';
+import { warpTextGlyphs } from '../utils/textWarp';
+import { preWarpGeometry, warpPathsInBox } from '../utils/warp';
+import type { WarpSpec } from '../types/vector';
+import { textPathDy, textPathSource } from '../utils/textPath';
 import {
   SmartGuideLine,
   getSnapCandidates,
@@ -49,6 +54,7 @@ import {
 import {
   computeAtomicSubRegions,
   findSubRegionAtPoint,
+  regionUnionOutline,
   executeShapeBuilderMerge,
   executeShapeBuilderErase,
   SubRegion,
@@ -56,13 +62,29 @@ import {
 import { computeVisiblePathsBoundingBox } from '../utils/shapeBuilder';
 import { PrecisionPad } from './PrecisionPad';
 import { computeSelectionOverlapD } from '../utils/overlap';
-import { extrusionFaces, extrusionShadow } from '../utils/extrusion';
+import {
+  extrusionFaces,
+  extrusionFrontPath,
+  extrusionShadow,
+  extrusionSheen,
+} from '../utils/extrusion';
 import {
   clipPathIdFor,
   clippingUrlFor,
   collectClipIds,
   collectClippingMasks,
+  imageClipIdFor,
 } from '../utils/clipping';
+import {
+  blurFilterId,
+  blurStdDeviation,
+  hasVisibleBlur,
+  patternIdFor,
+  patternTransform,
+  patternLayout,
+  patternOriginFor,
+  textPathSourceId,
+} from '../utils/effects';
 
 const RULER_SIZE = 26;
 
@@ -70,13 +92,15 @@ const RULER_SIZE = 26;
 const PAD_POINTER_ID = 8301;
 
 const PadGlyph: React.FC = () => (
+  // Sized for an icon-only button now: 16px like the dock, on the 12-unit box
+  // so the 1.25 stroke lands at the same optical weight as the 1.7px icons.
   <svg
-    width={11}
-    height={11}
+    width={16}
+    height={16}
     viewBox="0 0 12 12"
     fill="none"
     stroke="currentColor"
-    strokeWidth="1.4"
+    strokeWidth="1.25"
     strokeLinecap="round"
   >
     <circle cx="6" cy="6" r="2.6" />
@@ -191,6 +215,8 @@ interface CanvasProps {
   onCommitGuides?: () => void;
   /** One global lock that freezes every guide and stops new ones */
   guidesLocked?: boolean;
+  /** Rulers stay put while every guide is hidden from view */
+  guidesVisible?: boolean;
   /** Gradient paint for newly created fills, when the gradient style is active */
   fillGradient?: GradientDef | null;
   fillOpacity?: number;
@@ -213,9 +239,15 @@ interface CanvasProps {
   smartGuidesEnabled?: boolean;
   referenceImages?: ReferenceImage[];
   onUpdateReference?: (image: ReferenceImage) => void;
+  /** Reference picked on the canvas, so the strip can show its options */
+  selectedReferenceId?: string | null;
+  onSelectReference?: (id: string | null) => void;
   sbMode?: 'merge' | 'erase';
+  /** Mode switch from the canvas build bar; the strip owns the same state */
+  onChangeSbMode?: (mode: 'merge' | 'erase') => void;
   clipArtboard?: boolean;
-  onRequestText?: (point: Point) => void;
+  /** A type-tool tap, with the path under the finger when there is one */
+  onRequestText?: (point: Point, hitPathId?: string | null) => void;
   /** Opens the type editor for an existing text object */
   onEditText?: (path: VectorPath) => void;
   onToolSwitch?: (tool: ToolType) => void;
@@ -223,6 +255,8 @@ interface CanvasProps {
   hideTransformBox?: boolean;
   /** The precision pad is optional; when off, its launcher is hidden */
   showPrecisionPad?: boolean;
+  /** A warp being dialled in: drawn on the selection without being committed */
+  warpPreview?: WarpSpec | null;
 }
 
 export const Canvas: React.FC<CanvasProps> = ({
@@ -268,14 +302,19 @@ export const Canvas: React.FC<CanvasProps> = ({
   smartGuidesEnabled = true,
   referenceImages = [],
   onUpdateReference,
+  selectedReferenceId = null,
+  onSelectReference,
   sbMode = 'merge',
+  onChangeSbMode,
   clipArtboard = false,
   onRequestText,
   onEditText,
   guidesLocked = false,
+  guidesVisible = true,
   onToolSwitch,
   hideTransformBox = false,
   showPrecisionPad = true,
+  warpPreview = null,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -337,7 +376,17 @@ export const Canvas: React.FC<CanvasProps> = ({
   };
 
   // Dragging an unlocked reference image
-  const referenceDragRef = useRef<{ id: string; grab: Point; origin: Point } | null>(null);
+  const referenceDragRef = useRef<
+    | { mode: 'move'; id: string; grab: Point; origin: Point }
+    | {
+        mode: 'scale';
+        id: string;
+        corner: 'tl' | 'tr' | 'bl' | 'br';
+        grab: Point;
+        origin: { x: number; y: number; width: number; height: number };
+      }
+    | null
+  >(null);
 
   // Guide interactions — dragged either from a ruler or on the canvas
   const guideDragRef = useRef<{ id: string; axis: 'h' | 'v' } | null>(null);
@@ -406,6 +455,10 @@ export const Canvas: React.FC<CanvasProps> = ({
     return svg;
   };
 
+  // Regions live further down the component; the pad reads them through a ref so
+  // hovering with the crosshair never closes over a stale decomposition.
+  const shapeRegionsForPadRef = useRef<SubRegion[]>([]);
+
   const padClientPoint = (): Point | null => {
     const el = containerRef.current;
     const cur = padCursorRef.current;
@@ -427,7 +480,15 @@ export const Canvas: React.FC<CanvasProps> = ({
 
     // Keep the + / − node markers following the crosshair, not the finger
     const rect = el.getBoundingClientRect();
-    setCurrentPointerPoint(screenToCanvas(rect.left + next.x, rect.top + next.y));
+    const canvasPoint = screenToCanvas(rect.left + next.x, rect.top + next.y);
+    setCurrentPointerPoint(canvasPoint);
+
+    // Shape Builder follows the crosshair: the region under it lights up before
+    // the pad is pressed, so you can aim from the pad instead of the artwork.
+    // eslint-disable-next-line @typescript-eslint/no-use-before-define
+    if (tool === 'shape-builder') {
+      setSbHoveredRegionId(findSubRegionAtPoint(canvasPoint, shapeRegionsForPadRef.current)?.id ?? null);
+    }
   };
 
   const dispatchPadPointer = (type: 'pointerdown' | 'pointermove' | 'pointerup') => {
@@ -587,6 +648,27 @@ export const Canvas: React.FC<CanvasProps> = ({
   // Determine effective tool based on Modifier (Ctrl key toggles Direct Select)
   const effectiveTool: ToolType = modifiers.ctrl ? 'direct-select' : tool;
 
+  // A pen path left open used to be dropped: only the closing tap committed
+  // it, so switching tools made the line you just drew vanish. Hand any open
+  // path with two or more anchors to the document when the pen is put down.
+  React.useEffect(() => {
+    if (effectiveTool === 'pen' || !activePathInProgress) return;
+    if (activePathInProgress.points.length < 2) {
+      setActivePathInProgress(null);
+      return;
+    }
+    const openPath = { ...activePathInProgress, closed: false };
+    onAddPath(openPath);
+    setActivePathInProgress(null);
+    onSelectionChange({
+      selectedPathIds: [openPath.id],
+      selectedAnchorIndex: null,
+      selectedHandleType: null,
+    });
+    onCommitHistory();
+  }, [effectiveTool, activePathInProgress, onAddPath, onSelectionChange, onCommitHistory]);
+
+
   // Selected paths for transformation
   const selectedPaths = allPaths.filter((p) => selection.selectedPathIds.includes(p.id));
   const selectedBBox = computeVisiblePathsBoundingBox(
@@ -624,6 +706,28 @@ export const Canvas: React.FC<CanvasProps> = ({
   const drawInsideClipUrl = drawInsideSource
     ? `url(#${clipPathIdFor(drawInsideSource.id)})`
     : undefined;
+  /**
+   * Warp previews for the selected shapes, built the way Apply builds them: the
+   * same pre-warp geometry, one shared selection box. The render loop used to
+   * bend each path's own already-bent points against its own box, so the live
+   * preview and the committed result quietly disagreed.
+   */
+  const warpPreviewShapes = React.useMemo(() => {
+    if (!warpPreview) return null;
+    const selected = layers
+      .flatMap((layer) => layer.paths)
+      .filter((path) => !path.text && selection.selectedPathIds.includes(path.id));
+    if (!selected.length) return null;
+    const bases = selected.map(preWarpGeometry);
+    const box = computePathsBoundingBox(bases);
+    if (!box || box.width <= 0 || box.height <= 0) return null;
+    const bent = new Map<string, VectorPath>();
+    bases.forEach((base) => {
+      bent.set(base.id, warpPathsInBox([base], box, warpPreview)[0] ?? base);
+    });
+    return bent;
+  }, [warpPreview, layers, selection.selectedPathIds]);
+
   const selectionOverlapD = React.useMemo(() => {
     if (selection.selectedPathIds.length < 2) return null;
     const selected = layers
@@ -637,6 +741,8 @@ export const Canvas: React.FC<CanvasProps> = ({
       layers.flatMap((layer) => layer.paths)
     );
   }, [layers, selection.selectedPathIds]);
+  const selectedReference =
+    referenceImages.find((image) => image.id === selectedReferenceId) ?? null;
   const selectedAnchors =
     selection.selectedAnchorIndex !== null
       ? selection.selectedAnchorIndexes?.includes(selection.selectedAnchorIndex)
@@ -694,6 +800,124 @@ export const Canvas: React.FC<CanvasProps> = ({
     }
   }, [tool, participatingPaths, layers]);
 
+  // The build gesture's result, before release: the union outline of every
+  // region it has touched. Keyed on the ids so a pointer move does not rebuild
+  // the union unless the set of touched regions actually changed.
+  const sbPreviewKey = sbSelectedRegionIds.join('|');
+  const sbUnionPreviewD = React.useMemo(() => {
+    const ids = sbPreviewKey ? sbPreviewKey.split('|') : [];
+    return regionUnionOutline(atomicRegions, ids);
+  }, [atomicRegions, sbPreviewKey]);
+
+  shapeRegionsForPadRef.current = atomicRegions;
+
+  // Type on a path needs the outline it follows as a def, expressed relative
+  // to the text anchor so the text's own transform still places it.
+  const textPathDefs = React.useMemo(
+    () =>
+      layers
+        .flatMap((layer) => layer.paths)
+        .map((path) => {
+          if (!path.textPath) return null;
+          const target = layers
+            .flatMap((layer) => layer.paths)
+            .find((candidate) => candidate.id === path.textPath!.pathId);
+          const d = target ? pathToSvgD(textPathSource(path, target)) : '';
+          if (!d) return null;
+          const origin = path.points[0];
+          return (
+            <path
+              key={`textpath-${path.id}`}
+              id={textPathSourceId(path.id)}
+              d={d}
+              transform={`translate(${-(origin?.x ?? 0)} ${-(origin?.y ?? 0)})`}
+            />
+          );
+        }),
+    [layers]
+  );
+
+  // Blur filters and pattern tiles, one pair of defs per object that asked
+  // for them. Both are paint, so they never disturb the path geometry.
+  const effectDefs = React.useMemo(
+    () =>
+      layers
+        .flatMap((layer) => layer.paths)
+        .flatMap((path) => {
+          const nodes: React.ReactNode[] = [];
+          if (hasVisibleBlur(path.blur) && path.blur) {
+            const { stdX, stdY } = blurStdDeviation(path.blur);
+            nodes.push(
+              <filter
+                key={`blur-${path.id}`}
+                id={blurFilterId(path.id)}
+                x="-50%"
+                y="-50%"
+                width="200%"
+                height="200%"
+              >
+                <feGaussianBlur stdDeviation={`${stdX.toFixed(2)} ${stdY.toFixed(2)}`} />
+              </filter>
+            );
+          }
+          if (path.pattern && path.pattern.paths.length) {
+            const layout = patternLayout(path.pattern);
+            const tiles = path.pattern.paths;
+            nodes.push(
+              <pattern
+                key={`pattern-${path.id}`}
+                id={patternIdFor(path.id)}
+                patternUnits="userSpaceOnUse"
+                width={layout.width}
+                height={layout.height}
+                patternTransform={patternTransform(path.pattern, patternOriginFor(path))}
+              >
+                <g transform={`scale(${layout.scale})`}>
+                  {layout.copies.flatMap((copy, copyIndex) =>
+                    tiles.map((tile, tileIndex) => {
+                      const d = pathToSvgD(tile);
+                      if (!d) return null;
+                      return (
+                        <path
+                          key={`tile-${copyIndex}-${tileIndex}`}
+                          d={d}
+                          transform={`translate(${copy.dx} ${copy.dy})`}
+                          fill={tile.fill}
+                          fillOpacity={tile.fillOpacity ?? 1}
+                          fillRule="evenodd"
+                          stroke={tile.stroke}
+                          strokeWidth={tile.strokeWidth}
+                        />
+                      );
+                    })
+                  )}
+                </g>
+              </pattern>
+            );
+          }
+          return nodes;
+        }),
+    [layers]
+  );
+
+  // Image paint is cropped to its own shape, so each photo object needs a
+  // self-clip. Masking with another object still stacks on top of it.
+  const imageClipDefs = React.useMemo(
+    () =>
+      layers
+        .flatMap((layer) => layer.paths)
+        .filter((path) => path.image)
+        .map((path) => {
+          const d = pathToSvgD(path);
+          return d ? (
+            <clipPath key={`image-clip-${path.id}`} id={imageClipIdFor(path.id)} clipPathUnits="userSpaceOnUse">
+              <path d={d} fillRule="evenodd" />
+            </clipPath>
+          ) : null;
+        }),
+    [layers]
+  );
+
   // Anything locked cannot be picked: an object by its own lock, or every
   // object in a locked layer. The canvas used to ignore layer.locked entirely.
   const lockedPathIds = React.useMemo(() => {
@@ -705,6 +929,29 @@ export const Canvas: React.FC<CanvasProps> = ({
     });
     return ids;
   }, [layers]);
+
+  /**
+   * A clip mask lives in world space, so moving only the clipped child left the
+   * visible region pinned to the old mask — the shape looked impossible to
+   * move. Everything dragged alongside a clipped object includes its mask.
+   */
+  const expandWithClipSources = React.useCallback(
+    (paths: VectorPath[]): VectorPath[] => {
+      if (!paths.some((path) => path.clipPathId)) return paths;
+      const ids = new Set(paths.map((path) => path.id));
+      const extra: VectorPath[] = [];
+      for (const path of paths) {
+        if (!path.clipPathId || ids.has(path.clipPathId)) continue;
+        const source = allPaths.find((candidate) => candidate.id === path.clipPathId);
+        if (source) {
+          ids.add(source.id);
+          extra.push(source);
+        }
+      }
+      return extra.length ? [...paths, ...extra] : paths;
+    },
+    [allPaths]
+  );
 
   // Other objects do not move while a transform is dragged, so their boxes can
   // be measured once per selection instead of once per pointer event.
@@ -1061,7 +1308,9 @@ export const Canvas: React.FC<CanvasProps> = ({
 
     // Vector Typography Tool Logic
     if (effectiveTool === 'text') {
-      onRequestText?.(canvasPt);
+      const element = e.target as Element | null;
+      const row = element?.closest?.('[data-path-id]') as HTMLElement | null;
+      onRequestText?.(canvasPt, row?.getAttribute('data-path-id') ?? null);
       return;
     }
 
@@ -1168,18 +1417,45 @@ export const Canvas: React.FC<CanvasProps> = ({
       return;
     }
 
-    // Unlocked reference images can be repositioned under the artwork
+    // Unlocked reference images can be moved and resized under the artwork
     if (referenceDragRef.current) {
       const drag = referenceDragRef.current;
       const pt = screenToCanvas(e.clientX, e.clientY);
       const target = referenceImages.find((r) => r.id === drag.id);
-      if (target && onUpdateReference) {
+      if (!target || !onUpdateReference) return;
+
+      if (drag.mode === 'move') {
         onUpdateReference({
           ...target,
           x: drag.origin.x + (pt.x - drag.grab.x),
           y: drag.origin.y + (pt.y - drag.grab.y),
         });
+        return;
       }
+
+      const { origin, corner } = drag;
+      const dx = pt.x - drag.grab.x;
+      const dy = pt.y - drag.grab.y;
+      const west = corner === 'tl' || corner === 'bl';
+      const north = corner === 'tl' || corner === 'tr';
+
+      let width = Math.max(16, origin.width + (west ? -dx : dx));
+      let height = Math.max(16, origin.height + (north ? -dy : dy));
+
+      // Shift keeps the photo's proportions while it is scaled
+      if (modifiers.shift && origin.width > 0 && origin.height > 0) {
+        const ratio = origin.width / origin.height;
+        if (width / height > ratio) width = height * ratio;
+        else height = width / ratio;
+      }
+
+      onUpdateReference({
+        ...target,
+        x: west ? origin.x + origin.width - width : origin.x,
+        y: north ? origin.y + origin.height - height : origin.y,
+        width,
+        height,
+      });
       return;
     }
 
@@ -1598,6 +1874,41 @@ export const Canvas: React.FC<CanvasProps> = ({
     }
   };
 
+  /**
+   * The one place a build is written into the document, shared by the release
+   * gesture and the build bar. Stale region ids are dropped before the write:
+   * recomputing the regions after any edit can leave the collected list holding
+   * ids that no longer exist, and a merge with those silently did nothing.
+   */
+  const applyShapeBuilder = React.useCallback(
+    (mode: 'merge' | 'erase') => {
+      const ids = sbSelectedRegionIds.filter((id) =>
+        atomicRegions.some((region) => region.id === id)
+      );
+      if (ids.length === 0 || participatingPaths.length === 0) return;
+
+      const removeIds = participatingPaths.map((path) => path.id);
+      // The merged solid keeps the paint of the region it grew from; painting it
+      // in the tool's current colour made a merge look like a recolour.
+      const sourceFill = atomicRegions.find((region) => ids.includes(region.id))?.fill;
+      const newPaths =
+        mode === 'erase'
+          ? executeShapeBuilderErase(ids, atomicRegions, participatingPaths)
+          : executeShapeBuilderMerge(ids, atomicRegions, participatingPaths, {
+              fill: sourceFill ?? fillColor,
+              stroke: 'none',
+              strokeWidth: 0,
+            });
+
+      if (newPaths.length > 0) onReplacePaths?.(removeIds, newPaths);
+      setSbSelectedRegionIds([]);
+      setSbDragPoints([]);
+      setDraggingTarget(null);
+      setIsPointerDown(false);
+    },
+    [atomicRegions, fillColor, onReplacePaths, participatingPaths, sbSelectedRegionIds]
+  );
+
   // Pointer Up Handler
   const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     if (padPressRef.current && e.pointerId !== PAD_POINTER_ID) return;
@@ -1626,27 +1937,23 @@ export const Canvas: React.FC<CanvasProps> = ({
       if (moved !== null && guide && guide.position !== moved) onCommitGuides?.();
     }
 
-    // Adobe Illustrator Shape Builder: Commit Merge or Erase upon drag/click release
+    // Shape Builder: a real drag commits on release; a tap only collects the
+    // region. On a phone the thumb sits on the artwork while dragging, so taps
+    // plus the build bar are the reliable way to finish a merge or an erase.
     if (draggingTarget?.type === 'shape-builder-drag') {
-      const effectiveMode = modifiers.alt || sbMode === 'erase' ? 'erase' : 'merge';
-      if (sbSelectedRegionIds.length > 0 && participatingPaths.length > 0) {
-        if (effectiveMode === 'erase') {
-          const newPaths = executeShapeBuilderErase(sbSelectedRegionIds, atomicRegions, participatingPaths);
-          onReplacePaths?.(participatingPaths.map((p) => p.id), newPaths);
-        } else {
-          const newPaths = executeShapeBuilderMerge(
-            sbSelectedRegionIds,
-            atomicRegions,
-            participatingPaths,
-            { fill: fillColor, stroke: 'none', strokeWidth: 0 }
-          );
-          onReplacePaths?.(participatingPaths.map((p) => p.id), newPaths);
-        }
-      }
-      setSbSelectedRegionIds([]);
-      setSbDragPoints([]);
+      const first = sbDragPoints[0];
+      const last = sbDragPoints[sbDragPoints.length - 1];
+      const travelled =
+        first && last ? Math.hypot(last.x - first.x, last.y - first.y) * view.zoom : 0;
+
       setDraggingTarget(null);
       setIsPointerDown(false);
+
+      if (travelled >= 6) {
+        applyShapeBuilder(modifiers.alt || sbMode === 'erase' ? 'erase' : 'merge');
+      } else {
+        setSbDragPoints([]);
+      }
       return;
     }
 
@@ -1718,11 +2025,15 @@ export const Canvas: React.FC<CanvasProps> = ({
           travelled > 60 / view.zoom &&
           distance(first, lastSample) <= PENCIL_CLOSE_RADIUS / view.zoom;
         const id = `pencil-${Date.now()}`;
-        const points = fitBezierPath(smoothPencilSamples(raw, pencilSmoothing), {
-          idPrefix: id,
-          closed,
-          tolerance: PENCIL_TOLERANCE[pencilSmoothing] / view.zoom,
-        });
+        // Freehand shares the low-node pipeline with imported art: redundant
+        // samples go first, then corner-locked fitting, so a drawn corner stays
+        // a corner node instead of being rounded into a bulge.
+        const fitted = simplifyAndFitCurves(
+          smoothPencilSamples(raw, pencilSmoothing),
+          PENCIL_TOLERANCE[pencilSmoothing] / view.zoom,
+          { closed, idPrefix: id }
+        );
+        const points = fitted.subpaths[0] ? toEditorAnchors(fitted.subpaths[0]) : [];
 
         // The fitted seam has to land exactly on the start or a closed fill
         // shows a notch where the two ends meet
@@ -1893,6 +2204,17 @@ export const Canvas: React.FC<CanvasProps> = ({
     );
   };
 
+  // One light pool per extruded object, so the front face is lit rather than flat.
+  const sheenDefNodes = allPaths
+    .map((path) => extrusionSheen(path))
+    .filter((sheen): sheen is NonNullable<typeof sheen> => sheen !== null)
+    .map((sheen) => (
+      <radialGradient key={sheen.id} id={sheen.id} cx={sheen.cx} cy={sheen.cy} r={sheen.r}>
+        <stop offset="0%" stopColor="#ffffff" stopOpacity={0.55} />
+        <stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
+      </radialGradient>
+    ));
+
   const gradientFill = (path: VectorPath): string | null =>
     path.fillGradient && path.fillGradient.stops.length >= 2
       ? `url(#${gradientIdFor(path.id)})`
@@ -2011,10 +2333,13 @@ export const Canvas: React.FC<CanvasProps> = ({
   };
 
   const renderGuides = () => {
-    if (!guides.length && !rulerDraft) return null;
+    // Hidden guides keep their positions and stay draggable once shown again;
+    // the draft you pull off a ruler still draws so the gesture has feedback.
+    const shown = guidesVisible ? guides : [];
+    if (!shown.length && !rulerDraft) return null;
     const over = 32 / view.zoom;
     const items: { key: string; axis: 'h' | 'v'; position: number; locked: boolean; draft?: boolean }[] = [
-      ...guides.map((g) => ({
+      ...shown.map((g) => ({
         key: g.id,
         axis: g.axis,
         position: g.position,
@@ -2303,10 +2628,14 @@ export const Canvas: React.FC<CanvasProps> = ({
   /* --------------------------- Precision pad --------------------------- */
   // Pen, nodes and plain selection: the pad is how you aim without covering
   // the thing you are about to grab, so it belongs in Select too.
+  // Shape Builder steers through the pad too: the crosshair moves between the
+  // regions while your thumb stays on the pad, so the mark you are building is
+  // never under a finger.
   const padAvailable =
     (effectiveTool === 'pen' ||
       effectiveTool === 'pencil' ||
       effectiveTool === 'direct-select' ||
+      effectiveTool === 'shape-builder' ||
       effectiveTool === 'select') &&
     showPrecisionPad;
 
@@ -2380,6 +2709,9 @@ export const Canvas: React.FC<CanvasProps> = ({
               clipPathUnits="userSpaceOnUse"
             />
           ))}
+          {imageClipDefs}
+          {effectDefs}
+          {textPathDefs}
           {/* Artboard Shadow */}
           <filter id="artboard-shadow" x="-5%" y="-5%" width="115%" height="115%">
             <feDropShadow dx="0" dy="6" stdDeviation="14" floodColor="#000000" floodOpacity="0.6" />
@@ -2390,6 +2722,7 @@ export const Canvas: React.FC<CanvasProps> = ({
           </clipPath>
           {/* Gradient paints for fills */}
           {gradientDefNodes}
+          {sheenDefNodes}
         </defs>
 
         <g transform={`translate(${view.panX}, ${view.panY}) scale(${view.zoom})`}>
@@ -2405,37 +2738,10 @@ export const Canvas: React.FC<CanvasProps> = ({
             filter="url(#artboard-shadow)"
           />
 
-          {/* Artboard Corner Registration Brackets */}
-          <g className="artboard-corner-brackets pointer-events-none opacity-50">
-            <path d="M -12 0 L 0 0 L 0 -12" stroke={CANVAS.accent} strokeWidth={1.5 / view.zoom} fill="none" />
-            <path d={`M ${view.width + 12} 0 L ${view.width} 0 L ${view.width} -12`} stroke={CANVAS.accent} strokeWidth={1.5 / view.zoom} fill="none" />
-            <path d={`M -12 ${view.height} L 0 ${view.height} L 0 ${view.height + 12}`} stroke={CANVAS.accent} strokeWidth={1.5 / view.zoom} fill="none" />
-            <path d={`M ${view.width + 12} ${view.height} L ${view.width} ${view.height} L ${view.width} ${view.height + 12}`} stroke={CANVAS.accent} strokeWidth={1.5 / view.zoom} fill="none" />
-          </g>
-
-          {/* Artboard Header Badge */}
-          <g className="artboard-header-badge pointer-events-none" transform={`translate(0, ${-22 / view.zoom})`}>
-            <rect
-              x={0}
-              y={0}
-              width={160 / view.zoom}
-              height={18 / view.zoom}
-              rx={4 / view.zoom}
-              fill={CANVAS.ink}
-              stroke={CANVAS.artboardEdge}
-              strokeWidth={1 / view.zoom}
-            />
-            <text
-              x={8 / view.zoom}
-              y={12.5 / view.zoom}
-              fill="#94A3B8"
-              fontSize={10 / view.zoom}
-              fontWeight="bold"
-              fontFamily="system-ui, sans-serif"
-            >
-              Artboard 1 • {view.width} × {view.height} px
-            </text>
-          </g>
+          {/* No corner brackets and no "Artboard 1 • 600 × 600" badge: both read
+              as stray marks sitting on the paper. The artboard is a sheet with a
+              hairline edge, like a drawing tool's — nothing drawn on it but the
+              artwork and the grid the user asked for. */}
 
           {/* Grid */}
           {renderGrid()}
@@ -2454,13 +2760,18 @@ export const Canvas: React.FC<CanvasProps> = ({
                   width={img.width}
                   height={img.height}
                   opacity={img.opacity}
-                  className={img.locked ? 'pointer-events-none' : 'cursor-move'}
+                  className={img.locked ? 'cursor-pointer' : 'cursor-move'}
                   preserveAspectRatio="none"
                   onPointerDown={(e) => {
-                    if (img.locked || !onUpdateReference) return;
+                    // Selecting stays possible while locked — otherwise the only
+                    // way to unlock a reference was the side sheet, and its
+                    // options were unreachable from the canvas.
                     e.stopPropagation();
+                    onSelectReference?.(img.id);
+                    if (img.locked || !onUpdateReference) return;
                     const pt = screenToCanvas(e.clientX, e.clientY);
                     referenceDragRef.current = {
+                      mode: 'move',
                       id: img.id,
                       grab: pt,
                       origin: { x: img.x, y: img.y },
@@ -2518,106 +2829,193 @@ export const Canvas: React.FC<CanvasProps> = ({
                     // Keep the glyphs' own scale/rotation/flip in the same node
                     // as the label, so the visible text and its hitbox agree.
                     const textTransform = `translate(${pt.x} ${pt.y}) ${textMatrixCss(path.textMatrix)}`;
+                    const textPaint =
+                      gradientFill(path) ??
+                      (path.fill && path.fill !== 'none' ? path.fill : CANVAS.accent);
+                    // A live warp places one glyph at a time: the label bends on
+                    // screen and still types, resizes and restyles as one label.
+                    // While the warp panel is being dialled in, the label on
+                    // the artboard bends with it: Apply only decides whether it
+                    // stays. Nothing is written to the document until then.
+                    const previewSpec =
+                      warpPreview && selection.selectedPathIds.includes(path.id)
+                        ? warpPreview
+                        : null;
+                    const warpedGlyphs = warpTextGlyphs(
+                      previewSpec ? { ...path, warp: previewSpec } : path
+                    );
+
+                    const handleTextPress = (e: React.PointerEvent<SVGElement>) => {
+                      // The type tool taps an existing label to re-edit it.
+                      if (effectiveTool === 'text' && onEditText) {
+                        e.stopPropagation();
+                        onSelectionChange({
+                          selectedPathIds: [path.id],
+                          selectedAnchorIndex: null,
+                          selectedHandleType: null,
+                        });
+                        onEditText(path);
+                        return;
+                      }
+                      // Second tap on the same label opens the editor instead
+                      // of dragging it across the artboard.
+                      if (
+                        effectiveTool === 'select' &&
+                        onEditText &&
+                        registerTap(`text:${path.id}`)
+                      ) {
+                        e.stopPropagation();
+                        onSelectionChange({
+                          selectedPathIds: [path.id],
+                          selectedAnchorIndex: null,
+                          selectedHandleType: null,
+                        });
+                        onEditText(path);
+                        return;
+                      }
+                      if (effectiveTool === 'select') {
+                        const isAlready = selection.selectedPathIds.includes(path.id);
+                        const newSelected =
+                          modifiers.shift || modifiers.ctrl
+                            ? isAlready
+                              ? selection.selectedPathIds.filter((id) => id !== path.id)
+                              : [...selection.selectedPathIds, path.id]
+                            : isAlready
+                              ? selection.selectedPathIds
+                              : [path.id];
+
+                        onSelectionChange({
+                          selectedPathIds: newSelected,
+                          selectedAnchorIndex: null,
+                          selectedHandleType: null,
+                        });
+
+                        const pathsToDrag = allPaths.filter((p) => newSelected.includes(p.id));
+                        const pathsBBox = computePathsBoundingBox(pathsToDrag);
+
+                        startDragOperation(e, {
+                          type: 'path',
+                          pathId: path.id,
+                          initialBBox: pathsBBox || undefined,
+                          initialSelectedPaths: JSON.parse(
+                            JSON.stringify(expandWithClipSources(pathsToDrag))
+                          ),
+                        });
+                      }
+                    };
 
                     return (
-                      <g key={path.id} opacity={path.opacity ?? 1} clipPath={clipPath}>
-                        {/* Text Hitbox */}
-                        <text
-                          x={0}
-                          y={0}
-                          transform={textTransform}
-                          fill="transparent"
-                          pointerEvents={pathLocked ? 'none' : undefined}
-                          stroke="transparent"
-                          strokeWidth={20 / view.zoom}
-                          fontSize={fontSize}
-                          fontFamily={fontFamily}
-                          fontWeight={fontWeight}
-                          letterSpacing={path.letterSpacing ?? 0}
-                          className={effectiveTool === 'select' ? 'cursor-move' : 'cursor-pointer'}
-                          onPointerDown={(e) => {
-                            // The type tool taps an existing label to re-edit it.
-                            if (effectiveTool === 'text' && onEditText) {
-                              e.stopPropagation();
-                              onSelectionChange({
-                                selectedPathIds: [path.id],
-                                selectedAnchorIndex: null,
-                                selectedHandleType: null,
-                              });
-                              onEditText(path);
-                              return;
-                            }
-                            // Second tap on the same label opens the editor instead
-                            // of dragging it across the artboard.
-                            if (
-                              effectiveTool === 'select' &&
-                              onEditText &&
-                              registerTap(`text:${path.id}`)
-                            ) {
-                              e.stopPropagation();
-                              onSelectionChange({
-                                selectedPathIds: [path.id],
-                                selectedAnchorIndex: null,
-                                selectedHandleType: null,
-                              });
-                              onEditText(path);
-                              return;
-                            }
-                            if (effectiveTool === 'select') {
-                              const isAlready = selection.selectedPathIds.includes(path.id);
-                              let newSelected = modifiers.shift || modifiers.ctrl
-                                ? (isAlready ? selection.selectedPathIds.filter((id) => id !== path.id) : [...selection.selectedPathIds, path.id])
-                                : (isAlready ? selection.selectedPathIds : [path.id]);
+                      <g
+                        key={path.id}
+                        opacity={path.opacity ?? 1}
+                        clipPath={clipPath}
+                        filter={
+                          hasVisibleBlur(path.blur) ? `url(#${blurFilterId(path.id)})` : undefined
+                        }
+                      >
+                        {warpedGlyphs ? (
+                          <>
+                            {/* Warped hitbox: one transparent letter per glyph so
+                                taps land on the type wherever the bend put it. */}
+                            <g
+                              onPointerDown={handleTextPress}
+                              pointerEvents={pathLocked ? 'none' : undefined}
+                              className={
+                                effectiveTool === 'select' ? 'cursor-move' : 'cursor-pointer'
+                              }
+                            >
+                              {warpedGlyphs.map((glyph, index) => (
+                                <text
+                                  key={`hit-${index}`}
+                                  transform={glyph.transform}
+                                  fill="transparent"
+                                  stroke="transparent"
+                                  strokeWidth={20 / view.zoom}
+                                  fontSize={fontSize}
+                                  fontFamily={fontFamily}
+                                  fontWeight={fontWeight}
+                                >
+                                  {glyph.char}
+                                </text>
+                              ))}
+                            </g>
+                            {warpedGlyphs.map((glyph, index) => (
+                              <text
+                                key={`ink-${index}`}
+                                transform={glyph.transform}
+                                fill={textPaint}
+                                fillOpacity={path.fillOpacity ?? 1}
+                                stroke={path.stroke !== 'none' ? path.stroke : undefined}
+                                strokeWidth={path.strokeWidth}
+                                fontSize={fontSize}
+                                fontFamily={fontFamily}
+                                fontWeight={fontWeight}
+                                className="pointer-events-none select-none"
+                              >
+                                {glyph.char}
+                              </text>
+                            ))}
+                          </>
+                        ) : (
+                          <>
+                            {/* Text Hitbox */}
+                            <text
+                              x={0}
+                              y={0}
+                              transform={textTransform}
+                              fill="transparent"
+                              pointerEvents={pathLocked ? 'none' : undefined}
+                              stroke="transparent"
+                              strokeWidth={20 / view.zoom}
+                              fontSize={fontSize}
+                              fontFamily={fontFamily}
+                              fontWeight={fontWeight}
+                              letterSpacing={path.letterSpacing ?? 0}
+                              className={
+                                effectiveTool === 'select' ? 'cursor-move' : 'cursor-pointer'
+                              }
+                              onPointerDown={handleTextPress}
+                            >
+                              {lines.map((line, index) => (
+                                <tspan key={index} x={path.textLineX?.[index] ?? 0} dy={index === 0 ? 0 : lineHeight}>
+                                  {line || ' '}
+                                </tspan>
+                              ))}
+                            </text>
 
-                              onSelectionChange({
-                                selectedPathIds: newSelected,
-                                selectedAnchorIndex: null,
-                                selectedHandleType: null,
-                              });
-
-                              const pathsToDrag = allPaths.filter((p) => newSelected.includes(p.id));
-                              const pathsBBox = computePathsBoundingBox(pathsToDrag);
-
-                              startDragOperation(e, {
-                                type: 'path',
-                                pathId: path.id,
-                                initialBBox: pathsBBox || undefined,
-                                initialSelectedPaths: JSON.parse(JSON.stringify(pathsToDrag)),
-                              });
-                            }
-                          }}
-                        >
-                          {lines.map((line, index) => (
-                            <tspan key={index} x={0} dy={index === 0 ? 0 : lineHeight}>
-                              {line || ' '}
-                            </tspan>
-                          ))}
-                        </text>
-
-                        {/* Visible Text */}
-                        <text
-                          x={0}
-                          y={0}
-                          transform={textTransform}
-                          fill={
-                            gradientFill(path) ??
-                            (path.fill && path.fill !== 'none' ? path.fill : CANVAS.accent)
-                          }
-                          fillOpacity={path.fillOpacity ?? 1}
-                          stroke={path.stroke !== 'none' ? path.stroke : undefined}
-                          strokeWidth={path.strokeWidth}
-                          fontSize={fontSize}
-                          fontFamily={fontFamily}
-                          fontWeight={fontWeight}
-                          letterSpacing={path.letterSpacing ?? 0}
-                          className="pointer-events-none select-none"
-                        >
-                          {lines.map((line, index) => (
-                            <tspan key={index} x={0} dy={index === 0 ? 0 : lineHeight}>
-                              {line || ' '}
-                            </tspan>
-                          ))}
-                        </text>
+                            {/* Visible Text */}
+                            <text
+                              x={0}
+                              y={0}
+                              transform={path.textPath ? undefined : textTransform}
+                              dy={path.textPath ? textPathDy(path) : undefined}
+                              fill={textPaint}
+                              fillOpacity={path.fillOpacity ?? 1}
+                              stroke={path.stroke !== 'none' ? path.stroke : undefined}
+                              strokeWidth={path.strokeWidth}
+                              fontSize={fontSize}
+                              fontFamily={fontFamily}
+                              fontWeight={fontWeight}
+                              letterSpacing={path.letterSpacing ?? 0}
+                              className="pointer-events-none select-none"
+                            >
+                              {path.textPath ? (
+                                <textPath
+                                  href={`#${textPathSourceId(path.id)}`}
+                                  startOffset={`${path.textPath.offset ?? 0}%`}
+                                >
+                                  {lines.filter(Boolean).join(' ')}
+                                </textPath>
+                              ) : (
+                                lines.map((line, index) => (
+                                  <tspan key={index} x={path.textLineX?.[index] ?? 0} dy={index === 0 ? 0 : lineHeight}>
+                                    {line || ' '}
+                                  </tspan>
+                                ))
+                              )}
+                            </text>
+                          </>
+                        )}
                       </g>
                     );
                   }
@@ -2681,7 +3079,9 @@ export const Canvas: React.FC<CanvasProps> = ({
                             startDragOperation(e, {
                               type: 'path',
                               pathId: path.id,
-                              initialSelectedPaths: JSON.parse(JSON.stringify(pathsToDrag)),
+                              initialSelectedPaths: JSON.parse(
+                                JSON.stringify(expandWithClipSources(pathsToDrag))
+                              ),
                             });
                           }
                         }}
@@ -2689,16 +3089,52 @@ export const Canvas: React.FC<CanvasProps> = ({
                     );
                   }
 
-                  const pathD = pathToSvgD(path);
+                  // Same source, same box, same maths as Apply — what the
+                  // artboard shows while dialling Amount is what gets written.
+                  const previewShape = warpPreviewShapes?.get(path.id) ?? path;
+                  const pathD = pathToSvgD(previewShape);
                   if (!pathD) return null;
+                  // A tilted solid's face is its own projected geometry, not the
+                  // flat artwork; everything painted for that face has to agree.
+                  const extrudeFrontD = extrusionFrontPath(path);
+                  const faceD = extrudeFrontD ?? pathD;
 
                   return (
-                    <g key={path.id} opacity={path.opacity ?? 1} clipPath={clipPath}>
+                    <g
+                      key={path.id}
+                      opacity={path.opacity ?? 1}
+                      clipPath={clipPath}
+                      filter={
+                        hasVisibleBlur(path.blur) ? `url(#${blurFilterId(path.id)})` : undefined
+                      }
+                    >
+                      {/* Image paint sits inside the object's outline; the hit
+                          box below still owns every pointer event. */}
+                      {path.image &&
+                        (() => {
+                          const imageBox = computePathsBoundingBox([path]);
+                          if (!imageBox) return null;
+                          return (
+                            <image
+                              href={path.image.url}
+                              x={imageBox.minX}
+                              y={imageBox.minY}
+                              width={imageBox.width}
+                              height={imageBox.height}
+                              preserveAspectRatio="xMidYMid slice"
+                              clipPath={`url(#${imageClipIdFor(path.id)})`}
+                              className="pointer-events-none"
+                            />
+                          );
+                        })()}
                       {/* Generous touch hitbox. Closed shapes also catch taps inside
                           their fill, so the object you see on top is the one you
-                          select — interior taps used to fall through to objects behind. */}
+                          select — interior taps used to fall through to objects behind.
+                          It follows the painted face, because a tilted solid is not
+                          where its flat artwork was. */}
                       <path
-                        d={pathD}
+                        d={faceD}
+                        data-path-id={path.id}
                         fill={path.closed ? 'transparent' : 'none'}
                         stroke="transparent"
                         pointerEvents={pathLocked ? 'none' : undefined}
@@ -2754,7 +3190,9 @@ export const Canvas: React.FC<CanvasProps> = ({
                               type: 'path',
                               pathId: path.id,
                               initialBBox: pathsBBox || undefined,
-                              initialSelectedPaths: JSON.parse(JSON.stringify(pathsToDrag)),
+                              initialSelectedPaths: JSON.parse(
+                                JSON.stringify(expandWithClipSources(pathsToDrag))
+                              ),
                             });
                           }
                         }}
@@ -2780,7 +3218,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                                   opacity={shadow.opacity}
                                   clipPath={clipPath}
                                 >
-                                  <path d={pathD} fill="#000" />
+                                  <path d={faceD} fill="#000" />
                                   <path d={shadow.d} fill="#000" />
                                 </g>
                               </>
@@ -2806,14 +3244,20 @@ export const Canvas: React.FC<CanvasProps> = ({
 
                       {/* Visible rendered path */}
                       <path
-                        d={pathD}
+                        d={faceD}
                         fill={
-                          path.closed
-                            ? gradientFill(path) ?? (path.fill !== 'none' ? path.fill : 'none')
+                          // Illustrator fills an open path just like a closed
+                          // one; requiring "closed" made a pencil line drawn
+                          // with a fill colour disappear entirely.
+                          !path.image &&
+                          (path.closed || !!path.pattern || !!gradientFill(path) || path.fill !== 'none')
+                            ? path.pattern
+                              ? `url(#${patternIdFor(path.id)})`
+                              : gradientFill(path) ?? (path.fill !== 'none' ? path.fill : 'none')
                             : 'none'
                         }
                         fillOpacity={path.fillOpacity}
-                        fillRule="evenodd"
+                        fillRule={path.fillRule ?? 'evenodd'}
                         stroke={path.stroke !== 'none' ? path.stroke : 'transparent'}
                         strokeWidth={path.strokeWidth}
                         strokeOpacity={path.strokeOpacity}
@@ -2824,10 +3268,24 @@ export const Canvas: React.FC<CanvasProps> = ({
                         }`}
                       />
 
+                      {/* Front-face sheen: the lit side of the solid */}
+                      {(() => {
+                        const sheen = extrusionSheen(path);
+                        if (!sheen) return null;
+                        return (
+                          <path
+                            d={faceD}
+                            fill={`url(#${sheen.id})`}
+                            opacity={sheen.opacity}
+                            className="pointer-events-none"
+                          />
+                        );
+                      })()}
+
                       {/* Selection Outline when not in transform mode */}
                       {isSelected && effectiveTool !== 'select' && (
                         <path
-                          d={pathD}
+                          d={faceD}
                           fill="none"
                           stroke={CANVAS.accent}
                           strokeWidth={2 / view.zoom}
@@ -2857,6 +3315,73 @@ export const Canvas: React.FC<CanvasProps> = ({
                 />
               </g>
             )}
+
+          {/* Reference image picked on the canvas: bounds, plus resize corners
+              while it is unlocked. Locking it leaves only the bounds. */}
+          {selectedReference && selectedReference.visible && (
+            <g className="reference-selection">
+              <rect
+                x={selectedReference.x}
+                y={selectedReference.y}
+                width={selectedReference.width}
+                height={selectedReference.height}
+                fill="none"
+                stroke={selectedReference.locked ? CANVAS.grid : CANVAS.accent}
+                strokeWidth={1.6 / view.zoom}
+                strokeDasharray={`${6 / view.zoom} ${4 / view.zoom}`}
+                className="pointer-events-none"
+              />
+              {!selectedReference.locked &&
+                (
+                  [
+                    { id: 'tl', x: selectedReference.x, y: selectedReference.y, cursor: 'nwse-resize' },
+                    { id: 'tr', x: selectedReference.x + selectedReference.width, y: selectedReference.y, cursor: 'nesw-resize' },
+                    { id: 'bl', x: selectedReference.x, y: selectedReference.y + selectedReference.height, cursor: 'nesw-resize' },
+                    { id: 'br', x: selectedReference.x + selectedReference.width, y: selectedReference.y + selectedReference.height, cursor: 'nwse-resize' },
+                  ] as const
+                ).map((handle) => (
+                  <g key={`ref-handle-${handle.id}`}>
+                    <circle
+                      cx={handle.x}
+                      cy={handle.y}
+                      r={18 / view.zoom}
+                      fill="transparent"
+                      style={{ cursor: handle.cursor }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        const pt = screenToCanvas(e.clientX, e.clientY);
+                        referenceDragRef.current = {
+                          mode: 'scale',
+                          id: selectedReference.id,
+                          corner: handle.id,
+                          grab: pt,
+                          origin: {
+                            x: selectedReference.x,
+                            y: selectedReference.y,
+                            width: selectedReference.width,
+                            height: selectedReference.height,
+                          },
+                        };
+                        try {
+                          (e.target as Element).setPointerCapture?.(e.pointerId);
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                    />
+                    <circle
+                      cx={handle.x}
+                      cy={handle.y}
+                      r={6 / view.zoom}
+                      fill="#FFFFFF"
+                      stroke={CANVAS.accent}
+                      strokeWidth={2 / view.zoom}
+                      className="pointer-events-none"
+                    />
+                  </g>
+                ))}
+            </g>
+          )}
 
           {/* Active Path in progress */}
           {activePathInProgress && (
@@ -3032,11 +3557,35 @@ export const Canvas: React.FC<CanvasProps> = ({
                 onPointerDown={(e) => {
                   startDragOperation(e, {
                     type: 'path',
-                    initialBBox: selectedBBox,
-                    initialSelectedPaths: JSON.parse(JSON.stringify(selectedPaths)),
+                    initialBBox: selectedBBox,                        initialSelectedPaths: JSON.parse(
+                          JSON.stringify(expandWithClipSources(selectedPaths))
+                        ),
                   });
                 }}
               />
+
+              {/* Multi-selection: hairline per object, the way a drawing tool
+                  shows every piece. One outer box made a split object still read
+                  as a single shape. */}
+              {selectedPaths.length > 1 &&
+                selectedPaths.length <= 60 &&
+                selectedPaths.map((object) => {
+                  const box = computePathsBoundingBox([object]);
+                  if (!box) return null;
+                  return (
+                    <rect
+                      key={`object-box-${object.id}`}
+                      x={box.minX}
+                      y={box.minY}
+                      width={box.width}
+                      height={box.height}
+                      fill="none"
+                      stroke={CANVAS.accent}
+                      strokeWidth={1.2 / view.zoom}
+                      pointerEvents="none"
+                    />
+                  );
+                })}
 
               {/* Rotation Handle Stem */}
               <line
@@ -3065,7 +3614,9 @@ export const Canvas: React.FC<CanvasProps> = ({
                       type: 'rotate-handle',
                       initialPoint: pt,
                       initialBBox: selectedBBox,
-                      initialSelectedPaths: JSON.parse(JSON.stringify(selectedPaths)),
+                      initialSelectedPaths: JSON.parse(
+                        JSON.stringify(expandWithClipSources(selectedPaths))
+                      ),
                     });
                   }}
                 />
@@ -3104,7 +3655,9 @@ export const Canvas: React.FC<CanvasProps> = ({
                         type: 'transform-handle',
                         transformHandle: h.id as HandleType,
                         initialBBox: selectedBBox,
-                        initialSelectedPaths: JSON.parse(JSON.stringify(selectedPaths)),
+                        initialSelectedPaths: JSON.parse(
+                        JSON.stringify(expandWithClipSources(selectedPaths))
+                      ),
                       });
                     }}
                   />
@@ -3211,6 +3764,22 @@ export const Canvas: React.FC<CanvasProps> = ({
                 );
               })}
 
+              {/* The shape you are about to get, drawn while you build it. */}
+              {sbUnionPreviewD && (
+                <path
+                  d={sbUnionPreviewD}
+                  fill={
+                    modifiers.alt || sbMode === 'erase'
+                      ? 'rgba(255, 107, 107, 0.18)'
+                      : 'rgba(205, 255, 92, 0.18)'
+                  }
+                  stroke={modifiers.alt || sbMode === 'erase' ? CANVAS.erase : CANVAS.accent}
+                  strokeWidth={2.5 / view.zoom}
+                  strokeLinejoin="round"
+                  className="pointer-events-none shape-builder-result"
+                />
+              )}
+
               {/* Illustrator Signature Connecting Drag Trail Polyline */}
               {sbDragPoints.length >= 2 && (
                 <polyline
@@ -3269,11 +3838,17 @@ export const Canvas: React.FC<CanvasProps> = ({
                   {path.points.map((pt, idx) => {
                     const isAnchorSelected =
                       selection.selectedPathIds[0] === path.id && selectedAnchors.includes(idx);
+                    // Handles belong to the node you are working on. A converted
+                    // glyph has thirty-odd nodes, each with two handles, so drawing
+                    // them all turned a letter into a field of dots; the node you
+                    // tap is the one whose curve arms open.
+                    const showHandles =
+                      isAnchorSelected || (!!activePathInProgress && activePathInProgress.id === path.id);
 
                     return (
                       <g key={pt.id}>
                         {/* Incoming Handle */}
-                        {pt.handleIn && (
+                        {showHandles && pt.handleIn && (
                           <g>
                             <line
                               x1={pt.x}
@@ -3297,7 +3872,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         )}
 
                         {/* Outgoing Handle */}
-                        {pt.handleOut && (
+                        {showHandles && pt.handleOut && (
                           <g>
                             <line
                               x1={pt.x}
@@ -3357,7 +3932,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         {/* Curve handles are grabbed from here, after the anchor
                             hitbox, so a handle sitting close to its node still
                             catches the finger instead of losing to the node */}
-                        {pt.handleIn && (
+                        {showHandles && pt.handleIn && (
                           <circle
                             cx={pt.handleIn.x}
                             cy={pt.handleIn.y}
@@ -3397,7 +3972,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                             }}
                           />
                         )}
-                        {pt.handleOut && (
+                        {showHandles && pt.handleOut && (
                           <circle
                             cx={pt.handleOut.x}
                             cy={pt.handleOut.y}
@@ -3436,17 +4011,31 @@ export const Canvas: React.FC<CanvasProps> = ({
                           />
                         )}
 
-                        {/* Anchor Node (Clean static square, NO pulsing animation) */}
-                        <rect
-                          x={pt.x - 5 / view.zoom}
-                          y={pt.y - 5 / view.zoom}
-                          width={10 / view.zoom}
-                          height={10 / view.zoom}
-                          fill={isAnchorSelected ? CANVAS.nodeActive : CANVAS.node}
-                          stroke={CANVAS.ink}
-                          strokeWidth={2 / view.zoom}
-                          className="pointer-events-none shadow-md"
-                        />
+                        {/* Anchor Node — a square where the curve breaks, a
+                            circle where it carries on through. The shape is
+                            the only cue you get that a node is a corner. */}
+                        {pt.type === 'corner' || pt.type === 'broken' ? (
+                          <rect
+                            x={pt.x - 5 / view.zoom}
+                            y={pt.y - 5 / view.zoom}
+                            width={10 / view.zoom}
+                            height={10 / view.zoom}
+                            fill={isAnchorSelected ? CANVAS.nodeActive : CANVAS.node}
+                            stroke={CANVAS.ink}
+                            strokeWidth={2 / view.zoom}
+                            className="pointer-events-none shadow-md"
+                          />
+                        ) : (
+                          <circle
+                            cx={pt.x}
+                            cy={pt.y}
+                            r={5 / view.zoom}
+                            fill={isAnchorSelected ? CANVAS.nodeActive : CANVAS.node}
+                            stroke={CANVAS.ink}
+                            strokeWidth={2 / view.zoom}
+                            className="pointer-events-none shadow-md"
+                          />
+                        )}
 
                         {/* The node a tap removes — the badge is also the button */}
                         {nodeTargetPath?.id === path.id && deleteNodeHintIndex === idx && (
@@ -3798,13 +4387,65 @@ export const Canvas: React.FC<CanvasProps> = ({
               type="button"
               onClick={openPad}
               aria-label="Open precision pad: steer a crosshair instead of covering a node or an object with your finger"
-              className="press absolute bottom-2 left-1/2 z-20 flex h-9 -translate-x-1/2 items-center gap-1.5 rounded-full border border-line bg-ink-2/85 px-3 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-dim shadow-lg shadow-black/40 backdrop-blur"
+              title="Precision pad"
+              className="press absolute bottom-2 left-1/2 z-20 grid h-9 w-9 -translate-x-1/2 place-items-center rounded-md border border-line bg-ink-2 text-dim hover:border-line-strong hover:text-text"
             >
               <PadGlyph />
-              Pad
             </button>
           )}
         </>
+      )}
+
+      {/* Shape builder build bar. Taps collect regions and this commits them, so
+          a thumb never has to drag across the artwork to finish a build. */}
+      {tool === 'shape-builder' && atomicRegions.length > 0 && (
+        <div className="absolute left-1/2 top-9 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full border border-line bg-ink-2/90 p-1 shadow-lg shadow-black/30 backdrop-blur">
+          <button
+            type="button"
+            aria-label="Build mode: merge"
+            aria-pressed={sbMode === 'merge'}
+            onClick={() => onChangeSbMode?.('merge')}
+            className={`press h-7 rounded-full px-2.5 font-sans text-[9px] font-bold uppercase tracking-wider ${
+              sbMode === 'merge' ? 'bg-accent text-ink-0' : 'text-dim'
+            }`}
+          >
+            Merge
+          </button>
+          <button
+            type="button"
+            aria-label="Build mode: erase"
+            aria-pressed={sbMode === 'erase'}
+            onClick={() => onChangeSbMode?.('erase')}
+            className={`press h-7 rounded-full px-2.5 font-sans text-[9px] font-bold uppercase tracking-wider ${
+              sbMode === 'erase' ? 'bg-accent text-ink-0' : 'text-dim'
+            }`}
+          >
+            Erase
+          </button>
+          <button
+            type="button"
+            aria-label="Commit the collected regions"
+            disabled={sbSelectedRegionIds.length === 0}
+            onClick={() =>
+              applyShapeBuilder(modifiers.alt || sbMode === 'erase' ? 'erase' : 'merge')
+            }
+            className="press h-7 rounded-full bg-ink-3 px-2.5 font-sans text-[9px] font-bold uppercase tracking-wider text-text disabled:opacity-40"
+          >
+            Build{sbSelectedRegionIds.length > 0 ? ` ${sbSelectedRegionIds.length}` : ''}
+          </button>
+          <button
+            type="button"
+            aria-label="Clear the collected regions"
+            disabled={sbSelectedRegionIds.length === 0}
+            onClick={() => {
+              setSbSelectedRegionIds([]);
+              setSbDragPoints([]);
+            }}
+            className="press grid h-7 w-7 place-items-center rounded-full text-mute hover:text-text disabled:opacity-30"
+          >
+            <span className="text-[13px] leading-none">×</span>
+          </button>
+        </div>
       )}
     </div>
   );

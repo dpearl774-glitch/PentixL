@@ -1,15 +1,35 @@
 import { Layer, PressureConfig, VectorPath } from '../types/vector';
 import { CANVAS } from '../theme';
-import { textLineHeight, textLines, textMatrixCss } from './textGeometry';
+import { textLineHeight, textLines, textMatrixCss, textWorldBox } from './textGeometry';
+import { warpTextGlyphs } from './textWarp';
+import { warpPathsInBox } from './warp';
+import { textPathDy, textPathSource } from './textPath';
 import { pathToSvgD, generateVariableStrokePolygon } from './bezier';
 import { gradientMarkup } from './gradients';
 import { expandTextToVectorPaths } from './contourTracer';
-import { extrusionFaces, extrusionShadow } from './extrusion';
+import { outlineLayoutText } from './textOutlineConversion';
+import {
+  extrusionFaces,
+  extrusionFrontPath,
+  extrusionShadow,
+  extrusionSheen,
+} from './extrusion';
 import {
   clipPathIdFor,
   clippingUrlFor,
   collectClippingMasks,
+  imageClipIdFor,
 } from './clipping';
+import { computePathsBoundingBox } from './transform';
+import {
+  blurFilterId,
+  blurFilterMarkup,
+  hasVisibleBlur,
+  isPatternPreviewPath,
+  patternIdFor,
+  patternMarkup,
+  textPathSourceId,
+} from './effects';
 
 /** Gradient paint id used by both the editor and the exported markup. */
 export function gradientIdFor(pathId: string): string {
@@ -53,6 +73,14 @@ export function generateSvgCode(
   const { width, height, includeBackground, backgroundColor, monoColor, pathIds, crop, outlineText = false } = options;
   const onlyIds = pathIds ? new Set(pathIds) : null;
 
+  // The pattern preview rectangle is scaffolding for looking at a tiling. It is
+  // on the canvas, not in the artwork, so it never reaches a file.
+  layers = layers.map((layer) =>
+    layer.paths.some((path) => isPatternPreviewPath(path))
+      ? { ...layer, paths: layer.paths.filter((path) => !isPatternPreviewPath(path)) }
+      : layer
+  );
+
   const viewX = crop ? crop.x : 0;
   const viewY = crop ? crop.y : 0;
   const viewW = crop ? crop.width : width;
@@ -90,6 +118,36 @@ export function generateSvgCode(
     );
   }
 
+  // An image-painted object carries its own clip: the photo is cropped to the
+  // outline, and then to whatever mask the object also references.
+  const imageClipDefs: string[] = [];
+  for (const layer of layers) {
+    if (!layer.visible) continue;
+    for (const path of layer.paths) {
+      if (!path.image || !isVisible(path)) continue;
+      if (onlyIds && !onlyIds.has(path.id)) continue;
+      const d = pathToSvgD(path);
+      if (!d) continue;
+      imageClipDefs.push(
+        `    <clipPath id="${imageClipIdFor(path.id)}" clipPathUnits="userSpaceOnUse"><path d="${d}" fill-rule="evenodd" /></clipPath>`
+      );
+    }
+  }
+
+  // Blur filters and tiled pattern paints, per object.
+  const effectDefs: string[] = [];
+  for (const layer of layers) {
+    if (!layer.visible) continue;
+    for (const path of layer.paths) {
+      if (!isVisible(path)) continue;
+      if (onlyIds && !onlyIds.has(path.id)) continue;
+      const blur = blurFilterMarkup(path);
+      if (blur) effectDefs.push(blur);
+      const pattern = patternMarkup(path);
+      if (pattern) effectDefs.push(pattern);
+    }
+  }
+
   // A one-colour export is flattened paint, so gradients are left out entirely.
   const gradientDefs: string[] = [];
   if (!monoColor) {
@@ -104,8 +162,8 @@ export function generateSvgCode(
       }
     }
   }
-  if (gradientDefs.length || clipDefs.length) {
-    content += `  <defs>\n${[...clipDefs, ...gradientDefs].join('\n')}\n  </defs>\n`;
+  if (gradientDefs.length || clipDefs.length || imageClipDefs.length || effectDefs.length) {
+    content += `  <defs>\n${[...clipDefs, ...imageClipDefs, ...effectDefs, ...gradientDefs].join('\n')}\n  </defs>\n`;
   }
 
   for (const layer of layers) {
@@ -122,6 +180,9 @@ export function generateSvgCode(
       const objectAlpha = path.opacity ?? 1;
       const clipUrl = clippingUrlFor(path);
       const clipAttr = clipUrl ? `clip-path="${clipUrl}"` : '';
+      const filterAttr = hasVisibleBlur(path.blur)
+        ? ` filter="url(#${blurFilterId(path.id)})"`
+        : '';
 
       // Live text objects export as <text> so the string stays editable
       if (path.text) {
@@ -132,8 +193,42 @@ export function generateSvgCode(
             ? `url(#${gradientIdFor(path.id)})`
             : path.fill === 'none'
               ? 'none'
-              : path.fill;        if (outlineText) {
-          const outlined = expandTextToVectorPaths(path.text, {
+              : path.fill;        // A baked label on a path has to be laid along that path; when the
+        // type is not being baked it exports as live <textPath> instead.
+        const bakedLayout = outlineText
+          ? outlineLayoutText(
+              path,
+              (id) =>
+                layers.flatMap((layer) => layer.paths).find((candidate) => candidate.id === id) ??
+                null
+            )
+          : null;
+        // Type on a path exports as <textPath> over the outline it follows.
+        if (path.textPath && !bakedLayout) {
+          const target = layers
+            .flatMap((layer) => layer.paths)
+            .find((candidate) => candidate.id === path.textPath!.pathId);
+          const targetD = target ? pathToSvgD(textPathSource(path, target)) : '';
+          if (targetD) {
+            content += `    <defs><path id="${textPathSourceId(path.id)}" d="${targetD}" transform="translate(${(
+              -origin.x
+            ).toFixed(2)} ${(-origin.y).toFixed(2)})" /></defs>\n`;
+            content += `    <text id="text-${path.id}" transform="translate(${origin.x.toFixed(
+              2
+            )} ${origin.y.toFixed(2)})${textMatrixCss(path.textMatrix).startsWith('matrix(') ? ' ' : ''}" font-family="${escapeXml(
+              path.fontFamily || 'sans-serif'
+            )}" font-size="${path.fontSize || 64}" font-weight="${path.fontWeight || 'bold'}"${
+              path.letterSpacing ? ` letter-spacing="${path.letterSpacing.toFixed(2)}"` : ''
+            } fill="${escapeXml(fillValue)}" fill-opacity="${(monoColor ? 1 : (path.fillOpacity ?? 1) * objectAlpha).toFixed(
+              2
+            )}">${textPathDy(path) ? ` dy="${textPathDy(path).toFixed(2)}"` : ''}<textPath href="#${textPathSourceId(path.id)}" startOffset="${(
+              path.textPath.offset ?? 0
+            ).toFixed(2)}%">${escapeXml(path.text)}</textPath></text>\n`;
+            continue;
+          }
+        }
+        if (outlineText) {
+          let outlined = bakedLayout ?? expandTextToVectorPaths(path.text, {
             fontSize: path.fontSize,
             fontFamily: path.fontFamily,
             fontWeight: path.fontWeight,
@@ -145,10 +240,16 @@ export function generateSvgCode(
             originY: origin.y,
             matrix: path.textMatrix,
           });
+          if (path.warp) {
+            // A live warp only becomes geometry when the export has to outline
+            // the type, so the curves bend exactly like the screen.
+            const warpBox = textWorldBox(path);
+            if (warpBox) outlined = warpPathsInBox(outlined, warpBox, path.warp);
+          }
           for (const outline of outlined) {
             const d = pathToSvgD(outline);
             if (!d) continue;
-            content += `    <path d="${d}" fill-rule="evenodd" fill="${escapeXml(
+            content += `    <path d="${d}" fill-rule="${outline.fillRule ?? 'evenodd'}" fill="${escapeXml(
               monoColor ?? outline.fill
             )}" fill-opacity="${(monoColor ? 1 : (outline.fillOpacity ?? 1) * objectAlpha).toFixed(2)}" stroke="${escapeXml(
               monoColor ?? outline.stroke
@@ -156,6 +257,29 @@ export function generateSvgCode(
           }
           continue;
         }
+        // A warped label keeps its type: one <text> per glyph, placed along the
+        // bend, so the exported file stays editable and crisp.
+        const warpGlyphs = warpTextGlyphs(path);
+        if (warpGlyphs) {
+          const glyphPaint = [
+            `font-family="${escapeXml(path.fontFamily || 'sans-serif')}"`,
+            `font-size="${path.fontSize || 64}"`,
+            `font-weight="${path.fontWeight || 'bold'}"`,
+            `fill="${escapeXml(fillValue)}"`,
+            `fill-opacity="${(monoColor ? 1 : (path.fillOpacity ?? 1) * objectAlpha).toFixed(2)}"`,
+            path.stroke !== 'none' && path.strokeWidth > 0
+              ? `stroke="${escapeXml(monoColor ?? path.stroke)}" stroke-width="${path.strokeWidth}"`
+              : '',
+            clipAttr,
+          ]
+            .filter(Boolean)
+            .join(' ');
+          for (const glyph of warpGlyphs) {
+            content += `    <text transform="${glyph.transform}" ${glyphPaint}>${escapeXml(glyph.char)}</text>\n`;
+          }
+          continue;
+        }
+
         const attrs = [
           `x="0"`,
           `y="0"`,
@@ -177,7 +301,7 @@ export function generateSvgCode(
         const body = textLines(path.text)
           .map(
             (line, index) =>
-              `<tspan x="0" dy="${index === 0 ? 0 : lineHeight.toFixed(2)}">${escapeXml(line || ' ')}</tspan>`
+              `<tspan x="${path.textLineX?.[index] ?? 0}" dy="${index === 0 ? 0 : lineHeight.toFixed(2)}">${escapeXml(line || ' ')}</tspan>`
           )
           .join('');
         content += `    <text id="path-${path.id}" ${attrs}>${body}</text>\n`;
@@ -202,11 +326,33 @@ export function generateSvgCode(
       const d = pathToSvgD(path);
       if (!d) continue;
 
+      // Image paint exports as a raster element cropped to the geometry.
+      if (path.image) {
+        const imageBox = computePathsBoundingBox([path]);
+        if (imageBox) {
+          const alpha = path.opacity ?? 1;
+          const tag = `    <image href="${escapeXml(path.image.url)}" x="${imageBox.minX.toFixed(
+            2
+          )}" y="${imageBox.minY.toFixed(2)}" width="${imageBox.width.toFixed(
+            2
+          )}" height="${imageBox.height.toFixed(2)}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${imageClipIdFor(
+            path.id
+          )})"${alpha < 1 ? ` opacity="${alpha.toFixed(2)}"` : ''}${
+            clipAttr ? ` ${clipAttr}` : ''
+          }${filterAttr} />`;
+          content += `${tag}\n`;
+        }
+        continue;
+      }
+
+      // A tilted solid paints its projected face, exactly as the editor does.
+      const faceD = extrusionFrontPath(path) ?? d;
+
       if (!monoColor) {
         const shadow = extrusionShadow(path);
         if (shadow) {
           content += `    <defs><filter id="${shadow.id}" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="${shadow.blur.toFixed(2)}" /></filter></defs>\n`;
-          content += `    <g id="extrude-shadow-${path.id}" transform="translate(${shadow.dx.toFixed(2)} ${shadow.dy.toFixed(2)})" filter="url(#${shadow.id})" opacity="${shadow.opacity}"><path d="${d}" fill="#000" /><path d="${shadow.d}" fill="#000" /></g>\n`;
+          content += `    <g id="extrude-shadow-${path.id}" transform="translate(${shadow.dx.toFixed(2)} ${shadow.dy.toFixed(2)})" filter="url(#${shadow.id})" opacity="${shadow.opacity}"><path d="${faceD}" fill="#000" /><path d="${shadow.d}" fill="#000" /></g>\n`;
         }
         const faces = extrusionFaces(path);
         if (faces.length > 0) {
@@ -224,7 +370,9 @@ export function generateSvgCode(
         ? path.closed
           ? `fill="${monoColor}" fill-opacity="1"`
           : `fill="none"`
-        : path.closed && path.fillGradient && path.fillGradient.stops.length >= 2
+        : path.closed && path.pattern
+          ? `fill="url(#${patternIdFor(path.id)})" fill-opacity="${(path.fillOpacity * objectAlpha).toFixed(2)}"`
+          : path.closed && path.fillGradient && path.fillGradient.stops.length >= 2
           ? `fill="url(#${gradientIdFor(path.id)})" fill-opacity="${(path.fillOpacity * objectAlpha).toFixed(2)}"`
           : path.closed && path.fill !== 'none'
             ? `fill="${path.fill}" fill-opacity="${(path.fillOpacity * objectAlpha).toFixed(2)}"`
@@ -235,7 +383,16 @@ export function generateSvgCode(
           ? `stroke="${monoColor ?? path.stroke}" stroke-width="${path.strokeWidth}" stroke-opacity="${(monoColor ? 1 : path.strokeOpacity * objectAlpha).toFixed(2)}" stroke-linecap="${path.strokeCap}" stroke-linejoin="${path.strokeJoin}"`
           : `stroke="none"`;
 
-      content += `    <path id="path-${path.id}" d="${d}" fill-rule="evenodd" ${fillAttr} ${strokeAttr}${clipAttr ? ` ${clipAttr}` : ''} />\n`;
+      content += `    <path id="path-${path.id}" d="${faceD}" fill-rule="${path.fillRule ?? 'evenodd'}" ${fillAttr} ${strokeAttr}${clipAttr ? ` ${clipAttr}` : ''}${filterAttr} />\n`;
+
+      // The lit side of an extruded front face, matching the editor exactly.
+      if (!monoColor) {
+        const sheen = extrusionSheen(path);
+        if (sheen) {
+          content += `    <defs><radialGradient id="${sheen.id}" cx="${sheen.cx}" cy="${sheen.cy}" r="${sheen.r}"><stop offset="0%" stop-color="#ffffff" stop-opacity="0.55" /><stop offset="100%" stop-color="#ffffff" stop-opacity="0" /></radialGradient></defs>\n`;
+          content += `    <path d="${faceD}" fill="url(#${sheen.id})" opacity="${sheen.opacity}" pointer-events="none"${clipAttr ? ` ${clipAttr}` : ''} />\n`;
+        }
+      }
     }
 
     content += `  </g>\n`;

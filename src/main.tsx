@@ -3,6 +3,11 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
+import { ensureBundledFonts } from './utils/bundledFonts';
+
+// Start the bundled faces loading immediately; conversion awaits the same promise.
+void ensureBundledFonts();
+
 class AppErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { failed: boolean }
@@ -21,7 +26,7 @@ class AppErrorBoundary extends React.Component<
     if (!this.state.failed) return this.props.children;
     return (
       <div className="grid min-h-[100dvh] place-items-center bg-ink-0 px-6 text-text">
-        <div className="w-full max-w-sm rounded-2xl border border-line bg-ink-1 p-5">
+        <div className="w-full max-w-sm rounded-xl border border-line bg-ink-1 p-5">
           <div className="label-mono mb-2">Recovery</div>
           <h1 className="text-[17px] font-bold tracking-tight">This document hit an error.</h1>
           <p className="mt-2 text-[12.5px] leading-relaxed text-mute">
@@ -32,7 +37,7 @@ class AppErrorBoundary extends React.Component<
             <button
               type="button"
               onClick={() => window.location.reload()}
-              className="press h-10 rounded-xl bg-accent text-[12.5px] font-bold text-ink-0"
+              className="press h-10 rounded-lg bg-accent text-[12.5px] font-bold text-ink-0"
             >
               Reload Pentix
             </button>
@@ -42,7 +47,7 @@ class AppErrorBoundary extends React.Component<
                 localStorage.removeItem('pentix.lastProjectId');
                 window.location.reload();
               }}
-              className="press h-10 rounded-xl border border-line bg-ink-2 text-[12.5px] font-semibold text-dim"
+              className="press h-10 rounded-lg border border-line bg-ink-2 text-[12.5px] font-semibold text-dim"
             >
               Clear last-opened link
             </button>

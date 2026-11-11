@@ -49,6 +49,7 @@ interface AppMenuProps {
   onOpenPressure: () => void;
   onOpenFonts: () => void;
   onOpenReferences: () => void;
+  onOpenPatterns: () => void;
   onOpenTracer: () => void;
   onOpenHelp: () => void;
   canUndo: boolean;
@@ -68,7 +69,7 @@ const Row: React.FC<{
     type="button"
     onClick={onClick}
     disabled={!onClick}
-    className={`press flex min-h-11 w-full items-center gap-3 rounded-xl px-2 text-left ${
+    className={`press flex min-h-11 w-full items-center gap-3 rounded-lg px-2 text-left ${
       onClick ? 'hover:bg-ink-3' : ''
     }`}
   >
@@ -123,6 +124,7 @@ export const AppMenu: React.FC<AppMenuProps> = ({
   onOpenPressure,
   onOpenFonts,
   onOpenReferences,
+  onOpenPatterns,
   onOpenTracer,
   onOpenHelp,
   canUndo,
@@ -157,7 +159,7 @@ export const AppMenu: React.FC<AppMenuProps> = ({
             type="button"
             onClick={onUndo}
             disabled={!canUndo}
-            className="press flex h-9 flex-1 items-center justify-center gap-1.5 rounded-xl border border-line bg-ink-2 text-[12px] font-semibold text-dim disabled:opacity-35"
+            className="press flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-line bg-ink-2 text-[12px] font-semibold text-dim disabled:opacity-35"
           >
             <Undo2 size={14} /> Undo
           </button>
@@ -165,7 +167,7 @@ export const AppMenu: React.FC<AppMenuProps> = ({
             type="button"
             onClick={onRedo}
             disabled={!canRedo}
-            className="press flex h-9 flex-1 items-center justify-center gap-1.5 rounded-xl border border-line bg-ink-2 text-[12px] font-semibold text-dim disabled:opacity-35"
+            className="press flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-line bg-ink-2 text-[12px] font-semibold text-dim disabled:opacity-35"
           >
             <Redo2 size={14} /> Redo
           </button>
@@ -232,6 +234,12 @@ export const AppMenu: React.FC<AppMenuProps> = ({
         <Row icon={<ImageIcon size={16} />} label="References" onClick={onOpenReferences} />
         <Row
           icon={<Sparkles size={16} />}
+          label="Patterns"
+          hint="Named pattern swatches"
+          onClick={onOpenPatterns}
+        />
+        <Row
+          icon={<Sparkles size={16} />}
           label="Trace an image"
           hint="Turn a silhouette into paths"
           onClick={onOpenTracer}
@@ -241,7 +249,7 @@ export const AppMenu: React.FC<AppMenuProps> = ({
       <section>
         <Row icon={<HelpCircle size={16} />} label="Gestures & shortcuts" onClick={onOpenHelp} />
         <div className="mt-1 px-2 pt-2">
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-mute">
+          <span className="font-sans text-[10px] uppercase tracking-[0.14em] text-mute">
             Pentix · Studio
           </span>
         </div>

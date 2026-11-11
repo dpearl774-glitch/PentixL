@@ -9,6 +9,7 @@ import { Canvas } from './components/Canvas';
 import { AppMenu } from './components/AppMenu';
 import { LayersSheet } from './components/LayersSheet';
 import { ReferencesSheet } from './components/ReferencesSheet';
+import { PatternsSheet } from './components/PatternsSheet';
 import { ColorSheet } from './components/ColorSheet';
 import { ShapeSheet } from './components/ShapeSheet';
 import { ProjectsSheet } from './components/ProjectsSheet';
@@ -40,6 +41,8 @@ import {
   VectorPath,
 } from './types/vector';
 import { expandTextToVectorPaths } from './utils/contourTracer';
+import { ensureBundledFonts } from './utils/bundledFonts';
+import { outlineLayoutText } from './utils/textOutlineConversion';
 import { LogoTemplate } from './data/templates';
 import {
   clearCornerRounding,
@@ -48,6 +51,8 @@ import {
   toggleAnchorType,
 } from './utils/bezier';
 import { BooleanOperation, executeBooleanOperation } from './utils/shapeBuilder';
+import { splitPathsIntoGrid } from './utils/gridSplit';
+import { offsetPaths } from './utils/offsetPath';
 import {
   computePathsBoundingBox,
   copyPathsWithNewIds,
@@ -55,14 +60,31 @@ import {
   translatePaths,
 } from './utils/transform';
 import { sanitizeClipReferences, withClipSources } from './utils/clipping';
-import { measureTextMetrics, textBaselineForCenterY } from './utils/textGeometry';
+import { applyShapeWarp, clearShapeWarp, WarpSpec, warpPathsInBox } from './utils/warp';
+import type { PatternSettings } from './utils/effects';
+import { isPatternPreviewPath, patternFromSwatch, syncPatternInstances } from './utils/effects';
+import { pathToSvgD } from './utils/bezier';
+import type { PatternSwatch } from './types/vector';
+import {
+  measureTextMetrics,
+  textBaselineForCenterY,
+  textWorldBox,
+} from './utils/textGeometry';
 import { AlignMode, DistributeAxis, alignPaths, distributePaths } from './utils/align';
+import type { TextPathAlign } from './utils/textPath';
+import { textInShapeLayout } from './utils/textInShape';
 import { GridSettings, StoredProject, getProject, saveProject, seedInitialProjectsIfEmpty } from './utils/projectStorage';
 import { generateProjectThumbnailSvg } from './utils/thumbnailGenerator';
 import { referenceImageFromFile, referenceImageFromSrc } from './utils/referenceImages';
 import { defaultGradient } from './utils/gradients';
 import { gradientIdFor, generateSvgCode } from './utils/svgExport';
 import { outlineStroke } from './utils/strokeOutline';
+import {
+  outlineFontWeight,
+  registerOutlineFont,
+  textOutlineSource,
+  unregisterOutlineFont,
+} from './utils/fontOutlines';
 import { userPrefs, saveUserPrefs } from './utils/userPrefs';
 import {
   requestStorageProtection,
@@ -74,6 +96,7 @@ import { saveFont, loadAllFonts, deleteFont } from './utils/fontStorage';
 import { CANVAS, haptic } from './theme';
 
 type SheetName =
+  | 'patterns'
   | 'menu'
   | 'projects'
   | 'export'
@@ -98,6 +121,17 @@ const blankLayers = (): Layer[] => [
 ];
 const INITIAL_LAYERS: Layer[] = blankLayers();
 const HISTORY_LIMIT = 80;
+
+/**
+ * The weight a label should be set in for this family. An imported file has one
+ * real weight, so asking for a bold it does not have only makes the browser
+ * fake one — and a fake stroke is not in the font, which is exactly what made
+ * converting to curves change the weight.
+ */
+const labelWeightFor = (family: string): string => {
+  const weight = outlineFontWeight(family);
+  return weight ? String(weight) : 'bold';
+};
 
 interface DocumentSettings {
   width: number;
@@ -372,6 +406,8 @@ export default function App() {
   const [fillGradient, setFillGradient] = useState<GradientDef>(() =>
     defaultGradient('#4c8dff', '#5ce1c5')
   );
+  /** Gradients saved from the colour panel — a reusable paint library */
+  const [savedGradients, setSavedGradients] = useState<GradientDef[]>(userPrefs.savedGradients);
   /** Gradient stop the colour panel is editing (shared with the eyedropper) */
   const [activeStopIndex, setActiveStopIndex] = useState(0);
   /** Eyedropper armed — the next canvas tap samples colour into this target */
@@ -384,6 +420,10 @@ export default function App() {
   const [pressureConfig, setPressureConfig] = useState<PressureConfig>(userPrefs.pressure);
 
   const [references, setReferences] = useState<ReferenceImage[]>([]);
+  /** Pattern swatches are document paint, like named colours */
+  const [patternSwatches, setPatternSwatches] = useState<PatternSwatch[]>([]);
+  /** The reference picked on the canvas; its options live in the tool strip */
+  const [selectedReferenceId, setSelectedReferenceId] = useState<string | null>(null);
   const [customFonts, setCustomFonts] = useState<string[]>([]);
   const [selectedFontFamily, setSelectedFontFamily] = useState(userPrefs.selectedFontFamily);
   const [recentFonts, setRecentFonts] = useState<string[]>(userPrefs.recentFonts);
@@ -404,6 +444,7 @@ export default function App() {
   /** One global lock for the whole grid system: freezes spacing + appearance */
   const [gridLocked, setGridLocked] = useState(userPrefs.gridLocked);
   const [rulersVisible, setRulersVisible] = useState(userPrefs.rulersVisible);
+  const [guidesVisible, setGuidesVisible] = useState(userPrefs.guidesVisible);
   const [guidesLocked, setGuidesLocked] = useState(userPrefs.guidesLocked);
   const [guides, setGuides] = useState<Guide[]>([]);
   guidesRef.current = guides;
@@ -466,6 +507,7 @@ export default function App() {
       gridOpacity,
       gridLocked,
       rulersVisible,
+      guidesVisible,
       guidesLocked,
       smartGuides,
       panZoomLocked,
@@ -489,6 +531,7 @@ export default function App() {
       selectedFontFamily,
       recentColors,
       recentFonts,
+      savedGradients,
     }),
     [
       gridVisible,
@@ -498,6 +541,7 @@ export default function App() {
       gridOpacity,
       gridLocked,
       rulersVisible,
+      guidesVisible,
       guidesLocked,
       smartGuides,
       panZoomLocked,
@@ -521,6 +565,7 @@ export default function App() {
       selectedFontFamily,
       recentColors,
       recentFonts,
+      savedGradients,
     ]
   );
   const prefsTimer = useRef<number | null>(null);
@@ -547,6 +592,8 @@ export default function App() {
   }, []);
   /** The nudge pad hides the selection rectangle while it is open */
   const [nudgePadOpen, setNudgePadOpen] = useState(false);
+  /** A warp being dialled in from the panel; painted, never saved */
+  const [warpPreview, setWarpPreview] = useState<WarpSpec | null>(null);
 
   const canvasWrapRef = useRef<HTMLDivElement>(null);
 
@@ -620,6 +667,8 @@ export default function App() {
 
   const [traceSrc, setTraceSrc] = useState<string | null>(null);
   const [textOrigin, setTextOrigin] = useState<Point | null>(null);
+  /** The drawn path a new piece of text is being typed onto */
+  const [textHostId, setTextHostId] = useState<string | null>(null);
   const [textEditId, setTextEditId] = useState<string | null>(null);
   const [clipboard, setClipboard] = useState<VectorPath[]>([]);
   /** While set, new artwork is clipped to this closed shape. */
@@ -693,6 +742,14 @@ export default function App() {
   // Selecting an object follows it to its layer. Duplicate, paste and a new
   // shape then land beside the object you are working on, not on the layer
   // that happened to be active before.
+  // Picking artwork drops the reference selection, so its bounds and handles
+  // never sit over a transform box.
+  useEffect(() => {
+    if (selection.selectedPathIds.length > 0) {
+      setSelectedReferenceId(null);
+    }
+  }, [selection.selectedPathIds]);
+
   useEffect(() => {
     const firstId = selection.selectedPathIds[0];
     if (!firstId) return;
@@ -793,6 +850,26 @@ export default function App() {
     [commitSoon, patchSelection]
   );
 
+  /** Tracking on the selected labels, live, so a warp can be tuned as it bends. */
+  const setTextTracking = useCallback(
+    (value: number) => {
+      const ids = new Set(selectedPaths.filter((path) => path.text).map((path) => path.id));
+      if (ids.size === 0) return;
+      applyLayers(
+        (prev) =>
+          prev.map((layer) => ({
+            ...layer,
+            paths: layer.paths.map((path) =>
+              ids.has(path.id) ? { ...path, letterSpacing: value } : path
+            ),
+          })),
+        { commit: false }
+      );
+      commitSoon();
+    },
+    [applyLayers, commitSoon, selectedPaths]
+  );
+
   const setExtrudeDepth = useCallback(
     (depth: number) => {
       patchSelectionSoon({ extrudeDepth: Math.max(0, depth) });
@@ -807,9 +884,72 @@ export default function App() {
     [patchSelectionSoon]
   );
 
+  const setExtrudeTilt = useCallback(
+    (tilt: number) => {
+      patchSelectionSoon({ extrudeTilt: Math.min(85, Math.max(0, tilt)) });
+    },
+    [patchSelectionSoon]
+  );
+
+  const setExtrudeTurn = useCallback(
+    (turn: number) => {
+      patchSelectionSoon({ extrudeTurn: Math.min(70, Math.max(-70, turn)) });
+    },
+    [patchSelectionSoon]
+  );
+
+  const setExtrudePerspective = useCallback(
+    (perspective: number) => {
+      patchSelectionSoon({ extrudePerspective: Math.min(1, Math.max(0, perspective)) });
+    },
+    [patchSelectionSoon]
+  );
+
   const setExtrudeTaper = useCallback(
     (taper: number) => {
       patchSelectionSoon({ extrudeTaper: Math.min(0.45, Math.max(0, taper)) });
+    },
+    [patchSelectionSoon]
+  );
+
+  const setExtrudeBevel = useCallback(
+    (bevel: number) => {
+      patchSelectionSoon({ extrudeBevel: Math.min(26, Math.max(0, bevel)) });
+    },
+    [patchSelectionSoon]
+  );
+
+  const setExtrudeBevelStyle = useCallback(
+    (style: 'chamfer' | 'round') => {
+      patchSelectionSoon({ extrudeBevelStyle: style });
+    },
+    [patchSelectionSoon]
+  );
+
+  const setExtrudeLight = useCallback(
+    (light: number) => {
+      patchSelectionSoon({ extrudeLight: ((light % 360) + 360) % 360 });
+    },
+    [patchSelectionSoon]
+  );
+
+  const setExtrudeGloss = useCallback(
+    (gloss: number) => {
+      patchSelectionSoon({ extrudeGloss: Math.min(1, Math.max(0, gloss)) });
+    },
+    [patchSelectionSoon]
+  );
+
+  const setExtrudeShadowSoft = useCallback(
+    (soft: number) => {
+      patchSelectionSoon({ extrudeShadowSoft: Math.min(2.5, Math.max(0.4, soft)) });
+    },
+    [patchSelectionSoon]
+  );
+
+  const setExtrudeShadowLift = useCallback(
+    (lift: number) => {
+      patchSelectionSoon({ extrudeShadowLift: Math.min(2, Math.max(0, lift)) });
     },
     [patchSelectionSoon]
   );
@@ -1489,9 +1629,10 @@ export default function App() {
    * Text
    * ------------------------------------------------------------------ */
   const openTextSheet = useCallback(
-    (options?: { path?: VectorPath | null; origin?: Point | null }) => {
+    (options?: { path?: VectorPath | null; origin?: Point | null; hostId?: string | null }) => {
       const path = options?.path ?? null;
       setTextOrigin(options?.origin ?? null);
+      setTextHostId(options?.hostId ?? null);
       // Placing at a tapped point always creates a new object
       setTextEditId(options?.origin ? null : (path?.id ?? null));
       if (path?.fontFamily) setSelectedFontFamily(path.fontFamily);
@@ -1544,13 +1685,16 @@ export default function App() {
       }
 
       const { width: aw, height: ah } = viewRef.current;
-      const origin = textOrigin ?? { x: aw / 2, y: ah / 2 };
+      const host = textHostId ? allPaths.find((p) => p.id === textHostId) ?? null : null;
+      const hostStart = host?.points[0] ?? null;
+      const origin = hostStart ?? textOrigin ?? { x: aw / 2, y: ah / 2 };
       const fontSize = data.fontSize;
+      const fontWeight = labelWeightFor(data.fontFamily);
       const metrics = measureTextMetrics({
         text: data.text,
         fontSize,
         fontFamily: data.fontFamily,
-        fontWeight: 'bold',
+        fontWeight,
         letterSpacing: data.letterSpacing,
       });
       const textPath: VectorPath = {
@@ -1559,13 +1703,13 @@ export default function App() {
         points: [
           {
             id: `text-pt-${Date.now()}`,
-            x: origin.x - metrics.width / 2,
+            x: host ? origin.x : origin.x - metrics.width / 2,
             y: textBaselineForCenterY(
               {
                 text: data.text,
                 fontSize,
                 fontFamily: data.fontFamily,
-                fontWeight: 'bold',
+                fontWeight,
                 letterSpacing: data.letterSpacing,
               },
               origin.y
@@ -1585,27 +1729,69 @@ export default function App() {
         text: data.text,
         fontSize,
         fontFamily: data.fontFamily,
-        fontWeight: 'bold',
+        fontWeight,
         letterSpacing: data.letterSpacing,
+        ...(host && hostStart
+          ? { textPath: { pathId: host.id, offset: 0 }, textMatrix: [1, 0, 0, 1, 0, 0] as [number, number, number, number, number, number] }
+          : {}),
       };
+      if (host) {
+        // A path you type on stops painting itself, like a live type baseline.
+        applyLayers((prev) =>
+          prev.map((layer) => ({
+            ...layer,
+            paths: layer.paths.map((path) =>
+              path.id === host.id ? { ...path, fill: 'none', stroke: 'none' } : path
+            ),
+          }))
+        );
+      }
       addPath(textPath);
       setSelection({ selectedPathIds: [textPath.id], selectedAnchorIndex: null, selectedHandleType: null });
       commitHistory();
+      // A new label must not inherit the last one's tap point or host: that
+      // made the second string land on top of the first.
       setTextOrigin(null);
+      setTextHostId(null);
+      setTextEditId(null);
+      setTextOrigin(null);
+      setTextHostId(null);
     },
-    [addPath, applyLayers, commitHistory, notify, textOrigin]
+    [addPath, allPaths, applyLayers, commitHistory, notify, textHostId, textOrigin]
   );
 
-  const expandSelectedText = useCallback(() => {
+  /** A type-tool tap: on a path it types along it, anywhere else it starts free. */
+  const requestText = useCallback(
+    (point: Point, hitPathId?: string | null) => {
+      const target = hitPathId ? allPaths.find((p) => p.id === hitPathId) ?? null : null;
+      if (target?.text) {
+        openTextSheet({ path: target });
+        return;
+      }
+      if (target && !target.isClippingMask && target.points.length >= 2) {
+        openTextSheet({ hostId: target.id });
+        return;
+      }
+      openTextSheet({ origin: point, path: null });
+    },
+    [allPaths, openTextSheet]
+  );
+
+  const expandSelectedText = useCallback(async () => {
     const texts = selectedPaths.filter((p) => !!p.text);
     if (!texts.length) return;
+    // A cold start parses the bundled faces after first paint. Converting before
+    // that finished found an empty registry and traced a picture of the type.
+    await ensureBundledFonts();
     const generated: VectorPath[] = [];
     const removeIds: string[] = [];
     for (const textPath of texts) {
       removeIds.push(textPath.id);
       const origin = textPath.points[0] ?? { x: 100, y: 100 };
-      generated.push(
-        ...expandTextToVectorPaths(textPath.text!, {
+      // A label on a path, or wrapped in a shape, already knows its layout;
+      // baking it as a straight line would drop that geometry.
+      const laidOut = outlineLayoutText(textPath, (id) => allPaths.find((p) => p.id === id) ?? null);
+      const outlines = laidOut ?? expandTextToVectorPaths(textPath.text!, {
           originX: origin.x,
           originY: origin.y,
           fontSize: textPath.fontSize || 64,
@@ -1616,16 +1802,29 @@ export default function App() {
           strokeColor: textPath.stroke !== 'none' ? textPath.stroke : 'none',
           strokeWidth: textPath.strokeWidth || 0,
           matrix: textPath.textMatrix,
-        })
-      );
+        });
+      // Curves are the one place a live warp has to become real geometry.
+      const box = textWorldBox(textPath);
+      generated.push(...(textPath.warp && box ? warpPathsInBox(outlines, box, textPath.warp) : outlines));
     }
     if (!generated.length) {
       notify('That text could not be converted');
       return;
     }
     replacePaths(removeIds, generated);
-    notify(`Text converted to ${generated.length} paths`);
-  }, [notify, replacePaths, selectedPaths]);
+    const traced = texts.filter(
+      (path) =>
+        textOutlineSource({
+          fontFamily: path.fontFamily,
+          fontWeight: path.fontWeight,
+        }) !== 'font'
+    ).length;
+    notify(
+      traced === 0
+        ? `Converted to ${generated.length} outline paths`
+        : `Converted to ${generated.length} paths · ${traced} traced from pixels`
+    );
+  }, [allPaths, notify, replacePaths, selectedPaths]);
 
   /** A visible stroke that can be turned into a fill, e.g. to use the shape builder */
   const canExpandStroke = selectedPaths.some(
@@ -1782,6 +1981,161 @@ export default function App() {
     [applyLayers]
   );
 
+  /**
+   * Drag-and-drop ordering for objects. A drop on a row takes that row's slot,
+   * and dropping into another layer moves the object instead of copying it.
+   */
+  const reorderPath = useCallback(
+    (draggedId: string, targetId: string, place: 'above' | 'below' = 'above') => {
+      if (draggedId === targetId) return;
+      applyLayers((prev) => {
+        const fromIndex = prev.findIndex((layer) =>
+          layer.paths.some((path) => path.id === draggedId)
+        );
+        const toIndex = prev.findIndex((layer) =>
+          layer.paths.some((path) => path.id === targetId)
+        );
+        if (fromIndex < 0 || toIndex < 0) return prev;
+        const dragged = prev[fromIndex].paths.find((path) => path.id === draggedId);
+        if (!dragged) return prev;
+        const rest = prev[toIndex].paths.filter((path) => path.id !== draggedId);
+        const slot = rest.findIndex((path) => path.id === targetId);
+        if (slot < 0) return prev;
+        // Arrays run back-to-front, so "above" means after the target.
+        const targetPaths = [...rest];
+        targetPaths.splice(place === 'above' ? slot + 1 : slot, 0, dragged);
+        if (fromIndex === toIndex) {
+          return prev.map((layer, index) =>
+            index === fromIndex ? { ...layer, paths: targetPaths } : layer
+          );
+        }
+        return prev.map((layer, index) => {
+          if (index === fromIndex) {
+            return { ...layer, paths: layer.paths.filter((path) => path.id !== draggedId) };
+          }
+          if (index === toIndex) return { ...layer, paths: targetPaths };
+          return layer;
+        });
+      });
+    },
+    [applyLayers]
+  );
+
+  /**
+   * Grouping in this document model is a layer: the selected objects move out
+   * of their layers into one of their own, so the group can be shown, locked,
+   * faded, reordered and deleted as a unit.
+   */
+  const groupSelectedObjects = useCallback(() => {
+    const ids = new Set(selection.selectedPathIds);
+    if (ids.size < 2) return;
+    const groupId = `layer-${Date.now()}`;
+    applyLayers((prev) => {
+      const grouped: VectorPath[] = [];
+      let insertAt = 0;
+      const stripped = prev.map((layer, index) => {
+        const keep: VectorPath[] = [];
+        for (const path of layer.paths) {
+          if (ids.has(path.id)) {
+            grouped.push(path);
+            insertAt = Math.max(insertAt, index);
+          } else keep.push(path);
+        }
+        return keep.length === layer.paths.length ? layer : { ...layer, paths: keep };
+      });
+      if (grouped.length < 2) return prev;
+      const group: Layer = {
+        id: groupId,
+        name: `Group ${prev.filter((layer) => layer.isGroup).length + 1}`,
+        visible: true,
+        locked: false,
+        opacity: 1,
+        paths: grouped,
+        isGroup: true,
+      };
+      // The group takes the stacking slot of its frontmost member, so grouping
+      // never changes what covers what.
+      const next = [...stripped];
+      next.splice(Math.min(insertAt, next.length), 0, group);
+      return next;
+    });
+    setActiveLayerId(groupId);
+    notify(`Grouped ${ids.size} objects`);
+  }, [applyLayers, notify, selection.selectedPathIds]);
+
+  /** Releasing a group puts its objects back into the layer beneath it. */
+  const ungroupLayer = useCallback(
+    (layerId: string) => {
+      applyLayers((prev) => {
+        const index = prev.findIndex((layer) => layer.id === layerId);
+        if (index < 0) return prev;
+        const group = prev[index];
+        if (!group.isGroup) return prev;
+        const rest = prev.filter((layer) => layer.id !== layerId);
+        const targetIndex = Math.max(0, index - 1);
+        if (!rest.length) {
+          return [
+            {
+              id: `layer-${Date.now()}`,
+              name: `Layer ${prev.length}`,
+              visible: group.visible,
+              locked: group.locked,
+              opacity: group.opacity,
+              paths: group.paths,
+            },
+          ];
+        }
+        const next = [...rest];
+        next[Math.min(targetIndex, next.length - 1)] = {
+          ...next[Math.min(targetIndex, next.length - 1)],
+          paths: [...next[Math.min(targetIndex, next.length - 1)].paths, ...group.paths],
+        };
+        return next;
+      });
+      notify('Group released');
+    },
+    [applyLayers, notify]
+  );
+
+  /** Drops an object into another layer, at that layer's front. */
+  const movePathToLayer = useCallback(
+    (id: string, layerId: string) => {
+      applyLayers((prev) => {
+        const source = prev.find((layer) => layer.paths.some((path) => path.id === id));
+        if (!source || source.id === layerId) return prev;
+        const moved = source.paths.find((path) => path.id === id);
+        if (!moved) return prev;
+        return prev.map((layer) => {
+          if (layer.id === source.id) {
+            return { ...layer, paths: layer.paths.filter((path) => path.id !== id) };
+          }
+          if (layer.id === layerId) {
+            return { ...layer, paths: [...layer.paths, moved] };
+          }
+          return layer;
+        });
+      });
+    },
+    [applyLayers]
+  );
+
+  const reorderLayer = useCallback(
+    (draggedId: string, targetId: string, place: 'above' | 'below') => {
+      if (draggedId === targetId) return;
+      applyLayers((prev) => {
+        const dragged = prev.find((layer) => layer.id === draggedId);
+        if (!dragged) return prev;
+        const rest = prev.filter((layer) => layer.id !== draggedId);
+        const slot = rest.findIndex((layer) => layer.id === targetId);
+        if (slot < 0) return prev;
+        const next = [...rest];
+        next.splice(place === 'above' ? slot + 1 : slot, 0, dragged);
+        return next;
+      });
+    },
+    [applyLayers]
+  );
+
   const dropFromSelection = useCallback((id: string) => {
     setSelection((prev) =>
       prev.selectedPathIds.includes(id)
@@ -1927,8 +2281,767 @@ export default function App() {
 
   const removeReference = useCallback((id: string) => {
     setReferences((prev) => prev.filter((r) => r.id !== id));
+    setSelectedReferenceId((current) => (current === id ? null : current));
     markDirty();
   }, [markDirty]);
+
+  const selectedReference = useMemo(
+    () => references.find((image) => image.id === selectedReferenceId) ?? null,
+    [references, selectedReferenceId]
+  );
+
+  /** Picking a reference clears the artwork selection; the strip follows it. */
+  const selectReference = useCallback((id: string | null) => {
+    setSelectedReferenceId(id);
+    if (id) {
+      setSelection({
+        selectedPathIds: [],
+        selectedAnchorIndex: null,
+        selectedHandleType: null,
+      });
+    }
+  }, []);
+
+  const patchReference = useCallback(
+    (patch: Partial<ReferenceImage>) => {
+      if (!selectedReferenceId) return;
+      setReferences((prev) =>
+        prev.map((image) =>
+          image.id === selectedReferenceId ? { ...image, ...patch } : image
+        )
+      );
+      markDirty();
+    },
+    [markDirty, selectedReferenceId]
+  );
+
+  /** Fits the picked reference to the artboard without touching its aspect. */
+  const fitReference = useCallback(() => {
+    if (!selectedReference) return;
+    const margin = 24;
+    const scale = Math.min(
+      (view.width - margin * 2) / Math.max(1, selectedReference.width),
+      (view.height - margin * 2) / Math.max(1, selectedReference.height)
+    );
+    const width = Math.max(16, selectedReference.width * scale);
+    const height = Math.max(16, selectedReference.height * scale);
+    patchReference({
+      x: (view.width - width) / 2,
+      y: (view.height - height) / 2,
+      width,
+      height,
+    });
+  }, [patchReference, selectedReference, view.height, view.width]);
+
+  /* ------------------------------------------------------------------ *
+   * Saved gradients
+   * ------------------------------------------------------------------ */
+  const saveCurrentGradient = useCallback(() => {
+    const signature = JSON.stringify(fillGradient);
+    setSavedGradients((prev) =>
+      prev.some((gradient) => JSON.stringify(gradient) === signature)
+        ? prev
+        : [fillGradient, ...prev].slice(0, 16)
+    );
+    notify('Gradient saved');
+  }, [fillGradient, notify]);
+
+  const applySavedGradient = useCallback(
+    (gradient: GradientDef) => {
+      setFillType('gradient');
+      setFillGradient(gradient);
+      if (selection.selectedPathIds.length) patchSelection({ fillGradient: gradient });
+      notify('Gradient applied');
+    },
+    [notify, patchSelection, selection.selectedPathIds.length]
+  );
+
+  const deleteSavedGradient = useCallback((index: number) => {
+    setSavedGradients((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  /** Cuts the selection into a grid of separate shapes for logo construction. */
+  const splitSelectionIntoGrid = useCallback(
+    (rows: number, cols: number, gap = 0) => {
+      if (!selectedPaths.length) return;
+      const targetLayerId = resolveWritableLayerId();
+      if (!targetLayerId) return;
+      const pieces = splitPathsIntoGrid(selectedPaths, allPaths, {
+        rows,
+        cols,
+        gutter: gap,
+      });
+      if (!pieces.length) {
+        notify('Nothing to split');
+        return;
+      }
+      const ids = selectedPaths.map((p) => p.id);
+      applyLayers((prev) =>
+        prev.map((layer) => {
+          const preserved = layer.paths.filter((p) => !ids.includes(p.id));
+          return layer.id === targetLayerId
+            ? { ...layer, paths: [...preserved, ...pieces] }
+            : { ...layer, paths: preserved };
+        })
+      );
+      setSelection({
+        selectedPathIds: pieces.map((p) => p.id),
+        selectedAnchorIndex: null,
+        selectedHandleType: null,
+      });
+      notify(gap > 0 ? `Split into ${rows} × ${cols}, ${gap}px gap` : `Split into ${rows} × ${cols}`);
+    },
+    [allPaths, applyLayers, notify, resolveWritableLayerId, selectedPaths]
+  );
+
+  /** Outlines the selection at a distance and selects the new objects. */
+  const offsetSelection = useCallback(
+    (distance: number) => {
+      if (!selectedPaths.length) return;
+      const targetLayerId = resolveWritableLayerId();
+      if (!targetLayerId) return;
+      const created = offsetPaths(selectedPaths, distance);
+      if (!created.length) {
+        notify('Nothing to offset');
+        return;
+      }
+      applyLayers((prev) =>
+        prev.map((layer) =>
+          layer.id === targetLayerId ? { ...layer, paths: [...layer.paths, ...created] } : layer
+        )
+      );
+      setSelection({
+        selectedPathIds: created.map((p) => p.id),
+        selectedAnchorIndex: null,
+        selectedHandleType: null,
+      });
+      notify(distance > 0 ? `Offset +${distance} px` : `Inset ${Math.abs(distance)} px`);
+    },
+    [applyLayers, notify, resolveWritableLayerId, selectedPaths]
+  );
+
+  /** Softens the selection: a gaussian blur, a directional smear, or nothing. */
+  const blurSelection = useCallback(
+    (kind: 'none' | 'gaussian' | 'motion', amount: number, angle: number) => {
+      if (!selectedPaths.length) return;
+      const ids = new Set(selectedPaths.map((path) => path.id));
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((path) => {
+            if (!ids.has(path.id)) return path;
+            if (kind === 'none') {
+              const rest = { ...path };
+              delete rest.blur;
+              return rest;
+            }
+            return { ...path, blur: { kind, amount, angle } };
+          }),
+        })),
+        { commit: false }
+      );
+      commitSoon();
+      if (kind === 'none') notify('Blur removed');
+    },
+    [applyLayers, commitSoon, notify, selectedPaths]
+  );
+
+  /** The canvas preview is scaffolding, never a tile or a pattern source. */
+  const isPatternPreview = isPatternPreviewPath;
+
+  /** Tiles the selection and uses it as its own fill. */
+  const patternFromSelection = useCallback(
+    (settings: PatternSettings) => {
+      const shapes = selectedPaths.filter(
+        (path) => path.closed && path.points.length >= 3 && !path.text && !path.image && !isPatternPreview(path)
+      );
+      if (!shapes.length) {
+        notify('Select a closed shape first');
+        return;
+      }
+      if (shapes.some((path) => path.pattern)) {
+        const ids = new Set(shapes.map((path) => path.id));
+        applyLayers(
+          (prev) =>
+            prev.map((layer) => ({
+              ...layer,
+              paths: layer.paths.map((path) =>
+                ids.has(path.id) && path.pattern
+                  ? { ...path, pattern: { ...path.pattern, ...settings } }
+                  : path
+              ),
+            })),
+          { commit: false }
+        );
+        commitSoon();
+        return;
+      }
+      const box = computePathsBoundingBox(shapes);
+      if (!box || box.width < 1 || box.height < 1) {
+        notify('That selection is too small to tile');
+        return;
+      }
+      const tiles = translatePaths(shapes, -box.minX, -box.minY).map((tile, index) => ({
+        ...tile,
+        id: `pattern-tile-${index}`,
+        name: 'Tile',
+      }));
+      const ids = new Set(shapes.map((path) => path.id));
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((path) =>
+            ids.has(path.id)
+              ? {
+                  ...path,
+                  pattern: { ...settings, paths: tiles, tileW: box.width, tileH: box.height },
+                }
+              : path
+          ),
+        }))
+      );
+      notify(`Pattern from ${shapes.length} shape${shapes.length === 1 ? '' : 's'}`);
+    },
+    [applyLayers, commitSoon, notify, selectedPaths]
+  );
+
+  const clearPattern = useCallback(() => {
+    if (!selectedPaths.length) return;
+    const ids = new Set(selectedPaths.map((path) => path.id));
+    applyLayers((prev) =>
+      prev.map((layer) => ({
+        ...layer,
+        paths: layer.paths.map((path) => {
+          if (!ids.has(path.id) || !path.pattern) return path;
+          const rest = { ...path };
+          delete rest.pattern;
+          return rest;
+        }),
+      }))
+    );
+    notify('Pattern cleared');
+  }, [applyLayers, notify, selectedPaths]);
+
+  /**
+   * Saves the selection's artwork as a named pattern in the document.
+   *
+   * Creating a swatch is a library action. Applying it is a separate, explicit
+   * one: painting the shapes a pattern was made from used to fill them the
+   * moment they were captured, which buried the artwork you were working on
+   * under its own repeat.
+   */
+  const savePatternSwatch = useCallback((): PatternSwatch | null => {
+    const shapes = selectedPaths.filter(
+      (path) => path.closed && path.points.length >= 3 && !path.text && !path.image && !isPatternPreview(path) && !path.pattern
+    );
+    if (!shapes.length) {
+      notify('Select an unpainted closed shape to make a pattern from');
+      return null;
+    }
+    const box = computePathsBoundingBox(shapes);
+    if (!box || box.width < 1 || box.height < 1) {
+      notify('That selection is too small to tile');
+      return null;
+    }
+    const tiles = translatePaths(shapes, -box.minX, -box.minY).map((tile, index) => {
+      const { pattern: _ignored, blur: _blur, ...bare } = tile;
+      return { ...bare, id: `pattern-tile-${index}`, name: 'Tile' };
+    });
+    const swatch: PatternSwatch = {
+      id: `pattern-${Date.now()}`,
+      name: `Pattern ${patternSwatches.length + 1}`,
+      paths: tiles,
+      tileW: box.width,
+      tileH: box.height,
+    };
+    setPatternSwatches((prev) => [...prev, swatch]);
+    markDirty();
+    notify('Pattern saved to the library');
+    return swatch;
+  }, [markDirty, notify, patternSwatches.length, selectedPaths]);
+
+  /**
+   * Puts the pattern on the canvas as an ordinary rectangle, next to the shapes
+   * it was made from. Illustrator previews a tile in pattern-editing mode; the
+   * point here is the same — see the tiling unclipped, then delete it.
+   */
+  /**
+   * Puts the pattern on the canvas as an ordinary rectangle beside the shapes it
+   * came from: Illustrator previews a tile in pattern-editing mode, and the point
+   * is the same — see the tiling unclipped, then delete it.
+   */
+  const previewPatternOnCanvas = useCallback(
+    (pattern: NonNullable<VectorPath['pattern']>) => {
+      const shapes = selectedPaths.filter(
+        (path) => path.closed && path.points.length >= 3 && !path.text && !path.image && !isPatternPreview(path)
+      );
+      const box = computePathsBoundingBox(shapes);
+      const width = Math.max(240, Math.round((box?.width ?? 200) * 2));
+      const height = Math.max(240, Math.round((box?.height ?? 200) * 2));
+      const x = box ? Math.round(box.minX + box.width + 48) : 0;
+      const y = box ? Math.round(box.minY) : 0;
+      const existing = layers.flatMap((layer) => layer.paths).find(isPatternPreview);
+      const id = existing?.id ?? `pattern-preview-${Date.now()}`;
+      const preview: VectorPath = {
+        id,
+        name: 'Pattern preview',
+        points: [
+          { id: `${id}-0`, x, y, type: 'corner' },
+          { id: `${id}-1`, x: x + width, y, type: 'corner' },
+          { id: `${id}-2`, x: x + width, y: y + height, type: 'corner' },
+          { id: `${id}-3`, x, y: y + height, type: 'corner' },
+        ],
+        closed: true,
+        fill: '#ffffff',
+        fillOpacity: 1,
+        stroke: 'none',
+        strokeWidth: 0,
+        strokeOpacity: 0,
+        strokeCap: 'round',
+        strokeJoin: 'round',
+        pressureProfile: 'uniform',
+        pattern,
+      };
+      if (existing) {
+        applyLayers(
+          (prev) =>
+            prev.map((layer) => ({
+              ...layer,
+              paths: layer.paths.map((path) => (path.id === id ? preview : path)),
+            })),
+          { commit: false }
+        );
+      } else {
+        addPath(preview);
+      }
+      setSelection({ selectedPathIds: [id], selectedAnchorIndex: null, selectedHandleType: null });
+      commitSoon();
+      notify('Pattern preview on the canvas · edit it live, delete it when you are done');
+    },
+    [addPath, applyLayers, commitSoon, layers, notify, selectedPaths, setSelection]
+  );
+
+  /**
+   * The tool panel's one action: keep the tile in the library and show the
+   * repeat beside the shape. The shape itself is left exactly as it was.
+   */
+  const savePatternAndPreview = useCallback(() => {
+    const swatch = savePatternSwatch();
+    if (!swatch) return;
+    previewPatternOnCanvas(patternFromSwatch(swatch));
+  }, [previewPatternOnCanvas, savePatternSwatch]);
+
+  const applyPatternSwatch = useCallback(
+    (swatchId: string) => {
+      const swatch = patternSwatches.find((entry) => entry.id === swatchId);
+      if (!swatch) return;
+      const shapes = selectedPaths.filter(
+        (path) => !path.text && !path.isClippingMask && path.points.length >= 3
+      );
+      if (!shapes.length) {
+        notify('Select a shape to fill');
+        return;
+      }
+      const ids = new Set(shapes.map((path) => path.id));
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((path) =>
+            ids.has(path.id) ? { ...path, pattern: patternFromSwatch(swatch) } : path
+          ),
+        }))
+      );
+      notify(`Pattern applied to ${shapes.length} shape${shapes.length === 1 ? '' : 's'}`);
+    },
+    [applyLayers, notify, patternSwatches, selectedPaths]
+  );
+
+  const updatePatternSwatch = useCallback(
+    (id: string, patch: Partial<PatternSwatch>) => {
+      const next = patternSwatches.map((entry) =>
+        entry.id === id ? { ...entry, ...patch } : entry
+      );
+      setPatternSwatches(next);
+      applyLayers((prev) => syncPatternInstances(prev, next));
+      markDirty();
+    },
+    [applyLayers, markDirty, patternSwatches]
+  );
+
+  const deletePatternSwatch = useCallback(
+    (id: string) => {
+      const next = patternSwatches.filter((entry) => entry.id !== id);
+      setPatternSwatches(next);
+      applyLayers((prev) => syncPatternInstances(prev, next));
+      markDirty();
+      notify('Pattern deleted');
+    },
+    [applyLayers, markDirty, notify, patternSwatches]
+  );
+
+  /**
+   * Warps the selection. Type keeps a live warp: the glyphs bend on screen
+   * while the string, font and size stay editable, so the warp can be changed
+   * or removed later. Shapes have no live form, so their points are baked —
+   * that keeps hits, snapping and booleans honest.
+   */
+  /** Type in shape: rewrap the selected label's words inside the selected shape. */
+  const textInShape = useCallback(() => {
+    const shape = selectedPaths.find(
+      (path) => path.closed && !path.text && path.points.length >= 3
+    );
+    const label = selectedPaths.find((path) => path.text);
+    if (!shape) {
+      notify('Select a closed shape first');
+      return;
+    }
+    const stamp = Date.now();
+    const template: VectorPath =
+      label ??
+      ({
+        id: `text-in-shape-${stamp}`,
+        name: 'Text in shape',
+        points: [{ id: `text-in-shape-${stamp}-anchor`, x: 0, y: 0, type: 'corner' }],
+        closed: false,
+        text: 'Text',
+        fontSize: 32,
+        fontFamily: selectedFontFamily,
+        fontWeight: 'bold',
+        letterSpacing: 0,
+        fill: fillColor,
+        fillOpacity: 1,
+        stroke: 'none',
+        strokeWidth: 0,
+        strokeOpacity: 1,
+        strokeCap: 'round',
+        strokeJoin: 'round',
+        pressureProfile: 'uniform',
+      } as VectorPath);
+
+    const layout = textInShapeLayout(shape, template, template.text ?? '');
+    if (!layout) {
+      notify('That shape is too small for text');
+      return;
+    }
+    const anchor = template.points[0] ?? {
+      id: `${template.id}-anchor`,
+      x: 0,
+      y: 0,
+      type: 'corner' as const,
+    };
+    const wrapped: VectorPath = {
+      ...template,
+      text: layout.text,
+      textLineX: layout.lineX,
+      areaShapeId: shape.id,
+      textPath: undefined,
+      points: [{ ...anchor, x: layout.originX, y: layout.baseline }],
+    };
+    if (label) {
+      updatePath(wrapped);
+      notify('Text wrapped into the shape');
+      return;
+    }
+    addPath(wrapped);
+    notify('Text placed in the shape — tap it to edit');
+  }, [addPath, fillColor, notify, selectedFontFamily, selectedPaths, updatePath]);
+
+  const warpSelection = useCallback(
+    (spec: WarpSpec) => {
+      setWarpPreview(null);
+      if (!selectedPaths.length) return;
+      const bend = !!spec.amount || !!(spec.sway ?? 0);
+      const textIds = new Set(
+        selectedPaths.filter((path) => path.text && !path.textPath).map((path) => path.id)
+      );
+      const shapeIds = new Set(
+        selectedPaths.filter((path) => !path.text).map((path) => path.id)
+      );
+
+      let warpedIds: string[] = [];
+      applyLayers((prev) => {
+        const attached = prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((path) => {
+            if (!textIds.has(path.id)) return path;
+            if (bend) return { ...path, warp: { ...spec } };
+            const cleared = { ...path };
+            delete cleared.warp;
+            return cleared;
+          }),
+        }));
+        const shapes = attached
+          .flatMap((layer) => layer.paths)
+          .filter((path) => shapeIds.has(path.id));
+        if (!shapes.length) return attached;
+        // Every shape bends from the geometry it had before this warp, so the
+        // amount is absolute: 20 after 10 is a 20 bend, and zero is the shape
+        // as it started rather than another bend of a bend.
+        const bent = applyShapeWarp(shapes, spec);
+        const warped = new Map(bent.map((path) => [path.id, path] as const));
+        warpedIds = shapes.map((path) => path.id);
+        return attached.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((path) => warped.get(path.id) ?? path),
+        }));
+      });
+
+      if (warpedIds.length) {
+        setSelection({
+          selectedPathIds: warpedIds,
+          selectedAnchorIndex: null,
+          selectedHandleType: null,
+        });
+      }
+      if (!bend) notify('Warp removed');
+      else notify(`${textIds.size && !shapeIds.size ? 'Text warp' : 'Warp'} ${spec.kind}`);
+    },
+    [applyLayers, notify, selectedPaths]
+  );
+
+  /**
+   * Drops the warp from the selection, text and shapes alike, even at a
+   * non-zero bend. A label only has to forget its spec; a shape has to take its
+   * pre-warp geometry back.
+   */
+  const clearWarp = useCallback(() => {
+    const textIds = new Set(selectedPaths.filter((path) => path.text).map((path) => path.id));
+    const shapeIds = new Set(
+      selectedPaths.filter((path) => !path.text && path.warpSource).map((path) => path.id)
+    );
+    if (!textIds.size && !shapeIds.size) return;
+    applyLayers((prev) => {
+      const straight = prev.map((layer) => ({
+        ...layer,
+        paths: layer.paths.map((path) => {
+          if (!textIds.has(path.id) || !path.warp) return path;
+          const cleared = { ...path };
+          delete cleared.warp;
+          return cleared;
+        }),
+      }));
+      const shapes = straight
+        .flatMap((layer) => layer.paths)
+        .filter((path) => shapeIds.has(path.id));
+      if (!shapes.length) return straight;
+      const restored = new Map(clearShapeWarp(shapes).map((path) => [path.id, path] as const));
+      return straight.map((layer) => ({
+        ...layer,
+        paths: layer.paths.map((path) => restored.get(path.id) ?? path),
+      }));
+    });
+    notify('Warp removed');
+  }, [applyLayers, notify, selectedPaths]);
+
+  /** Binds one text object to one path so the string runs along it. */
+  const attachTextToPath = useCallback(() => {
+    const texts = selectedPaths.filter((path) => path.text);
+    const shapes = selectedPaths.filter(
+      (path) => !path.text && !path.isClippingMask && path.points.length >= 2
+    );
+    if (texts.length !== 1 || shapes.length !== 1) {
+      notify('Select one text object and one path');
+      return;
+    }
+    const [text] = texts;
+    const start = shapes[0].points[0];
+    applyLayers((prev) =>
+      prev.map((layer) => ({
+        ...layer,
+        paths: layer.paths.map((path) => {
+          if (path.id !== text.id) return path;
+          const [first] = path.points;
+          // The path itself decides the curve now, so a straight-line bend
+          // would fight it.
+          const following = { ...path };
+          delete following.warp;
+          return {
+            ...following,
+            points: first
+              ? [{ ...first, x: start.x, y: start.y }, ...path.points.slice(1)]
+              : path.points,
+            textMatrix: [1, 0, 0, 1, 0, 0] as [number, number, number, number, number, number],
+            textPath: { pathId: shapes[0].id, offset: 0 },
+          };
+        }),
+      }))
+    );
+    notify('Text now follows the path');
+  }, [applyLayers, notify, selectedPaths]);
+
+  const detachTextFromPath = useCallback(() => {
+    const ids = new Set(selectedPaths.filter((path) => path.textPath).map((path) => path.id));
+    if (!ids.size) {
+      notify('Nothing is on a path');
+      return;
+    }
+    applyLayers((prev) =>
+      prev.map((layer) => ({
+        ...layer,
+        paths: layer.paths.map((path) => {
+          if (!ids.has(path.id) || !path.textPath) return path;
+          const rest = { ...path };
+          delete rest.textPath;
+          return rest;
+        }),
+      }))
+    );
+    notify('Text detached from the path');
+  }, [applyLayers, notify, selectedPaths]);
+
+  /** Nudges the string off the outline, the way a baseline shift does. */
+  const setTextPathBaseline = useCallback(
+    (offset: number) => {
+      const ids = new Set(selectedPaths.filter((path) => path.textPath).map((path) => path.id));
+      if (!ids.size) return;
+      applyLayers(
+        (prev) =>
+          prev.map((layer) => ({
+            ...layer,
+            paths: layer.paths.map((path) =>
+              ids.has(path.id) && path.textPath
+                ? { ...path, textPath: { ...path.textPath, baselineOffset: offset } }
+                : path
+            ),
+          })),
+        { commit: false }
+      );
+      commitSoon();
+    },
+    [applyLayers, commitSoon, selectedPaths]
+  );
+
+  const setTextPathOffset = useCallback(
+    (offset: number) => {
+      const ids = new Set(selectedPaths.filter((path) => path.textPath).map((path) => path.id));
+      if (!ids.size) return;
+      applyLayers(
+        (prev) =>
+          prev.map((layer) => ({
+            ...layer,
+            paths: layer.paths.map((path) =>
+              ids.has(path.id) && path.textPath
+                ? { ...path, textPath: { ...path.textPath, offset } }
+                : path
+            ),
+          })),
+        { commit: false }
+      );
+      commitSoon();
+    },
+    [applyLayers, commitSoon, selectedPaths]
+  );
+
+  /** Sets where the string sits on its outline (baseline, centre, top, bottom) */
+  const setTextPathAlign = useCallback(
+    (align: TextPathAlign) => {
+      const ids = new Set(selectedPaths.filter((path) => path.textPath).map((path) => path.id));
+      if (!ids.size) return;
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((path) =>
+            ids.has(path.id) && path.textPath
+              ? { ...path, textPath: { ...path.textPath, align } }
+              : path
+          ),
+        }))
+      );
+    },
+    [applyLayers, selectedPaths]
+  );
+
+  /** Sends the string the other way round the outline */
+  const setTextPathReverse = useCallback(
+    (reverse: boolean) => {
+      const ids = new Set(selectedPaths.filter((path) => path.textPath).map((path) => path.id));
+      if (!ids.size) return;
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((path) =>
+            ids.has(path.id) && path.textPath
+              ? { ...path, textPath: { ...path.textPath, reverse } }
+              : path
+          ),
+        }))
+      );
+    },
+    [applyLayers, selectedPaths]
+  );
+
+  /**
+   * Turns a reference picture into artwork. With closed shapes selected the
+   * photo is cropped to them; otherwise it arrives as its own rectangle.
+   */
+  const placeImageAsArtwork = useCallback(
+    (reference: ReferenceImage) => {
+      const targetLayerId = resolveWritableLayerId() ?? layersRef.current[0]?.id;
+      if (!targetLayerId) {
+        notify('Nothing to draw into');
+        return;
+      }
+      const image = { url: reference.url, width: reference.width, height: reference.height };
+      const clipTargets = selectedPaths.filter(
+        (path) => path.closed && path.points.length >= 3 && !path.text && !path.isClippingMask
+      );
+
+      if (clipTargets.length) {
+        const ids = new Set(clipTargets.map((path) => path.id));
+        applyLayers((prev) =>
+          prev.map((layer) => ({
+            ...layer,
+            paths: layer.paths.map((path) =>
+              ids.has(path.id) ? { ...path, image, fill: 'none' } : path
+            ),
+          }))
+        );
+        notify(
+          clipTargets.length === 1
+            ? 'Image clipped into the shape'
+            : `Image clipped into ${clipTargets.length} shapes`
+        );
+        return;
+      }
+
+      // No closed selection: drop the picture in as its own rectangle, centred.
+      const ratio =
+        reference.width > 0 && reference.height > 0 ? reference.height / reference.width : 1;
+      const width = Math.min(view.width * 0.6, 720);
+      const height = Math.max(16, width * ratio);
+      const left = (view.width - width) / 2;
+      const top = (view.height - height) / 2;
+      const id = `image-${Date.now()}`;
+      const placed: VectorPath = {
+        id,
+        name: reference.name || 'Image',
+        points: [
+          { id: `${id}-0`, x: left, y: top, type: 'corner' },
+          { id: `${id}-1`, x: left + width, y: top, type: 'corner' },
+          { id: `${id}-2`, x: left + width, y: top + height, type: 'corner' },
+          { id: `${id}-3`, x: left, y: top + height, type: 'corner' },
+        ],
+        closed: true,
+        fill: 'none',
+        fillOpacity: 1,
+        stroke: 'none',
+        strokeWidth: 0,
+        strokeOpacity: 1,
+        strokeCap: 'round',
+        strokeJoin: 'round',
+        pressureProfile: 'uniform',
+        image,
+      };
+      applyLayers((prev) =>
+        prev.map((layer) =>
+          layer.id === targetLayerId ? { ...layer, paths: [...layer.paths, placed] } : layer
+        )
+      );
+      setSelection({ selectedPathIds: [id], selectedAnchorIndex: null, selectedHandleType: null });
+      notify('Image placed as artwork');
+    },
+    [applyLayers, notify, resolveWritableLayerId, selectedPaths, view.height, view.width]
+  );
 
   const addReferenceFiles = useCallback(
     async (files: FileList | File[] | null) => {
@@ -1966,7 +3079,13 @@ export default function App() {
     } catch {
       /* still usable for this session */
     }
-    const face = new FontFace(family, buffer);
+    // Parsing here is what later lets "To curves" keep the glyphs exactly.
+    const outline = registerOutlineFont(family, buffer.slice(0));
+    const face = new FontFace(
+      family,
+      buffer,
+      outline ? { weight: String(outline.weightClass) } : undefined
+    );
     const loaded = await face.load();
     document.fonts.add(loaded);
     fontFacesRef.current.set(family, loaded);
@@ -1986,6 +3105,7 @@ export default function App() {
     }
     setCustomFonts((prev) => prev.filter((f) => f !== family));
     setSelectedFontFamily((prev) => (prev === family ? 'Plus Jakarta Sans, sans-serif' : prev));
+    unregisterOutlineFont(family);
     void deleteFont(family);
   }, []);
 
@@ -2024,6 +3144,7 @@ export default function App() {
         customFonts: customFonts,
         selectedFontFamily: selectedFontFamily,
         swatches: clone(swatches),
+        patterns: clone(patternSwatches),
         grid,
         guidesLocked,
         ...overrides,
@@ -2037,6 +3158,7 @@ export default function App() {
       customFonts,
       selectedFontFamily,
       swatches,
+      patternSwatches,
       gridVisible,
       gridSnap,
       gridSpacingX,
@@ -2149,7 +3271,10 @@ export default function App() {
 
   const openProject = useCallback(
     (project: StoredProject, options: { silent?: boolean } = {}) => {
-      const nextLayers = sanitizeClipReferences(clone(project.layers));
+      const nextLayers = syncPatternInstances(
+        sanitizeClipReferences(clone(project.layers)),
+        project.patterns ?? []
+      );
       layersRef.current = nextLayers;
       setLayers(nextLayers);
       setProjectId(project.id);
@@ -2195,6 +3320,7 @@ export default function App() {
       }
       if (typeof project.guidesLocked === 'boolean') setGuidesLocked(project.guidesLocked);
       setSwatches(clone(project.swatches ?? []));
+      setPatternSwatches(clone(project.patterns ?? []));
       if (autosaveTimer.current) {
         window.clearTimeout(autosaveTimer.current);
         autosaveTimer.current = null;
@@ -2308,7 +3434,12 @@ export default function App() {
         const families: string[] = [];
         for (const font of storedFonts) {
           try {
-            const face = new FontFace(font.family, font.data.slice(0));
+            const outline = registerOutlineFont(font.family, font.data.slice(0));
+            const face = new FontFace(
+              font.family,
+              font.data.slice(0),
+              outline ? { weight: String(outline.weightClass) } : undefined
+            );
             const loaded = await face.load();
             document.fonts.add(loaded);
             fontFacesRef.current.set(font.family, loaded);
@@ -2512,6 +3643,11 @@ export default function App() {
         }}
         onOpenMenu={() => setSheet('menu')}
         onOpenLayers={() => setSheet((current) => (current === 'layers' ? null : 'layers'))}
+        gridVisible={gridVisible}
+        onToggleGrid={() => {
+          commitSettings({ gridVisible: !gridVisible });
+          notify(gridVisible ? 'Grid hidden' : 'Grid shown');
+        }}
         onOpenExport={() => setSheet('export')}
         onPreview={togglePreview}
       />
@@ -2539,6 +3675,7 @@ export default function App() {
           artboardColor={artboardColor}
           rulersVisible={previewMode ? false : rulersVisible}
           guides={previewMode ? [] : guides}
+          guidesVisible={!previewMode && guidesVisible}
           guidesLocked={guidesLocked}
           onAddGuide={addGuide}
           onUpdateGuide={moveGuideLive}
@@ -2562,12 +3699,16 @@ export default function App() {
           smartGuidesEnabled={smartGuides}
           referenceImages={previewMode ? [] : references}
           onUpdateReference={updateReference}
+          selectedReferenceId={previewMode ? null : selectedReferenceId}
+          onSelectReference={selectReference}
           sbMode={sbMode}
+          onChangeSbMode={setSbMode}
           clipArtboard={previewMode ? true : clipArtboard}
-          onRequestText={(point) => openTextSheet({ origin: point, path: null })}
+          onRequestText={requestText}
           onEditText={(path) => openTextSheet({ path })}
           onToolSwitch={changeTool}
           hideTransformBox={previewMode || nudgePadOpen || !showTransforms}
+          warpPreview={previewMode ? null : warpPreview}
           showPrecisionPad={previewMode ? false : showPrecisionPad}
         />
 
@@ -2576,7 +3717,7 @@ export default function App() {
             type="button"
             onClick={() => setPreviewMode(false)}
             aria-label="Exit preview"
-            className="press absolute right-3 top-3 z-30 flex h-9 items-center gap-1.5 rounded-full border border-line bg-ink-2/85 px-3 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-dim shadow-lg shadow-black/30 backdrop-blur"
+            className="press absolute right-3 top-3 z-30 flex h-9 items-center gap-1.5 rounded-full border border-line bg-ink-2/85 px-3 font-sans text-[9px] font-bold uppercase tracking-[0.12em] text-dim shadow-lg shadow-black/30 backdrop-blur"
           >
             <EyeOff size={13} />
             Exit preview
@@ -2668,6 +3809,8 @@ export default function App() {
         cornerIds={cornerIds}
         onMakeClipMask={makeClippingMask}
         onReleaseClipMask={releaseClippingMask}
+        canTextInShape={selectedPaths.some((p) => p.closed && !p.text && p.points.length >= 3)}
+        onTextInShape={textInShape}
         canMakeClipMask={selectedPaths.filter((p) => p.closed && !p.text).length >= 2}
         hasClipMask={selectedPaths.some((p) => !!p.clipPathId || p.isClippingMask === true)}
         canDrawInside={
@@ -2679,14 +3822,94 @@ export default function App() {
         extrudeDepth={selectedPaths[0]?.extrudeDepth ?? 0}
         extrudeAngle={selectedPaths[0]?.extrudeAngle ?? 45}
         extrudeTaper={selectedPaths[0]?.extrudeTaper ?? 0.16}
+        extrudeBevel={selectedPaths[0]?.extrudeBevel ?? 7}
+        onExtrudeBevel={setExtrudeBevel}
+        extrudeBevelStyle={selectedPaths[0]?.extrudeBevelStyle ?? 'chamfer'}
+        onExtrudeBevelStyle={setExtrudeBevelStyle}
+        extrudeLight={selectedPaths[0]?.extrudeLight}
+        onExtrudeLight={setExtrudeLight}
+        extrudeGloss={selectedPaths[0]?.extrudeGloss ?? 0.18}
+        onExtrudeGloss={setExtrudeGloss}
+        extrudeShadowSoft={selectedPaths[0]?.extrudeShadowSoft ?? 1}
+        onExtrudeShadowSoft={setExtrudeShadowSoft}
+        extrudeShadowLift={selectedPaths[0]?.extrudeShadowLift ?? 1}
+        onExtrudeShadowLift={setExtrudeShadowLift}
         extrudeShadow={selectedPaths[0]?.extrudeShadow !== false}
         canExtrude={selectedPaths.some((p) => p.closed && !p.text)}
         onExtrudeDepth={setExtrudeDepth}
         onExtrudeAngle={setExtrudeAngle}
         onExtrudeTaper={setExtrudeTaper}
+        extrudeTilt={selectedPaths[0]?.extrudeTilt ?? 45}
+        onExtrudeTilt={setExtrudeTilt}
+        extrudeTurn={selectedPaths[0]?.extrudeTurn ?? 0}
+        onExtrudeTurn={setExtrudeTurn}
+        extrudePerspective={selectedPaths[0]?.extrudePerspective ?? 0.25}
+        onExtrudePerspective={setExtrudePerspective}
         onExtrudeShadow={setExtrudeShadow}
         onAlign={alignSelection}
         onDistribute={distributeSelection}
+        onSplitGrid={splitSelectionIntoGrid}
+        onOffsetPath={offsetSelection}
+        selectionBlur={selectedPaths.length ? selectedPaths[0].blur ?? null : null}
+        selectionPattern={selectedPaths.length ? selectedPaths[0].pattern ?? null : null}
+        patternMask={(() => {
+          const first = selectedPaths.find((path) => path.pattern);
+          if (!first) return null;
+          const d = pathToSvgD(first);
+          const box = computePathsBoundingBox([first]);
+          if (!d || !box) return null;
+          return {
+            d,
+            x: box.minX,
+            y: box.minY,
+            width: Math.max(1, box.width),
+            height: Math.max(1, box.height),
+          };
+        })()}
+        onWarp={warpSelection}
+        onWarpPreview={setWarpPreview}
+        textWarp={selectedPaths.find((path) => path.text && path.warp)?.warp ?? null}
+        onClearWarp={clearWarp}
+        shapeWarp={selectedPaths.find((path) => !path.text && path.warpSource)?.warpSource?.spec ?? null}
+        textTracking={selectedPaths.find((path) => path.text)?.letterSpacing ?? 0}
+        onTextTracking={setTextTracking}
+        onTextOnPath={attachTextToPath}
+        onDetachTextPath={detachTextFromPath}
+        onTextPathOffset={setTextPathOffset}
+        hasTextPath={selectedPaths.some((path) => !!path.textPath)}
+        textPathOffset={selectedPaths.find((path) => path.textPath)?.textPath?.offset ?? 0}
+        textPathNudge={selectedPaths.find((path) => path.textPath)?.textPath?.baselineOffset ?? 0}
+        onTextPathNudge={setTextPathBaseline}
+        textPathAlign={selectedPaths.find((path) => path.textPath)?.textPath?.align ?? 'baseline'}
+        textPathReverse={selectedPaths.find((path) => path.textPath)?.textPath?.reverse ?? false}
+        onTextPathAlign={setTextPathAlign}
+        onTextPathReverse={setTextPathReverse}
+        onBlurSelection={blurSelection}
+        onPattern={patternFromSelection}
+        onClearPattern={clearPattern}
+        onSavePattern={savePatternAndPreview}
+        onPreviewPattern={() => {
+          const previewed = selectedPaths.find((path) => path.pattern)?.pattern;
+          if (previewed) previewPatternOnCanvas(previewed);
+        }}
+        onOpenPatterns={() => setSheet('patterns')}
+        reference={
+          selectedReference && selection.selectedPathIds.length === 0
+            ? {
+                name: selectedReference.name,
+                opacity: selectedReference.opacity,
+                locked: selectedReference.locked,
+              }
+            : null
+        }
+        onReferenceOpacity={(value) => patchReference({ opacity: value })}
+        onToggleReferenceLock={() =>
+          patchReference({ locked: !selectedReference?.locked })
+        }
+        onFitReference={fitReference}
+        onDeleteReference={() => {
+          if (selectedReferenceId) removeReference(selectedReferenceId);
+        }}
       />
 
       <ToolDock
@@ -2737,6 +3960,7 @@ export default function App() {
         onOpenPressure={() => setSheet('pressure')}
         onOpenFonts={() => setSheet('fonts')}
         onOpenReferences={() => setSheet('refs')}
+        onOpenPatterns={() => setSheet('patterns')}
         onOpenTracer={() => {
           setTraceSrc(null);
           setSheet('trace');
@@ -2826,7 +4050,11 @@ export default function App() {
         onDeleteLayer={deleteLayer}
         onDuplicateLayer={duplicateLayer}
         onMoveLayer={moveLayer}
-        onMovePath={movePath}
+        onReorderPath={reorderPath}
+        onGroupSelected={groupSelectedObjects}
+        onMovePathToLayer={movePathToLayer}
+        onReorderLayer={reorderLayer}
+        onUngroupLayer={ungroupLayer}
         onUpdateLayerOpacity={(id, opacity) => {
           applyLayers(
             (prev) => prev.map((l) => (l.id === id ? { ...l, opacity } : l)),
@@ -2856,11 +4084,30 @@ export default function App() {
         onUpdate={updateReference}
         onDelete={removeReference}
         onAdd={addReference}
+        onPlaceImage={placeImageAsArtwork}
+        hasSelection={selectedPaths.some(
+          (path) => path.closed && path.points.length >= 3 && !path.text && !path.isClippingMask
+        )}
         onTrace={(src) => {
           setTraceSrc(src);
           setSheet('trace');
         }}
         onTraceWithPen={() => changeTool('pen')}
+      />
+
+      <PatternsSheet
+        open={sheet === 'patterns'}
+        onClose={closeSheet}
+        swatches={patternSwatches}
+        onSaveFromSelection={() => {
+          savePatternSwatch();
+        }}
+        onApply={applyPatternSwatch}
+        onUpdate={updatePatternSwatch}
+        onDelete={deletePatternSwatch}
+        hasSelection={selectedPaths.some(
+          (path) => path.closed && path.points.length >= 3 && !path.text && !path.image && !isPatternPreview(path)
+        )}
       />
 
       <ColorSheet
@@ -2928,6 +4175,10 @@ export default function App() {
         swatches={swatches}
         onAddSwatch={addSwatch}
         onRemoveSwatch={removeSwatch}
+        savedGradients={savedGradients}
+        onSaveGradient={saveCurrentGradient}
+        onApplyGradient={applySavedGradient}
+        onDeleteSavedGradient={deleteSavedGradient}
         onUpdateStrokeWidth={(width) => {
           setStrokeWidth(width);
           patchSelectionSoon({ strokeWidth: width });
@@ -3066,6 +4317,11 @@ export default function App() {
         }}
         rulersVisible={rulersVisible}
         onToggleRulers={() => setRulersVisible((v) => !v)}
+        guidesVisible={guidesVisible}
+        onToggleGuides={() => {
+          setGuidesVisible((v) => !v);
+          notify(guidesVisible ? 'Guides hidden' : 'Guides shown');
+        }}
         guidesLocked={guidesLocked}
         onToggleGuidesLock={() => {
           const next = !guidesLocked;
@@ -3089,11 +4345,13 @@ export default function App() {
         open={sheet === 'start'}
         onStartBlank={() => {
           void newDocument();
-          closeSheet();
+          // The board is set before the work starts, not afterwards.
+          setSheet('canvas');
         }}
+        onOpenArtboard={() => setSheet('canvas')}
         onChooseTemplate={(template) => {
           void openTemplate(template);
-          closeSheet();
+          setSheet('canvas');
         }}
         onClose={closeSheet}
       />

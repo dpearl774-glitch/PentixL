@@ -1,6 +1,13 @@
 import { AnchorPoint, Point, VectorPath } from '../types/vector';
 import { applyTextMatrix, TextMatrix } from './textGeometry';
 import { fitBezierPath } from './curveFit';
+import { offsetPaths } from './offsetPath';
+import {
+  fontOutlinePaths,
+  matchesOutlineWeight,
+  outlineFontWeight,
+  weightClassOf,
+} from './fontOutlines';
 
 /**
  * Computes perpendicular distance from point p to the segment (a, b)
@@ -531,6 +538,12 @@ export function traceImageToVectorPaths(
     /** Direction change, in radians, that counts as a corner (default ~57°) */
     cornerAngle?: number;
     minArea?: number;         // smallest enclosed area worth keeping, px²
+    /**
+     * Artboard units per sampled pixel. Tracing reads a sampling raster, so the
+     * result has to be scaled back to the size the artwork should occupy; every
+     * coordinate below is multiplied by this before it is handed out.
+     */
+    outputScale?: number;
     /** Keep counters (the inside of o, p, a) as real holes */
     includeHoles?: boolean;
     fillColor?: string;
@@ -546,6 +559,7 @@ export function traceImageToVectorPaths(
     fitTolerance: fitToleranceOption,
     cornerAngle,
     minArea = 8,
+    outputScale = 1,
     includeHoles = true,
     fillColor = '#4C8DFF',
     strokeColor = '#4C8DFF',
@@ -571,15 +585,30 @@ export function traceImageToVectorPaths(
   // the edge it was traced from.
   const fitTolerance = Math.max(0.05, fitToleranceOption ?? Math.max(0.6, simplification));
 
+  const scaledPoint = (point: Point): Point =>
+    outputScale === 1 ? point : { x: point.x * outputScale, y: point.y * outputScale };
+  const scaledAnchors = (anchors: AnchorPoint[]): AnchorPoint[] =>
+    outputScale === 1
+      ? anchors
+      : anchors.map((anchor) => ({
+          ...anchor,
+          x: anchor.x * outputScale,
+          y: anchor.y * outputScale,
+          ...(anchor.handleIn ? { handleIn: scaledPoint(anchor.handleIn) } : {}),
+          ...(anchor.handleOut ? { handleOut: scaledPoint(anchor.handleOut) } : {}),
+        }));
+
   return regions.map((region, idx) => {
     const holes = includeHoles
       ? region.holes.map((hole, holeIdx) =>
-          fitSmoothBezierCurves(
-            hole,
-            `traced-${idx}-hole-${holeIdx}`,
-            true,
-            fitTolerance,
-            cornerAngle
+          scaledAnchors(
+            fitSmoothBezierCurves(
+              hole,
+              `traced-${idx}-hole-${holeIdx}`,
+              true,
+              fitTolerance,
+              cornerAngle
+            )
           )
         )
       : [];
@@ -587,12 +616,14 @@ export function traceImageToVectorPaths(
     return {
       id: `traced-path-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
       name: `${namePrefix} ${idx + 1}`,
-      points: fitSmoothBezierCurves(
-        region.points,
-        `traced-${idx}`,
-        true,
-        fitTolerance,
-        cornerAngle
+      points: scaledAnchors(
+        fitSmoothBezierCurves(
+          region.points,
+          `traced-${idx}`,
+          true,
+          fitTolerance,
+          cornerAngle
+        )
       ),
       ...(holes.length > 0 ? { holes } : {}),
       closed: true,
@@ -609,8 +640,13 @@ export function traceImageToVectorPaths(
 }
 
 /**
- * Converts a text string into VectorPath objects by rendering text to an offscreen canvas
- * and vector-tracing its silhouette contours into smooth Bezier curves.
+ * Converts a text string into VectorPath objects.
+ *
+ * An imported typeface is read straight out of its own file, so the result is
+ * the glyphs' real Bézier contours — the same nodes and counters the designer
+ * drew, with nothing refitted. A font we only have pixels of (system faces,
+ * and WOFF2 files that cannot be parsed) falls back to rendering the string and
+ * tracing its silhouette, which is close but never exact.
  */
 export function expandTextToVectorPaths(
   text: string,
@@ -644,6 +680,47 @@ export function expandTextToVectorPaths(
     matrix,
   } = options;
 
+  // Exact route first: the file knows its own outline, so use it as-is. This
+  // needs no canvas, which also makes it work in exports and headless tests.
+  if (matchesOutlineWeight(fontFamily, fontWeight)) {
+    const exact = fontOutlinePaths({
+      text,
+      fontFamily,
+      fontSize,
+      letterSpacing,
+      fontWeight,
+      fillColor,
+      strokeColor,
+      strokeWidth,
+      originX,
+      originY,
+      matrix,
+    });
+    if (exact) {
+      // A file with no heavy sibling is what the browser fakes bold from, and
+      // the file's own curves are still the drawing. Expanding them slightly
+      // gives the real outline of the displayed weight instead of hundreds of
+      // traced nodes around the same letter.
+      //
+      // The comparison has to be against the face that was actually drawn. It
+      // used to read the family's regular weight whatever had been picked, so a
+      // bold label with a real bold file was drawn bold and then grown again —
+      // the converted letters came back heavier than the type on screen.
+      const requested = weightClassOf(fontWeight);
+      const declared = outlineFontWeight(fontFamily, fontWeight) ?? 400;
+      const heavier = requested - declared;
+      if (heavier >= 200) {
+        // Growing the contour gives the outline of the weight on screen. Refit-
+        // ting that ring back to curves was a mistake: the fit has to cut
+        // corners to thin the node count, and on a three-pixel expansion that
+        // cut is the expansion, so the letters came back at the regular weight.
+        // The ring is exact, and Simplify is there when someone wants it sparse.
+        return offsetPaths(exact, fontSize * 0.018 * Math.min(1, heavier / 300));
+      }
+      return exact;
+    }
+  }
+
   if (typeof document === 'undefined') return [];
 
   const canvas = document.createElement('canvas');
@@ -673,8 +750,10 @@ export function expandTextToVectorPaths(
   // a raster pixel becomes a smaller slice of the glyph, so the polyline the
   // fitter sees is a closer stand-in for the font's own outline.
   const scale = Math.max(
-    2,
-    Math.min(4, Math.sqrt(4_000_000 / Math.max(1, probeWidth * probeHeight)))
+    3,
+    // Every raster step is a step of deviation the fitter has to follow, so a
+    // finer sample is the cheapest fidelity available to a font we cannot read.
+    Math.min(6, Math.sqrt(3_000_000 / Math.max(1, probeWidth * probeHeight)))
   );
   const ascent = metrics.actualBoundingBoxAscent || fontSize * 0.8;
   const descent = metrics.actualBoundingBoxDescent || fontSize * 0.25;

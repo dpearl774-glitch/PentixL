@@ -5,6 +5,7 @@ import {
   Layer,
   ReferenceImage,
   VectorPath,
+  PatternSwatch,
 } from '../types/vector';
 import { LOGO_TEMPLATES } from '../data/templates';
 import { sanitizeClipReferences } from './clipping';
@@ -54,6 +55,8 @@ export interface StoredProject {
   selectedFontFamily: string;
   /** Named colours saved for this document */
   swatches?: StoredSwatch[];
+  /** Named pattern swatches: document paint, saved with the artwork */
+  patterns?: PatternSwatch[];
 }
 
 const DB_NAME = 'pentix_vector_db';
@@ -363,6 +366,132 @@ function sanitizeLayers(value: unknown): Layer[] {
         ...(path.fillGradient && Array.isArray(path.fillGradient.stops)
           ? { fillGradient: path.fillGradient }
           : {}),
+        ...(() => {
+          const warp = (path as { warp?: unknown }).warp;
+          if (!warp || typeof warp !== 'object') return {};
+          const candidate = warp as {
+            kind?: unknown;
+            amount?: unknown;
+            sway?: unknown;
+            cycles?: unknown;
+          };
+          const kinds = [
+            'arc',
+            'arch',
+            'wave',
+            'bulge',
+            'pinch',
+            'perspective',
+            'flag',
+            'rise',
+            'fisheye',
+            'inflate',
+            'twist',
+            'free',
+          ] as const;
+          const kind = kinds.find((entry) => entry === candidate.kind);
+          if (!kind) return {};
+          return {
+            warp: {
+              kind,
+              amount: clamp(finite(candidate.amount, 0), -400, 400),
+              sway: clamp(finite(candidate.sway, 0), -400, 400),
+              cycles: clamp(finite(candidate.cycles, 1), 1, 6),
+            },
+          };
+        })(),
+        ...(() => {
+          const blur = (path as { blur?: unknown }).blur;
+          if (!blur || typeof blur !== 'object') return {};
+          const candidate = blur as { kind?: unknown; amount?: unknown; angle?: unknown };
+          const amount = clamp(finite(candidate.amount, 0), 0, 80);
+          if (amount <= 0) return {};
+          return {
+            blur: {
+              kind: candidate.kind === 'motion' ? ('motion' as const) : ('gaussian' as const),
+              amount,
+              angle: clamp(finite(candidate.angle, 0), -360, 360),
+            },
+          };
+        })(),
+        ...(() => {
+          const pattern = (path as { pattern?: unknown }).pattern;
+          if (!pattern || typeof pattern !== 'object') return {};
+          const raw = pattern as {
+            paths?: unknown;
+            tileW?: unknown;
+            tileH?: unknown;
+            scale?: unknown;
+            rotation?: unknown;
+            tileType?: unknown;
+            spacing?: unknown;
+            offsetX?: unknown;
+            offsetY?: unknown;
+          };
+          if (!Array.isArray(raw.paths)) return {};
+          const tiles = raw.paths
+            .slice(0, 40)
+            .map((tile, tileIndex) => {
+              if (!tile || typeof tile !== 'object') return null;
+              const source = tile as Partial<VectorPath>;
+              const tilePoints = (Array.isArray(source.points) ? source.points : [])
+                .slice(0, 4000)
+                .map((point, pointIndex) =>
+                  sanitizePoint(point, `${pathId}-tile${tileIndex}-${pointIndex}`)
+                )
+                .filter((point): point is AnchorPoint => !!point);
+              if (tilePoints.length < 2) return null;
+              return {
+                id: `${pathId}-tile-${tileIndex}`,
+                name: 'Tile',
+                points: tilePoints,
+                closed: source.closed === true,
+                fill: typeof source.fill === 'string' ? source.fill : 'none',
+                fillOpacity: clamp(finite(source.fillOpacity, 1), 0, 1),
+                stroke: typeof source.stroke === 'string' ? source.stroke : 'none',
+                strokeWidth: clamp(finite(source.strokeWidth, 0), 0, 200),
+                strokeOpacity: clamp(finite(source.strokeOpacity, 1), 0, 1),
+                strokeCap: 'round' as const,
+                strokeJoin: 'round' as const,
+                pressureProfile: 'uniform' as const,
+              } as VectorPath;
+            })
+            .filter((tile): tile is VectorPath => !!tile);
+          if (!tiles.length) return {};
+          return {
+            pattern: {
+              paths: tiles,
+              tileW: clamp(finite(raw.tileW, 100), 1, 20000),
+              tileH: clamp(finite(raw.tileH, 100), 1, 20000),
+              scale: clamp(finite(raw.scale, 1), 0.05, 8),
+              rotation: clamp(finite(raw.rotation, 0), -360, 360),
+              ...(raw.tileType === 'brick-row' ||
+              raw.tileType === 'brick-column' ||
+              raw.tileType === 'hex'
+                ? { tileType: raw.tileType as 'brick-row' | 'brick-column' | 'hex' }
+                : {}),
+              ...(finite(raw.spacing, 0) > 0 ? { spacing: clamp(finite(raw.spacing, 0), 0, 400) } : {}),
+              ...(finite(raw.offsetX, 0) !== 0 ? { offsetX: clamp(finite(raw.offsetX, 0), -4000, 4000) } : {}),
+              ...(finite(raw.offsetY, 0) !== 0 ? { offsetY: clamp(finite(raw.offsetY, 0), -4000, 4000) } : {}),
+            },
+          };
+        })(),
+        ...(() => {
+          const image = (path as { image?: unknown }).image;
+          if (!image || typeof image !== 'object') return {};
+          const candidate = image as { url?: unknown; width?: unknown; height?: unknown };
+          if (typeof candidate.url !== 'string') return {};
+          // Only embedded or remote raster sources are accepted back in.
+          if (!/^(data:image\/|https?:\/\/|blob:)/.test(candidate.url)) return {};
+          if (candidate.url.length > 12_000_000) return {};
+          return {
+            image: {
+              url: candidate.url,
+              width: clamp(finite(candidate.width, 100), 1, 20000),
+              height: clamp(finite(candidate.height, 100), 1, 20000),
+            },
+          };
+        })(),
       } as VectorPath);
     });
 
@@ -376,11 +505,43 @@ function sanitizeLayers(value: unknown): Layer[] {
       locked: raw.locked === true,
       opacity: clamp(finite(raw.opacity, 1), 0, 1),
       paths,
+      ...(raw.isGroup === true ? { isGroup: true } : {}),
     });
   });
 
   if (!layers.length) throw new Error('Invalid project format: no valid layers');
-  return sanitizeClipReferences(layers);
+  const cleaned = sanitizeClipReferences(layers);
+  // A text object can only follow a path that still exists.
+  const allIds = new Set(cleaned.flatMap((layer) => layer.paths.map((path) => path.id)));
+  return cleaned.map((layer) => ({
+    ...layer,
+    paths: layer.paths.map((path) => {
+      if (!path.textPath) return path;
+      const target = path.textPath.pathId;
+      const offset = clamp(finite(path.textPath.offset, 0), -100, 200);
+      if (target === path.id || !allIds.has(target)) {
+        const rest = { ...path };
+        delete rest.textPath;
+        return rest;
+      }
+      return {
+        ...path,
+        textPath: {
+          pathId: target.slice(0, 120),
+          offset,
+          ...(finite(path.textPath.baselineOffset, 0) !== 0
+            ? { baselineOffset: clamp(finite(path.textPath.baselineOffset, 0), -500, 500) }
+            : {}),
+          ...(path.textPath.align === 'center' ||
+          path.textPath.align === 'ascender' ||
+          path.textPath.align === 'descender'
+            ? { align: path.textPath.align }
+            : {}),
+          ...(path.textPath.reverse === true ? { reverse: true } : {}),
+        },
+      };
+    }),
+  }));
 }
 
 function sanitizeView(value: unknown): CanvasView | undefined {
@@ -434,6 +595,13 @@ export function sanitizeBackupProject(value: unknown): StoredProject {
         .slice(0, 50)
     : [];
 
+  const patterns = Array.isArray(raw.patterns)
+    ? raw.patterns
+        .slice(0, 200)
+        .map((entry, index) => sanitizePatternSwatch(entry, index))
+        .filter((entry): entry is PatternSwatch => !!entry)
+    : [];
+
   const swatches = Array.isArray(raw.swatches)
     ? (raw.swatches as unknown[])
         .filter((swatch): swatch is StoredSwatch => {
@@ -479,6 +647,7 @@ export function sanitizeBackupProject(value: unknown): StoredProject {
         ? raw.selectedFontFamily.slice(0, 160)
         : 'Plus Jakarta Sans, sans-serif',
     swatches,
+    patterns,
   };
 }
 
@@ -560,4 +729,51 @@ export function formatRelativeTime(timestamp: number): string {
 
   const d = new Date(timestamp);
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/** A pattern swatch is document paint: tile artwork plus how it repeats. */
+export function sanitizePatternSwatch(value: unknown, index: number): PatternSwatch | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const id =
+    typeof raw.id === 'string' && raw.id ? raw.id.slice(0, 120) : `pattern-${index + 1}`;
+  const sourceTiles = Array.isArray(raw.paths) ? raw.paths.slice(0, 40) : [];
+  const paths: VectorPath[] = [];
+  sourceTiles.forEach((tile, tileIndex) => {
+    if (!tile || typeof tile !== 'object') return;
+    const source = tile as Partial<VectorPath>;
+    const points = (Array.isArray(source.points) ? source.points : [])
+      .slice(0, 4000)
+      .map((point, pointIndex) => sanitizePoint(point, `${id}-t${tileIndex}-${pointIndex}`))
+      .filter((point): point is AnchorPoint => !!point);
+    if (points.length < 2) return;
+    paths.push({
+      id: `${id}-tile-${tileIndex}`,
+      name: 'Tile',
+      points,
+      closed: source.closed === true,
+      fill: typeof source.fill === 'string' ? source.fill : 'none',
+      fillOpacity: clamp(finite(source.fillOpacity, 1), 0, 1),
+      stroke: typeof source.stroke === 'string' ? source.stroke : 'none',
+      strokeWidth: clamp(finite(source.strokeWidth, 0), 0, 200),
+      strokeOpacity: clamp(finite(source.strokeOpacity, 1), 0, 1),
+      strokeCap: 'round',
+      strokeJoin: 'round',
+      pressureProfile: 'uniform',
+    });
+  });
+  if (!paths.length) return null;
+  return {
+    id,
+    name: typeof raw.name === 'string' && raw.name ? raw.name.slice(0, 80) : `Pattern ${index + 1}`,
+    paths,
+    tileW: clamp(finite(raw.tileW, 100), 1, 20000),
+    tileH: clamp(finite(raw.tileH, 100), 1, 20000),
+    ...(raw.tileType === 'brick-row' ||
+    raw.tileType === 'brick-column' ||
+    raw.tileType === 'hex'
+      ? { tileType: raw.tileType as 'brick-row' | 'brick-column' | 'hex' }
+      : {}),
+    ...(finite(raw.spacing, 0) > 0 ? { spacing: clamp(finite(raw.spacing, 0), 0, 400) } : {}),
+  };
 }

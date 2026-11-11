@@ -48,7 +48,7 @@ export const PressureSheet: React.FC<PressureSheetProps> = ({ open, onClose, con
       subtitle="Stroke weight from speed or pressure."
     >
       <div className="flex flex-col gap-5">
-        <div className="grid h-20 place-items-center rounded-xl border border-line bg-ink-0">
+        <div className="grid h-20 place-items-center rounded-lg border border-line bg-ink-0">
           <svg viewBox="0 0 260 60" className="h-16 w-full px-2">
             <path d={preview} fill="#4c8dff" />
           </svg>

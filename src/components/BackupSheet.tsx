@@ -67,7 +67,7 @@ export const BackupSheet: React.FC<BackupSheetProps> = ({
       />
 
       <div className="flex flex-col gap-5">
-        <section className="rounded-xl border border-line bg-ink-2 p-3">
+        <section className="rounded-lg border border-line bg-ink-2 p-3">
           <div className="flex items-start gap-2.5">
             <span
               className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg border ${
@@ -138,7 +138,7 @@ export const BackupSheet: React.FC<BackupSheetProps> = ({
 
         {error && <p className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error}</p>}
 
-        <div className="flex items-start gap-2 rounded-xl border border-line bg-ink-0 px-3 py-2.5">
+        <div className="flex items-start gap-2 rounded-lg border border-line bg-ink-0 px-3 py-2.5">
           <Archive size={14} className="mt-0.5 shrink-0 text-dim" />
           <p className="text-[11px] leading-relaxed text-mute">
             A backup is the only copy that survives clearing browser data or moving to another

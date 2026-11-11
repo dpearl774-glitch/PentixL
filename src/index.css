@@ -19,7 +19,9 @@
   --color-danger: #ff6b6b;
   --color-warn: #ffc15e;
 
-  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  /* A neutral grotesque, the way a drawing tool reads: the platform's own UI
+     face (SF / Segoe / Roboto) rather than a rounded startup typeface. */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
   --radius-sheet: 22px;
@@ -48,7 +50,6 @@
     -webkit-tap-highlight-color: transparent;
     -webkit-touch-callout: none;
     touch-action: manipulation;
-    font-feature-settings: "ss01", "cv01";
   }
 
   /* Form fields must remain selectable/editable — the app-wide
@@ -86,8 +87,14 @@
   }
 
   :focus-visible {
-    outline: 1.5px solid var(--color-accent);
+    outline: 2px solid var(--color-accent);
     outline-offset: 2px;
+  }
+
+  /* Illustration-tool weight: 2px lucide strokes read as chunky marketing
+     icons next to hairlines. 1.7 keeps them crisp at 16–21px. */
+  svg.lucide {
+    stroke-width: 1.7;
   }
 }
 
@@ -101,12 +108,19 @@
 
   /* Numeric / technical labels */
   .label-mono {
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-family: var(--font-sans);
+    font-size: 10.5px;
     line-height: 1;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
+    font-weight: 600;
     color: var(--color-mute);
+  }
+
+  /* Numeric readouts line up column-to-column like a tool's value fields. */
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
   }
 
   .press {

@@ -1,9 +1,16 @@
 import { Layer, VectorPath } from '../types/vector';
 import { pathToSvgD } from './bezier';
+import { isPatternPreviewPath } from './effects';
 import { gradientIdFor } from './svgExport';
 import { gradientMarkup } from './gradients';
 import { textLineHeight, textLines, textMatrixCss } from './textGeometry';
-import { extrusionFaces, extrusionShadow } from './extrusion';
+import { warpTextGlyphs } from './textWarp';
+import {
+  extrusionFaces,
+  extrusionFrontPath,
+  extrusionShadow,
+  extrusionSheen,
+} from './extrusion';
 import {
   clipPathIdFor,
   clippingUrlFor,
@@ -27,7 +34,13 @@ export function generateProjectThumbnailSvg(
   height: number = 600,
   backgroundColor: string = '#0e1013'
 ): string {
-  const visibleLayers = layers.filter((l) => l.visible !== false);
+  const visibleLayers = layers
+    .filter((l) => l.visible !== false)
+    // A project's card shows its artwork; the pattern preview is scaffolding.
+    .map((layer) => ({
+      ...layer,
+      paths: layer.paths.filter((path) => !isPatternPreviewPath(path)),
+    }));
   const clippingMasks = collectClippingMasks(layers);
   const allPaths: { path: VectorPath; layerOpacity: number }[] = [];
 
@@ -71,11 +84,21 @@ export function generateProjectThumbnailSvg(
         const origin = path.points[0];
         if (!origin) return '';
         const textFill = gradId ? `url(#${gradId})` : path.fill === 'none' ? '#fff' : path.fill;
+        // Warped labels draw one glyph at a time, so the card matches the canvas.
+        const warpGlyphs = warpTextGlyphs(path);
+        if (warpGlyphs) {
+          return warpGlyphs
+            .map(
+              (glyph) =>
+                `<text transform="${glyph.transform}" fill="${escapeXml(textFill)}" fill-opacity="${(path.fillOpacity ?? 1) * layerOpacity}" font-family="${escapeXml(path.fontFamily || 'sans-serif')}" font-size="${path.fontSize || 64}" font-weight="${escapeXml(path.fontWeight || 'bold')}"${clipAttr}>${escapeXml(glyph.char)}</text>`
+            )
+            .join('');
+        }
         const lineHeight = textLineHeight(path.fontSize);
         const body = textLines(path.text)
           .map(
             (line, index) =>
-              `<tspan x="0" dy="${index === 0 ? 0 : lineHeight}">${escapeXml(line || ' ')}</tspan>`
+              `<tspan x="${path.textLineX?.[index] ?? 0}" dy="${index === 0 ? 0 : lineHeight}">${escapeXml(line || ' ')}</tspan>`
           )
           .join('');
         return `<text x="0" y="0" transform="translate(${origin.x} ${origin.y}) ${textMatrixCss(path.textMatrix)}" fill="${escapeXml(textFill)}" fill-opacity="${(path.fillOpacity ?? 1) * layerOpacity}" font-family="${escapeXml(path.fontFamily || 'sans-serif')}" font-size="${path.fontSize || 64}" font-weight="${escapeXml(path.fontWeight || 'bold')}" letter-spacing="${path.letterSpacing ?? 0}"${clipAttr}>${body}</text>`;
@@ -83,10 +106,12 @@ export function generateProjectThumbnailSvg(
 
       const d = pathToSvgD(path);
       if (!d) return '';
+      // The card matches the editor: a tilted solid shows its projected face.
+      const faceD = extrusionFrontPath(path) ?? d;
 
       const shadow = extrusionShadow(path);
       const shadowMarkup = shadow
-        ? `<filter id="${shadow.id}" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="${shadow.blur.toFixed(2)}"/></filter><g transform="translate(${shadow.dx.toFixed(2)} ${shadow.dy.toFixed(2)})" filter="url(#${shadow.id})" opacity="${shadow.opacity}"><path d="${d}" fill="#000"/><path d="${shadow.d}" fill="#000"/></g>`
+        ? `<filter id="${shadow.id}" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="${shadow.blur.toFixed(2)}"/></filter><g transform="translate(${shadow.dx.toFixed(2)} ${shadow.dy.toFixed(2)})" filter="url(#${shadow.id})" opacity="${shadow.opacity}"><path d="${faceD}" fill="#000"/><path d="${shadow.d}" fill="#000"/></g>`
         : '';
       const faces = extrusionFaces(path);
       const extrusionMarkup = shadowMarkup + (faces.length
@@ -110,7 +135,12 @@ export function generateProjectThumbnailSvg(
       const strokeCap = path.strokeCap || 'round';
       const strokeJoin = path.strokeJoin || 'round';
 
-      return `${extrusionMarkup}<path d="${d}" fill-rule="evenodd" fill="${escapeXml(fill)}" fill-opacity="${fillOpacity}" stroke="${escapeXml(stroke)}" stroke-width="${strokeWidth}" stroke-opacity="${strokeOpacity}" stroke-linecap="${strokeCap}" stroke-linejoin="${strokeJoin}"${clipAttr} />`;
+      const sheen = extrusionSheen(path);
+      const sheenMarkup = sheen
+        ? `<defs><radialGradient id="${sheen.id}" cx="${sheen.cx.toFixed(3)}" cy="${sheen.cy.toFixed(3)}" r="${sheen.r}"><stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/><stop offset="100%" stop-color="#ffffff" stop-opacity="0"/></radialGradient></defs><path d="${d}" fill="url(#${sheen.id})" opacity="${sheen.opacity}" pointer-events="none"${clipAttr} />`
+        : '';
+
+      return `${extrusionMarkup}<path d="${faceD}" fill-rule="${path.fillRule ?? 'evenodd'}" fill="${escapeXml(fill)}" fill-opacity="${fillOpacity}" stroke="${escapeXml(stroke)}" stroke-width="${strokeWidth}" stroke-opacity="${strokeOpacity}" stroke-linecap="${strokeCap}" stroke-linejoin="${strokeJoin}"${clipAttr} />${sheenMarkup}`;
     })
     .join('');
 

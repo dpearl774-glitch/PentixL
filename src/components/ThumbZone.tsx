@@ -111,7 +111,7 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
               aria-label={`${cap.label}: ${cap.hint}`}
               aria-pressed={active}
               onClick={() => toggle(cap.key)}
-              className={`press pointer-events-auto grid h-11 w-11 place-content-center gap-0.5 rounded-xl border shadow-lg ${
+              className={`press pointer-events-auto grid h-11 w-11 place-content-center gap-0.5 rounded-lg border shadow-lg ${
                 active
                   ? `${cap.activeClass} shadow-lg`
                   : 'border-line bg-ink-2/90 text-dim shadow-black/30 backdrop-blur'
@@ -119,7 +119,7 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
             >
               <span className="font-mono text-[15px] leading-none">{cap.glyph}</span>
               <span
-                className={`font-mono text-[8px] uppercase leading-none tracking-[0.06em] ${
+                className={`font-sans text-[8px] uppercase leading-none tracking-[0.06em] ${
                   active ? 'text-ink-0/75' : 'text-mute'
                 }`}
               >
@@ -133,7 +133,7 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
       {/* RIGHT — repeat actions */}
       <div className="pointer-events-none absolute bottom-2 right-1.5 z-20 flex flex-col items-end gap-1.5">
         {showNudge && (
-          <div className="anim-pop pointer-events-auto mb-1 w-[158px] rounded-2xl border border-line bg-ink-2/95 p-2 shadow-2xl backdrop-blur">
+          <div className="anim-pop pointer-events-auto mb-1 w-[158px] rounded-xl border border-line bg-ink-2/95 p-2 shadow-2xl backdrop-blur">
             <div className="mx-auto grid w-[116px] grid-cols-3 grid-rows-3 gap-1">
               <span />
               <button
@@ -200,7 +200,7 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
             haptic(10);
             onDuplicate();
           }}
-          className="press pointer-events-auto grid h-11 w-11 place-items-center rounded-xl border border-line bg-ink-2/90 text-dim shadow-lg shadow-black/30 backdrop-blur disabled:opacity-30"
+          className="press pointer-events-auto grid h-11 w-11 place-items-center rounded-lg border border-line bg-ink-2/90 text-dim shadow-lg shadow-black/30 backdrop-blur disabled:opacity-30"
         >
           <Copy size={16} />
         </button>
@@ -213,7 +213,7 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
               haptic(14);
               onFinishPath();
             }}
-            className="press pointer-events-auto grid h-12 w-11 place-items-center rounded-xl border border-accent bg-accent text-ink-0 shadow-lg shadow-accent/20"
+            className="press pointer-events-auto grid h-12 w-11 place-items-center rounded-lg border border-accent bg-accent text-ink-0 shadow-lg shadow-accent/20"
           >
             <Check size={19} />
           </button>
@@ -226,7 +226,7 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
               haptic(14);
               onDelete();
             }}
-            className="press pointer-events-auto grid h-11 w-11 place-items-center rounded-xl border border-line bg-ink-2/90 text-dim shadow-lg shadow-black/30 backdrop-blur disabled:opacity-30"
+            className="press pointer-events-auto grid h-11 w-11 place-items-center rounded-lg border border-line bg-ink-2/90 text-dim shadow-lg shadow-black/30 backdrop-blur disabled:opacity-30"
           >
             <Trash2 size={16} />
           </button>
@@ -241,7 +241,7 @@ export const ThumbZone: React.FC<ThumbZoneProps> = ({
             haptic(8);
             setShowNudge((v) => !v);
           }}
-          className={`press pointer-events-auto grid h-11 w-11 place-items-center rounded-xl border shadow-lg shadow-black/30 backdrop-blur disabled:opacity-30 ${
+          className={`press pointer-events-auto grid h-11 w-11 place-items-center rounded-lg border shadow-lg shadow-black/30 backdrop-blur disabled:opacity-30 ${
             showNudge ? 'border-accent bg-accent text-ink-0' : 'border-line bg-ink-2/90 text-mute'
           }`}
         >

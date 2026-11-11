@@ -341,13 +341,18 @@ function roundContour(
     // Tangent length for the requested radius, limited by both neighbouring
     // edges. If the limit bites, recompute the effective radius so the curve
     // stays a true circular arc instead of a stretched approximation.
+    //
+    // `angle` is the deflection (π − interior angle), so the tangent is
+    // r·tan(angle/2), not r/tan(angle/2). The inverted form happened to be
+    // right at 90° and wrong everywhere else: it shrank the arc on sharp
+    // corners, which is why triangles, stars and arrow tips barely rounded.
     const maxTangent = Math.min(inLength, outLength) * 0.49;
-    const tangent = Math.min(cornerRadius / halfTan, maxTangent);
+    const tangent = Math.min(cornerRadius * halfTan, maxTangent);
     if (tangent < 0.25) {
       out.push(cloneAnchor(curr));
       continue;
     }
-    const effectiveRadius = tangent * halfTan;
+    const effectiveRadius = tangent / halfTan;
     const handleLength = (4 / 3) * Math.tan(angle / 4) * effectiveRadius;
 
     const inUnit = { x: inX / inLength, y: inY / inLength };
@@ -607,11 +612,16 @@ export function simplifyPath(path: VectorPath, tolerance: number): VectorPath {
     const reduced = closed
       ? simplifyRing(flat, tolerance)
       : decimateContour(simplifyPoints(flat, tolerance), tolerance, false);
-    if (reduced.length < (closed ? 3 : 2) || reduced.length >= anchors.length) return null;
+    if (reduced.length < (closed ? 3 : 2)) return null;
     // The fit may use part of the chosen tolerance: the user asked for at most
     // `tolerance` units of shape change, and a fit inside half of that keeps
     // the result both sparse and honest.
-    return fitSmoothBezierCurves(reduced, prefix, closed, Math.max(0.4, tolerance * 0.5));
+    const fitted = fitSmoothBezierCurves(reduced, prefix, closed, Math.max(0.4, tolerance * 0.5));
+    // Decimation alone cannot thin a curve: a flattened glyph keeps every point
+    // that a bend needs, so the polyline stayed dense and this bailed out, which
+    // is why Simplify did nothing on converted type. The fitted anchor count is
+    // what matters — it is the number of nodes the user ends up editing.
+    return fitted.length < anchors.length ? fitted : null;
   };
 
   const outer = reduce(path.points, path.closed, `${path.id}-s`);

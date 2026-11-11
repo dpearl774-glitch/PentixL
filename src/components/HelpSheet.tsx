@@ -35,10 +35,10 @@ const Group: React.FC<{ icon: React.ReactNode; title: string; children: React.Re
   title,
   children,
 }) => (
-  <section className="rounded-xl border border-line bg-ink-2 px-3 py-2.5">
+  <section className="rounded-lg border border-line bg-ink-2 px-3 py-2.5">
     <div className="mb-1 flex items-center gap-2 text-accent">
       {icon}
-      <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-accent">
+      <span className="font-sans text-[10px] uppercase tracking-[0.08em] text-accent">
         {title}
       </span>
     </div>
@@ -146,7 +146,7 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
         </Item>
       </Group>
 
-      <section className="rounded-xl border border-line bg-ink-2 px-3 py-2.5">
+      <section className="rounded-lg border border-line bg-ink-2 px-3 py-2.5">
         <div className="mb-1.5">
           <SectionLabel>Desktop keys</SectionLabel>
         </div>

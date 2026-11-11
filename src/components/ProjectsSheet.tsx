@@ -144,9 +144,9 @@ export const ProjectsSheet: React.FC<ProjectsSheetProps> = ({
               onCreateNewProject();
               onClose();
             }}
-            className="press flex items-center gap-3 rounded-xl border border-dashed border-line-strong px-3 py-3 text-left hover:border-accent/50"
+            className="press flex items-center gap-3 rounded-lg border border-dashed border-line-strong px-3 py-3 text-left hover:border-accent/50"
           >
-            <span className="grid h-9 w-9 place-items-center rounded-xl border border-line bg-ink-2 text-accent">
+            <span className="grid h-9 w-9 place-items-center rounded-lg border border-line bg-ink-2 text-accent">
               <Plus size={17} />
             </span>
             <span className="min-w-0">
@@ -158,7 +158,7 @@ export const ProjectsSheet: React.FC<ProjectsSheetProps> = ({
           {loading && <p className="px-1 py-6 text-center text-[12px] text-mute">Loading…</p>}
 
           {!loading && projects.length === 0 && (
-            <p className="rounded-xl border border-line px-3 py-4 text-[12px] leading-relaxed text-mute">
+            <p className="rounded-lg border border-line px-3 py-4 text-[12px] leading-relaxed text-mute">
               No saved documents yet. New work appears here automatically.
             </p>
           )}
@@ -170,7 +170,7 @@ export const ProjectsSheet: React.FC<ProjectsSheetProps> = ({
             return (
               <div
                 key={project.id}
-                className={`overflow-hidden rounded-xl border ${
+                className={`overflow-hidden rounded-lg border ${
                   isCurrent ? 'border-accent/50' : 'border-line'
                 } bg-ink-2`}
               >
@@ -315,7 +315,7 @@ export const ProjectsSheet: React.FC<ProjectsSheetProps> = ({
                 onOpenTemplate(template);
                 onClose();
               }}
-              className="press overflow-hidden rounded-xl border border-line bg-ink-2 p-1.5 text-left hover:border-accent/40"
+              className="press overflow-hidden rounded-lg border border-line bg-ink-2 p-1.5 text-left hover:border-accent/40"
             >
               <span className="block h-[84px] w-full overflow-hidden rounded-lg border border-line bg-ink-0 [&>svg]:h-full [&>svg]:w-full">
                 <span

@@ -71,12 +71,12 @@ export const ToolDock: React.FC<ToolDockProps> = ({ currentTool, onSelectTool, o
                 if (slot.opensSheet) onOpenShapes();
                 else onSelectTool(slot.id);
               }}
-              className="press relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl"
+              className="press relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg"
             >
               <span className={active ? 'text-accent' : 'text-dim'}>{slot.icon}</span>
               {/* Only the active tool is named — six labels at phone width read as noise */}
               {active && (
-                <span className="max-w-full truncate font-mono text-[8.5px] uppercase leading-none tracking-[0.06em] text-accent">
+                <span className="max-w-full truncate font-sans text-[8.5px] uppercase leading-none tracking-[0.06em] text-accent">
                   {slot.label}
                 </span>
               )}

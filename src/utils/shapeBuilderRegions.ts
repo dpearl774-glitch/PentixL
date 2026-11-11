@@ -131,8 +131,12 @@ export function computeAtomicSubRegions(
 
   for (const path of paths) {
     // A clipped path contributes only the pieces inside its clip chain.
+    // Each item is a Polygon (an array of rings), so the point count lives on
+    // its exterior ring — testing the array length here rejected every shape
+    // with one ring, which is why no region was ever offered.
     for (const pathPoly of visibleClippingGeometry(path, byId)) {
-      if (!pathPoly || pathPoly.length < 3) continue;
+      if (!pathPoly || !pathPoly.length) continue;
+      if (!pathPoly[0] || pathPoly[0].length < 3) continue;
 
       if (currentRegions.length === 0) {
         currentRegions.push({
@@ -212,6 +216,33 @@ export function computeAtomicSubRegions(
       stroke: r.topPath.stroke !== 'none' ? r.topPath.stroke : '#E8EAED',
     };
   });
+}
+
+/**
+ * The union of every region the build gesture has touched so far, as one path.
+ *
+ * This is what makes Shape Builder predictable: the per-region hatch only says
+ * what is under the cursor, so until the mouse came back up you could not see
+ * the shape you were actually building. The union outline is painted live, and
+ * it is the silhouette that will exist after release.
+ */
+export function regionUnionOutline(regions: SubRegion[], ids: string[]): string {
+  if (ids.length < 2) return '';
+  const picked = regions.filter((region) => ids.includes(region.id));
+  if (picked.length < 2) return '';
+
+  try {
+    const united = polygonClipping.union(
+      picked[0].polygon,
+      ...picked.slice(1).map((region) => region.polygon)
+    );
+    return united
+      .map((poly) => polygonToSvgPathD(poly))
+      .join(' ')
+      .trim();
+  } catch {
+    return '';
+  }
 }
 
 /**

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Eye, Layers, Menu, Pencil, Redo2, Share2, Undo2 } from 'lucide-react';
+import { Eye, Grid3x3, Layers, Menu, Pencil, Redo2, Share2, Undo2 } from 'lucide-react';
 import { IconButton } from './ui/primitives';
 
 interface TopBarProps {
@@ -13,6 +13,9 @@ interface TopBarProps {
   onRenameProject: (name: string) => void;
   onOpenMenu: () => void;
   onOpenLayers: () => void;
+  /** Alignment grid — off by default, so it needs one tap from the bar */
+  gridVisible: boolean;
+  onToggleGrid: () => void;
   onOpenExport: () => void;
   /** Shows only the artboard, hiding every panel and editing aid */
   onPreview: () => void;
@@ -33,6 +36,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onRenameProject,
   onOpenMenu,
   onOpenLayers,
+  gridVisible,
+  onToggleGrid,
   onOpenExport,
   onPreview,
 }) => {
@@ -95,7 +100,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         </button>
       )}
 
-      <div className="flex shrink-0 items-center rounded-xl border border-line bg-ink-0/60">
+      <div className="flex shrink-0 items-center rounded-lg border border-line bg-ink-0/60">
         <IconButton label="Undo" onClick={onUndo} disabled={!canUndo}>
           <Undo2 size={17} />
         </IconButton>
@@ -114,6 +119,15 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
       </IconButton>
 
+      <IconButton
+        label="Alignment grid"
+        title={gridVisible ? 'Hide grid' : 'Show grid'}
+        active={gridVisible}
+        onClick={onToggleGrid}
+      >
+        <Grid3x3 size={17} />
+      </IconButton>
+
       <IconButton label="Preview artboard" onClick={onPreview}>
         <Eye size={17} />
       </IconButton>
@@ -123,7 +137,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         onClick={onOpenExport}
         aria-label="Export"
         title="Export"
-        className="press ml-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-accent text-ink-0"
+        className="press ml-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent text-ink-0"
       >
         <Share2 size={16} />
       </button>

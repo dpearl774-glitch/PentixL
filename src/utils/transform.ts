@@ -6,6 +6,7 @@ import {
   scaleTextMatrix,
   textWorldBox,
 } from './textGeometry';
+import { textWarpBounds } from './textWarp';
 
 export interface BoundingBox {
   minX: number;
@@ -21,6 +22,35 @@ export interface BoundingBox {
 export type HandleType = 'tl' | 'tr' | 'bl' | 'br' | 'tc' | 'bc' | 'ml' | 'mr' | 'rot';
 
 /** Keep the sharp geometry behind a rounded corner moving with the path. */
+/**
+ * The stored pre-warp geometry travels with its shape. Without this, moving or
+ * scaling a bent object and then touching the amount would snap it back to
+ * where the bend was first applied.
+ */
+function transformWarpSource(
+  path: VectorPath,
+  map: (point: AnchorPoint) => AnchorPoint
+): Pick<VectorPath, 'warpSource'> {
+  const source = path.warpSource;
+  if (!source) return {};
+  const frame = (x: number, y: number) => map({ id: 'warp-box', type: 'corner', x, y });
+  const a = frame(source.box.minX, source.box.minY);
+  const b = frame(source.box.minX + source.box.width, source.box.minY + source.box.height);
+  return {
+    warpSource: {
+      ...source,
+      points: source.points.map(map),
+      ...(source.holes ? { holes: source.holes.map((hole) => hole.map(map)) } : {}),
+      box: {
+        minX: Math.min(a.x, b.x),
+        minY: Math.min(a.y, b.y),
+        width: Math.abs(b.x - a.x),
+        height: Math.abs(b.y - a.y),
+      },
+    },
+  };
+}
+
 function transformCornerSource(
   path: VectorPath,
   map: (point: AnchorPoint) => AnchorPoint
@@ -85,7 +115,9 @@ export function computePathsBoundingBox(paths: VectorPath[]): BoundingBox | null
     // and run the label's affine transform so the transform box tracks what is
     // actually drawn through scale, rotation and flips.
     if (path.text) {
-      const box = textWorldBox(path);
+      // A warped label bows away from its straight box, so the frame follows
+      // the bent type instead of the original baseline.
+      const box = textWarpBounds(path) ?? textWorldBox(path);
       if (box) {
         hasPoints = true;
         if (box.minX < minX) minX = box.minX;
@@ -137,6 +169,7 @@ export function translatePaths(paths: VectorPath[], dx: number, dy: number): Vec
     points: path.points.map(shift),
     ...(path.holes ? { holes: path.holes.map((hole) => hole.map(shift)) } : {}),
     ...transformCornerSource(path, shift),
+    ...transformWarpSource(path, shift),
   }));
 }
 
@@ -173,6 +206,7 @@ export function scalePaths(
     points: path.points.map(scalePoint),
     ...(path.holes ? { holes: path.holes.map((hole) => hole.map(scalePoint)) } : {}),
     ...transformCornerSource(path, scalePoint),
+    ...transformWarpSource(path, scalePoint),
     ...(path.cornerRadius !== undefined
       ? { cornerRadius: path.cornerRadius * radiusScale }
       : {}),
@@ -230,6 +264,7 @@ export function rotatePaths(
     points: path.points.map(rotateAnchor),
     ...(path.holes ? { holes: path.holes.map((hole) => hole.map(rotateAnchor)) } : {}),
     ...transformCornerSource(path, rotateAnchor),
+    ...transformWarpSource(path, rotateAnchor),
     ...(path.text
       ? { textMatrix: rotateTextMatrix(path.textMatrix, angleRad) }
       : {}),
@@ -267,6 +302,7 @@ export function flipPaths(
     points: path.points.map(flipPoint),
     ...(path.holes ? { holes: path.holes.map((hole) => hole.map(flipPoint)) } : {}),
     ...transformCornerSource(path, flipPoint),
+    ...transformWarpSource(path, flipPoint),
     ...(path.text
       ? { textMatrix: flipTextMatrix(path.textMatrix, direction) }
       : {}),
@@ -322,6 +358,9 @@ export function copyPathsWithNewIds(
           }
         : {}),
       ...transformCornerSource(path, (pt) => shift(pt, pt.id)),
+      // The copy's pre-warp geometry has to move with it, or the next amount
+      // change would bend it back at the original spot.
+      ...transformWarpSource(path, (pt) => shift(pt, pt.id)),
     };
   });
 }

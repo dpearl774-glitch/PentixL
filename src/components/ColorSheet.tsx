@@ -51,6 +51,11 @@ interface ColorSheetProps {
   swatches?: StoredSwatch[];
   onAddSwatch?: (name: string, color: string) => void;
   onRemoveSwatch?: (id: string) => void;
+  /** Gradients saved with the workspace, newest first */
+  savedGradients?: GradientDef[];
+  onSaveGradient?: () => void;
+  onApplyGradient?: (gradient: GradientDef) => void;
+  onDeleteSavedGradient?: (index: number) => void;
 }
 
 const PALETTE = [
@@ -184,8 +189,12 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
   recentColors = [],
   previewPath = null,
   swatches = [],
-  onAddSwatch,
-  onRemoveSwatch,
+  onAddSwatch,  onRemoveSwatch,
+  savedGradients = [],
+  onSaveGradient,
+  onApplyGradient,
+  onDeleteSavedGradient,
+  
 }) => {
   const isGradient = mode === 'fill' && fillType === 'gradient' && !!fillGradient;
   const stops = fillGradient ? sortedStops(fillGradient.stops) : [];
@@ -343,7 +352,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
                 ? gradientCss(fillGradient)
                 : fillColor;
             return (
-              <div className="flex items-center gap-3 rounded-xl border border-line bg-ink-0 p-2.5">
+              <div className="flex items-center gap-3 rounded-lg border border-line bg-ink-0 p-2.5">
                 <svg
                   viewBox={`${minX - pad} ${minY - pad} ${w + pad * 2} ${hgt + pad * 2}`}
                   role="img"
@@ -362,7 +371,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
                   />
                 </svg>
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[9px] uppercase tracking-[0.1em] text-mute">
+                  <div className="font-sans text-[9px] uppercase tracking-[0.1em] text-mute">
                     live on object
                   </div>
                   <div className="truncate text-[12px] font-semibold text-text">
@@ -387,7 +396,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
             onPointerMove={svDrag.onPointerMove}
             onPointerUp={svDrag.onPointerUp}
             onPointerCancel={svDrag.onPointerCancel}
-            className="relative h-32 w-full cursor-crosshair touch-none overflow-hidden rounded-xl border border-line-strong"
+            className="relative h-32 w-full cursor-crosshair touch-none overflow-hidden rounded-lg border border-line-strong"
             style={{
               backgroundColor: hsvToHex(h, 1, 1),
               backgroundImage:
@@ -425,7 +434,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
         {/* Hex + eyedropper + none */}
         <div className="flex items-center gap-3">
           <span
-            className="h-14 w-14 shrink-0 rounded-xl border border-line-strong"
+            className="h-14 w-14 shrink-0 rounded-lg border border-line-strong"
             style={{
               backgroundColor: isNone ? 'transparent' : effective,
               backgroundImage: isNone
@@ -444,7 +453,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
                   if (e.key === 'Enter') commitHex((e.target as HTMLInputElement).value);
                 }}
                 spellCheck={false}
-                className="h-9 min-w-0 flex-1 rounded-lg border border-line bg-ink-0 px-2.5 font-mono text-[12px] font-bold uppercase tracking-wider text-text outline-none focus:border-accent/60"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-line bg-ink-0 px-2.5 font-sans text-[12px] font-bold uppercase tracking-wider text-text outline-none focus:border-accent/60"
                 aria-label="Hex value"
               />
               <button
@@ -476,7 +485,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
             {/* Opacity */}
             {mode !== 'background' && !isNone && (
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-mute">Alpha</span>
+                <span className="font-sans text-[10px] uppercase tracking-wider text-mute">Alpha</span>
                 <RangeInput
                   type="range"
                   min={0}
@@ -497,7 +506,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
 
         {/* ---------------------- Gradient (fill only) ---------------------- */}
         {mode === 'fill' && (
-          <section className="flex flex-col gap-2.5 rounded-xl border border-line bg-ink-0 p-3">
+          <section className="flex flex-col gap-2.5 rounded-lg border border-line bg-ink-0 p-3">
             <div className="flex items-center justify-between">
               <SectionLabel>Fill type</SectionLabel>
               <Segmented
@@ -580,7 +589,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
 
                 {/* Stop position */}
                 <div className="flex items-center gap-2">
-                  <span className="w-14 font-mono text-[10px] uppercase tracking-wider text-mute">Pos</span>
+                  <span className="w-14 font-sans text-[10px] uppercase tracking-wider text-mute">Pos</span>
                   <RangeInput
                     type="range"
                     min={0}
@@ -604,7 +613,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
                 {/* Direction */}
                 {fillGradient.type === 'linear' && (
                   <div className="flex items-center gap-2">
-                    <span className="w-14 font-mono text-[10px] uppercase tracking-wider text-mute">Angle</span>
+                    <span className="w-14 font-sans text-[10px] uppercase tracking-wider text-mute">Angle</span>
                     <RangeInput
                       type="range"
                       min={0}
@@ -619,6 +628,47 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
                       {Math.round(fillGradient.angle)}°
                     </span>
                   </div>
+                )}
+
+                {/* Saved gradients — a paint library that survives a refresh */}
+                <div className="flex items-center justify-between">
+                  <span className="font-sans text-[10px] uppercase tracking-wider text-mute">
+                    Saved
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onSaveGradient?.()}
+                    className="press flex h-7 items-center gap-1 rounded-lg border border-line bg-ink-2 px-2 text-[10px] font-semibold text-dim hover:text-accent"
+                  >
+                    <Plus size={11} /> Save gradient
+                  </button>
+                </div>
+                {savedGradients.length > 0 ? (
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {savedGradients.map((saved, index) => (
+                      <div key={`${index}-${saved.type}-${saved.angle}`} className="relative">
+                        <button
+                          type="button"
+                          onClick={() => onApplyGradient?.(saved)}
+                          aria-label={`Apply saved gradient ${index + 1}`}
+                          className="press h-8 w-full rounded-lg border border-line"
+                          style={{ backgroundImage: gradientCss(saved) }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => onDeleteSavedGradient?.(index)}
+                          aria-label={`Delete saved gradient ${index + 1}`}
+                          className="press absolute -right-1 -top-1 grid h-4 w-4 place-items-center rounded-full border border-line bg-ink-0 text-mute hover:text-danger"
+                        >
+                          <Trash2 size={9} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[10.5px] leading-snug text-mute">
+                    Save this gradient to reuse it on another object.
+                  </p>
                 )}
               </>
             )}
@@ -777,9 +827,9 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
         {mode === 'background' && (
           <section className="flex flex-col gap-2">
             <SectionLabel>Artboard colour</SectionLabel>
-            <div className="flex items-center justify-between rounded-xl border border-line bg-ink-0 px-3 py-2.5">
+            <div className="flex items-center justify-between rounded-lg border border-line bg-ink-0 px-3 py-2.5">
               <div className="min-w-0">
-                <div className="font-mono text-[12px] font-bold uppercase text-text">
+                <div className="font-sans text-[12px] font-bold uppercase text-text">
                   {artboardColor}
                 </div>
                 <div className="text-[11px] text-mute">Default is #101216</div>
@@ -793,7 +843,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
 
         {/* Stroke specifics */}
         {mode === 'stroke' && (
-          <section className="flex flex-col gap-3 rounded-xl border border-line bg-ink-0 p-3">
+          <section className="flex flex-col gap-3 rounded-lg border border-line bg-ink-0 p-3">
             <div className="flex items-center justify-between">
               <SectionLabel>Weight</SectionLabel>
               <span className="font-mono text-[11px] font-bold text-accent">{strokeWidth} px</span>

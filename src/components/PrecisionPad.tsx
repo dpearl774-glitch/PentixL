@@ -211,7 +211,7 @@ export const PrecisionPad: React.FC<PrecisionPadProps> = ({
             WebkitTapHighlightColor: 'transparent',
             overscrollBehavior: 'contain',
           }}
-          className={`relative h-[78px] w-[210px] touch-none select-none overflow-hidden rounded-2xl border bg-ink-2/85 shadow-lg shadow-black/40 backdrop-blur transition-colors ${
+          className={`relative h-[78px] w-[210px] touch-none select-none overflow-hidden rounded-xl border bg-ink-2/85 shadow-lg shadow-black/40 backdrop-blur transition-colors ${
             pressed ? 'border-accent/70' : 'border-line'
           }`}
         >
@@ -240,7 +240,7 @@ export const PrecisionPad: React.FC<PrecisionPadProps> = ({
           />
           <span
             aria-hidden
-            className={`pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 whitespace-nowrap font-mono text-[8px] uppercase tracking-[0.14em] ${
+            className={`pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 whitespace-nowrap font-sans text-[8px] uppercase tracking-[0.14em] ${
               pressed ? 'text-accent/80' : 'text-mute/70'
             }`}
           >

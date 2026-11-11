@@ -1,4 +1,13 @@
-import type { PencilSmoothing, PressureConfig, ShapeKind, StrokeCap, StrokeJoin, ToolType } from '../types/vector';
+import type {
+  GradientDef,
+  GradientStop,
+  PencilSmoothing,
+  PressureConfig,
+  ShapeKind,
+  StrokeCap,
+  StrokeJoin,
+  ToolType,
+} from '../types/vector';
 
 /**
  * Session settings — everything that is a preference rather than artwork.
@@ -15,6 +24,8 @@ export interface UserPrefs {
   gridOpacity: number;
   gridLocked: boolean;
   rulersVisible: boolean;
+  /** Guides are an aid: hide the whole set without deleting any of them */
+  guidesVisible: boolean;
   guidesLocked: boolean;
   smartGuides: boolean;
   panZoomLocked: boolean;
@@ -45,16 +56,21 @@ export interface UserPrefs {
   recentColors: string[];
   /** Newest-first typefaces chosen in the text sheet */
   recentFonts: string[];
+  /** Gradients saved from the colour panel, newest first */
+  savedGradients: GradientDef[];
 }
 
 export const DEFAULT_PREFS: UserPrefs = {
-  gridVisible: true,
+  /* A new sheet starts as a sheet. The grid is a measuring aid you switch on,
+     not wallpaper — it is one tap away in the document bar. */
+  gridVisible: false,
   gridSnap: false,
   gridSpacingX: 25,
   gridSpacingY: 25,
   gridOpacity: 0.4,
   gridLocked: false,
   rulersVisible: true,
+  guidesVisible: true,
   guidesLocked: false,
   smartGuides: true,
   panZoomLocked: false,
@@ -86,6 +102,7 @@ export const DEFAULT_PREFS: UserPrefs = {
   selectedFontFamily: 'Plus Jakarta Sans, sans-serif',
   recentColors: [],
   recentFonts: ['Plus Jakarta Sans, sans-serif'],
+  savedGradients: [],
 };
 
 const KEY = 'pentix.prefs.v1';
@@ -106,6 +123,29 @@ const oneOf = <T extends string>(v: unknown, options: readonly T[], fallback: T)
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
+/** A stored gradient survives only if every stop is a usable colour. */
+const sanitizeGradient = (value: unknown): GradientDef | null => {
+  if (!isRecord(value)) return null;
+  const stops = Array.isArray(value.stops) ? value.stops : [];
+  const cleanStops: GradientStop[] = [];
+  for (const raw of stops.slice(0, 8)) {
+    if (!isRecord(raw)) continue;
+    const color = typeof raw.color === 'string' && HEX.test(raw.color) ? raw.color : null;
+    if (!color) continue;
+    cleanStops.push({
+      offset: num(raw.offset, 0, 0, 1),
+      color,
+      opacity: num(raw.opacity, 1, 0, 1),
+    });
+  }
+  if (cleanStops.length < 2) return null;
+  return {
+    type: oneOf(value.type, ['linear', 'radial'] as const, 'linear'),
+    angle: num(value.angle, 90, 0, 360),
+    stops: cleanStops,
+  };
+};
+
 /**
  * Validate any preference-shaped value, falling back field by field so a
  * stale record, or a restored backup, can never break startup.
@@ -125,6 +165,7 @@ export function sanitizeUserPrefs(raw: unknown): UserPrefs {
     gridOpacity: num(p.gridOpacity, d.gridOpacity, 0.05, 1),
     gridLocked: bool(p.gridLocked, d.gridLocked),
     rulersVisible: bool(p.rulersVisible, d.rulersVisible),
+    guidesVisible: bool(p.guidesVisible, d.guidesVisible),
     guidesLocked: bool(p.guidesLocked, d.guidesLocked),
     smartGuides: bool(p.smartGuides, d.smartGuides),
     panZoomLocked: bool(p.panZoomLocked, d.panZoomLocked),
@@ -204,6 +245,12 @@ export function sanitizeUserPrefs(raw: unknown): UserPrefs {
           .filter((f): f is string => typeof f === 'string' && f.length > 0)
           .slice(0, 8)
       : d.recentFonts,
+    savedGradients: Array.isArray(p.savedGradients)
+      ? (p.savedGradients as unknown[])
+          .map(sanitizeGradient)
+          .filter((g): g is GradientDef => g !== null)
+          .slice(0, 16)
+      : d.savedGradients,
   };
 }
 

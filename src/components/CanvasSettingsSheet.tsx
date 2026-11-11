@@ -25,6 +25,9 @@ interface CanvasSettingsSheetProps {
   /* rulers & guides */
   rulersVisible: boolean;
   onToggleRulers: () => void;
+  /** Shows or hides every guide without deleting them */
+  guidesVisible: boolean;
+  onToggleGuides: () => void;
   /** One switch for every guide in the document */
   guidesLocked: boolean;
   onToggleGuidesLock: () => void;
@@ -80,7 +83,7 @@ const Stepper: React.FC<{
   disabled?: boolean;
   onChange: (value: number) => void;
 }> = ({ label, value, disabled, onChange }) => (
-  <div className="flex items-center justify-between gap-2 rounded-xl border border-line bg-ink-0 px-3 py-2">
+  <div className="flex items-center justify-between gap-2 rounded-lg border border-line bg-ink-0 px-3 py-2">
     <span className="text-[12px] font-semibold text-text">{label}</span>
     <div className="flex items-center gap-1.5">
       <button
@@ -161,6 +164,8 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
   onToggleGridLock,
   rulersVisible,
   onToggleRulers,
+  guidesVisible,
+  onToggleGuides,
   guidesLocked,
   onToggleGuidesLock,
   guides,
@@ -226,7 +231,7 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
     >
       <div className="flex flex-col gap-5">
         {/* ------------------------------ Size ------------------------------ */}
-        <section className="flex flex-col gap-2.5 rounded-xl border border-line bg-ink-0 p-3">
+        <section className="flex flex-col gap-2.5 rounded-lg border border-line bg-ink-0 p-3">
           <div className="flex items-center justify-between">
             <SectionLabel>Artboard size</SectionLabel>
             <Segmented
@@ -243,7 +248,7 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
 
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1">
-              <span className="font-mono text-[10px] uppercase tracking-wider text-mute">Width</span>
+              <span className="font-sans text-[10px] uppercase tracking-wider text-mute">Width</span>
               <input
                 inputMode="decimal"
                 value={wDraft}
@@ -255,7 +260,7 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
               />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="font-mono text-[10px] uppercase tracking-wider text-mute">Height</span>
+              <span className="font-sans text-[10px] uppercase tracking-wider text-mute">Height</span>
               <input
                 inputMode="decimal"
                 value={hDraft}
@@ -308,14 +313,14 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
         </section>
 
         {/* ------------------------------ Grid ------------------------------ */}
-        <section className="flex flex-col gap-2 rounded-xl border border-line bg-ink-0 p-3">
+        <section className="flex flex-col gap-2 rounded-lg border border-line bg-ink-0 p-3">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2">
               <Grid3x3 size={14} className="text-accent" />
               <SectionLabel>Grid</SectionLabel>
             </span>
             <span className="flex items-center gap-2">
-              <span className="font-mono text-[10px] uppercase tracking-wider text-mute">
+              <span className="font-sans text-[10px] uppercase tracking-wider text-mute">
                 {gridLocked ? 'Locked' : 'Unlocked'}
               </span>
               <button
@@ -332,7 +337,7 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center justify-between rounded-xl border border-line bg-ink-1 px-3 py-2">
+          <div className="flex items-center justify-between rounded-lg border border-line bg-ink-1 px-3 py-2">
             <span className="flex items-center gap-2 text-[12px] font-semibold text-text">
               Show gridlines
             </span>
@@ -353,7 +358,7 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
           />
 
           <div className={`flex items-center gap-2 ${gridLocked ? 'opacity-50' : ''}`}>
-            <span className="w-20 font-mono text-[10px] uppercase tracking-wider text-mute">Lines</span>
+            <span className="w-20 font-sans text-[10px] uppercase tracking-wider text-mute">Lines</span>
             <RangeInput
               type="range"
               min={5}
@@ -370,7 +375,7 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center justify-between rounded-xl border border-line bg-ink-1 px-3 py-2">
+          <div className="flex items-center justify-between rounded-lg border border-line bg-ink-1 px-3 py-2">
             <span className="flex items-center gap-2 text-[12px] font-semibold text-text">
               <Magnet size={14} className={gridSnap ? 'text-accent' : 'text-mute'} />
               Snap objects to grid
@@ -381,24 +386,41 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
         </section>
 
         {/* -------------------------- Rulers & guides -------------------------- */}
-        <section className="flex flex-col gap-2 rounded-xl border border-line bg-ink-0 p-3">
+        <section className="flex flex-col gap-2 rounded-lg border border-line bg-ink-0 p-3">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2">
               <Ruler size={14} className="text-accent" />
               <SectionLabel>Rulers & guides</SectionLabel>
             </span>
-            <span className="flex items-center gap-2">
+          </div>
+
+          {/* Three bare switches in a row left nobody able to tell which was
+              which, so each aid gets its own labelled row. */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between rounded-lg border border-line bg-ink-1 px-2.5 py-1.5">
+              <span className="text-[11px] font-semibold text-text">Rulers</span>
               <Toggle on={rulersVisible} onClick={onToggleRulers} label="Show rulers" />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-line bg-ink-1 px-2.5 py-1.5">
+              <span className="text-[11px] font-semibold text-text">Guides</span>
+              <Toggle on={guidesVisible} onClick={onToggleGuides} label="Show guides" />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-line bg-ink-1 px-2.5 py-1.5">
+              <span className="text-[11px] font-semibold text-text">Lock all guides</span>
               <Toggle
                 on={guidesLocked}
                 onClick={onToggleGuidesLock}
                 label="Lock all guides"
               />
-            </span>
+            </div>
           </div>
 
           <p className="text-[11px] leading-snug text-mute">
-            {guidesLocked ? 'All guides locked.' : 'Drag from a ruler to add a guide.'}
+            {!guidesVisible
+              ? `Guides hidden — ${guides.length} kept.`
+              : guidesLocked
+                ? 'All guides locked.'
+                : 'Drag from a ruler to add a guide.'}
           </p>
 
           {guides.length > 0 && (
@@ -456,12 +478,12 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
         </section>
 
         {/* --------------------------- Background --------------------------- */}
-        <section className="flex flex-col gap-2 rounded-xl border border-line bg-ink-0 p-3">
+        <section className="flex flex-col gap-2 rounded-lg border border-line bg-ink-0 p-3">
           <SectionLabel>Artboard background</SectionLabel>
           <button
             type="button"
             onClick={onEditBackground}
-            className="press flex items-center justify-between gap-3 rounded-xl border border-line bg-ink-1 px-3 py-2.5"
+            className="press flex items-center justify-between gap-3 rounded-lg border border-line bg-ink-1 px-3 py-2.5"
           >
             <span className="flex items-center gap-3">
               <span
@@ -469,7 +491,7 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
                 style={{ backgroundColor: artboardColor }}
               />
               <span className="min-w-0 text-left">
-                <span className="block font-mono text-[12px] font-bold uppercase text-text">
+                <span className="block font-sans text-[12px] font-bold uppercase text-text">
                   {artboardColor}
                 </span>
                 <span className="block text-[11px] text-mute">Change colour · pick, hex or reset</span>

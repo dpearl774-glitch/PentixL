@@ -36,7 +36,17 @@ const SAMPLES: { name: string; icon: React.ReactNode; svg: string }[] = [
   },
 ];
 
-const MAX_SIDE = 320;
+/**
+ * Sampling resolution. The old ceiling of 320px threw away every detail smaller
+ * than a percent or two of the image, so a logo's thin strokes arrived rounded
+ * and a photo's edges arrived as blobs. The area cap is what keeps a phone's
+ * memory in bounds — a field is four bytes per sampled pixel, and the contour
+ * walk is linear in it.
+ */
+const SAMPLE_MAX_SIDE = 1400;
+const SAMPLE_MAX_AREA = 1_800_000;
+/** Placed footprint of the result, in artboard units, on its longest side. */
+const PLACE_MAX_SIDE = 320;
 
 export const TraceSheet: React.FC<TraceSheetProps> = ({
   open,
@@ -50,7 +60,9 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
 }) => {
   const [src, setSrc] = useState<string | null>(null);
   const [threshold, setThreshold] = useState(128);
-  const [simplify, setSimplify] = useState(1.4);
+  /** Curve deviation, in artboard units — independent of sampling size. */
+  const [simplify, setSimplify] = useState(1);
+  const [sample, setSample] = useState<{ width: number; height: number } | null>(null);
   const [invert, setInvert] = useState(false);
   const [paths, setPaths] = useState<VectorPath[]>([]);
   const [busy, setBusy] = useState(false);
@@ -108,9 +120,18 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
     setBusy(true);
     setError(null);
     try {
-      const ratio = Math.min(1, MAX_SIDE / Math.max(img.width, img.height));
+      const longest = Math.max(1, Math.max(img.width, img.height));
+      const ratio = Math.min(
+        1,
+        SAMPLE_MAX_SIDE / longest,
+        Math.sqrt(SAMPLE_MAX_AREA / Math.max(1, img.width * img.height))
+      );
       const w = Math.max(1, Math.round(img.width * ratio));
       const h = Math.max(1, Math.round(img.height * ratio));
+      // One sampled pixel becomes this many artboard units, so the traced
+      // artwork lands at a stable size no matter how finely it was sampled.
+      const unitsPerPixel = Math.min(PLACE_MAX_SIDE / w, PLACE_MAX_SIDE / h);
+      setSample({ width: w, height: h });
 
       const work = document.createElement('canvas');
       work.width = w;
@@ -143,11 +164,16 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
         pctx.putImageData(out, 0, 0);
       }
 
+      // Tolerances are stored in artboard units and converted here, so moving
+      // the sampling resolution changes how much detail is captured — never how
+      // smooth the result is.
       const traced = traceImageToVectorPaths(data, {
         threshold,
         invert,
-        simplification: simplify,
-        minArea: 12,
+        simplification: simplify / unitsPerPixel,
+        fitTolerance: Math.max(0.2, simplify * 0.6) / unitsPerPixel,
+        minArea: 12 / (unitsPerPixel * unitsPerPixel),
+        outputScale: unitsPerPixel,
         fillColor: fillColor === 'none' ? '#4c8dff' : fillColor,
         strokeColor,
         strokeWidth,
@@ -165,6 +191,7 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
             if (d) overlay.addPath(new Path2D(d));
           }
           pctx.save();
+          pctx.scale(1 / unitsPerPixel, 1 / unitsPerPixel);
           pctx.fillStyle = 'rgba(76, 141, 255, 0.2)';
           pctx.fill(overlay, 'evenodd');
           pctx.strokeStyle = '#4c8dff';
@@ -242,7 +269,7 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
           ))}
         </div>
 
-        <div className="grid h-52 place-items-center overflow-hidden rounded-xl border border-line bg-ink-0 p-2">
+        <div className="grid h-52 place-items-center overflow-hidden rounded-lg border border-line bg-ink-0 p-2">
           {src ? (
             <canvas ref={previewRef} className="max-h-full max-w-full rounded object-contain" />
           ) : (
@@ -256,7 +283,7 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
         </div>
 
         {src && (
-          <div className="grid grid-cols-2 gap-3 rounded-xl border border-line bg-ink-0 p-3">
+          <div className="grid grid-cols-2 gap-3 rounded-lg border border-line bg-ink-0 p-3">
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
                 <SectionLabel>Threshold</SectionLabel>
@@ -274,12 +301,12 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
                 <SectionLabel>Smoothing</SectionLabel>
-                <span className="font-mono text-[10px] text-accent">{simplify.toFixed(1)}</span>
+                <span className="font-mono text-[10px] text-accent">{simplify.toFixed(1)} u</span>
               </div>
               <RangeInput
                 type="range"
-                min={0.4}
-                max={4}
+                min={0.2}
+                max={3}
                 step={0.1}
                 value={simplify}
                 onChange={(e) => setSimplify(Number(e.target.value))}
@@ -303,7 +330,11 @@ export const TraceSheet: React.FC<TraceSheetProps> = ({
         {src && (
           <div className="flex items-center justify-between">
             <span className="font-mono text-[11px] text-mute">
-              {busy ? 'tracing…' : `${paths.length} contours · ${paths.reduce((n, p) => n + p.points.length, 0)} nodes`}
+              {busy
+                ? 'tracing…'
+                : `${paths.length} contours · ${paths.reduce((n, p) => n + p.points.length, 0)} nodes${
+                    sample ? ` · ${sample.width}×${sample.height} sampled` : ''
+                  }`}
             </span>
             <Button
               size="sm"

@@ -1,5 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#08090b"/>
-  <path d="M152 376V136h112c54 0 92 34 92 84s-38 84-92 84h-52v72h-60zm60-128h48c22 0 36-12 36-28s-14-28-36-28h-48v56z" fill="#eceef1"/>
-  <circle cx="368" cy="152" r="34" fill="#4c8dff"/>
+  <defs>
+    <linearGradient id="body" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#6EA8FF"/>
+      <stop offset="0.52" stop-color="#5B7CFF"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#151821"/>
+      <stop offset="1" stop-color="#08090b"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#plate)"/>
+  <rect x="1" y="1" width="510" height="510" rx="111" fill="none" stroke="#ffffff" stroke-opacity="0.06"/>
+  <path d="M168 130H286C350 130 392 172 392 232C392 292 350 334 286 334H222V382H168Z M222 182H286C318 182 334 202 334 232C334 262 318 282 286 282H222Z" fill="url(#body)" fill-rule="evenodd"/>
+  <path d="M168 130H286C350 130 392 172 392 232C392 292 350 334 286 334H222V382H168Z M222 182H286C318 182 334 202 334 232C334 262 318 282 286 282H222Z" fill="url(#gloss)" fill-rule="evenodd"/>
 </svg>

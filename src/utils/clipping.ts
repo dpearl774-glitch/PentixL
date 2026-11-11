@@ -6,6 +6,14 @@ export function clipPathIdFor(pathId: string): string {
 }
 
 /**
+ * Clip that crops an image-painted object to its own outline, so the photo
+ * inside a shape is the shape, not a rectangle around it.
+ */
+export function imageClipIdFor(pathId: string): string {
+  return `pentix-image-${pathId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+}
+
+/**
  * Every path that can act as a clip source. Visibility is deliberately ignored:
  * hiding a source must not make its children pop out of the clip. A missing
  * source is handled with an empty clip definition instead.

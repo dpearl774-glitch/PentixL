@@ -10,6 +10,7 @@ import {
   Pencil,
   Sparkles,
   Image as ImageIcon,
+  Crop,
 } from 'lucide-react';
 import { ReferenceImage } from '../types/vector';
 import { Button, IconButton, SectionLabel, Sheet } from './ui/primitives';
@@ -24,6 +25,9 @@ interface ReferencesSheetProps {
   onAdd: (image: ReferenceImage) => void;
   onTrace: (src: string) => void;
   onTraceWithPen: () => void;
+  /** Turns a reference into artwork, cropped to the selection when there is one */
+  onPlaceImage: (image: ReferenceImage) => void;
+  hasSelection: boolean;
 }
 
 /**
@@ -39,6 +43,8 @@ export const ReferencesSheet: React.FC<ReferencesSheetProps> = ({
   onAdd,
   onTrace,
   onTraceWithPen,
+  onPlaceImage,
+  hasSelection,
 }) => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -89,13 +95,13 @@ export const ReferencesSheet: React.FC<ReferencesSheetProps> = ({
         {uploadError && <p className="text-[11px] text-danger">{uploadError}</p>}
 
         {references.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-line px-3 py-8 text-center">
+          <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-line px-3 py-8 text-center">
             <ImageIcon size={18} className="text-mute" />
             <p className="text-[12px] text-mute">Drop a sketch or photo to trace over.</p>
           </div>
         ) : (
           references.map((img) => (
-            <div key={img.id} className="rounded-xl border border-line bg-ink-2/80 p-2">
+            <div key={img.id} className="rounded-lg border border-line bg-ink-2/80 p-2">
               <div className="flex items-center gap-2">
                 <img
                   src={img.url}
@@ -160,6 +166,17 @@ export const ReferencesSheet: React.FC<ReferencesSheetProps> = ({
                   <Sparkles size={12} /> Auto-vectorise
                 </Button>
               </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="mt-1.5 w-full"
+                onClick={() => {
+                  onPlaceImage(img);
+                  onClose();
+                }}
+              >
+                <Crop size={12} /> {hasSelection ? 'Clip into shape' : 'Place as artwork'}
+              </Button>
             </div>
           ))
         )}
