@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Bug, Copy, ExternalLink, Lightbulb, Palette, Upload } from 'lucide-react';
+import { Bug, Copy, ExternalLink, Lightbulb, Mail, Palette, Upload } from 'lucide-react';
 import { Button, Chip, SectionLabel, Sheet } from './ui/primitives';
 import { buildDiagnostics, buildReport, FeedbackContext } from '../utils/diagnostics';
 
@@ -11,6 +11,7 @@ interface FeedbackSheetProps {
 }
 
 const ISSUE_URL = 'https://github.com/dpearl774-glitch/PentixL/issues/new';
+const FEEDBACK_EMAIL = 'emigraphixdesign@gmail.com';
 
 const KINDS = [
   { id: 'Bug', icon: <Bug size={13} /> },
@@ -66,9 +67,12 @@ export const FeedbackSheet: React.FC<FeedbackSheetProps> = ({
     onCopied(ok ? 'Report copied — paste it anywhere' : 'Could not copy — select the text below');
   };
 
-  const issueHref = `${ISSUE_URL}?title=${encodeURIComponent(
-    `[${kind}] ${message.split('\n')[0].slice(0, 60) || 'Feedback'}`
-  )}&body=${encodeURIComponent(`${message.trim() || '(describe the issue)'}\n\n\`\`\`\n${diagnostics}\n\`\`\``)}`;
+  const subject = `[${kind}] ${message.split('\n')[0].slice(0, 60) || 'Pentix feedback'}`;
+  const issueHref = `${ISSUE_URL}?title=${encodeURIComponent(subject)}&body=${encodeURIComponent(
+    `${message.trim() || '(describe the issue)'}\n\n\`\`\`\n${diagnostics}\n\`\`\``
+  )}`;
+  // mailto is the only send path that needs no account and no network call.
+  const mailHref = `mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(report)}`;
 
   return (
     <Sheet
@@ -123,18 +127,26 @@ export const FeedbackSheet: React.FC<FeedbackSheetProps> = ({
           <Copy size={15} /> Copy report
         </Button>
 
-        <a
-          href={issueHref}
-          target="_blank"
-          rel="noreferrer"
-          className="press flex h-10 items-center justify-center gap-2 rounded-md border border-line bg-ink-2 text-[12.5px] font-semibold text-dim hover:border-line-strong hover:text-text"
-        >
-          <ExternalLink size={14} /> Open as a GitHub issue
-        </a>
+        <div className="grid grid-cols-2 gap-2">
+          <a
+            href={mailHref}
+            className="press flex h-10 items-center justify-center gap-1.5 rounded-md border border-line bg-ink-2 text-[12.5px] font-semibold text-dim hover:border-line-strong hover:text-text"
+          >
+            <Mail size={14} /> Email it
+          </a>
+          <a
+            href={issueHref}
+            target="_blank"
+            rel="noreferrer"
+            className="press flex h-10 items-center justify-center gap-1.5 rounded-md border border-line bg-ink-2 text-[12.5px] font-semibold text-dim hover:border-line-strong hover:text-text"
+          >
+            <ExternalLink size={14} /> GitHub issue
+          </a>
+        </div>
 
         <p className="px-1 text-[11px] leading-relaxed text-mute">
-          Copy packs your note with the device details above into one block — paste it into a
-          message, an issue or an email.
+          Email it, or copy the report and paste it into any chat. Both carry the device details
+          above, so no follow-up questions.
         </p>
       </div>
     </Sheet>
