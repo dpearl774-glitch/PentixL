@@ -19,6 +19,7 @@ import { FontsSheet } from './components/FontsSheet';
 import { TextSheet } from './components/TextSheet';
 import { TraceSheet } from './components/TraceSheet';
 import { HelpSheet } from './components/HelpSheet';
+import { FeedbackSheet } from './components/FeedbackSheet';
 import { StartSheet } from './components/StartSheet';
 import { CanvasSettingsSheet } from './components/CanvasSettingsSheet';
 import { BackupSheet } from './components/BackupSheet';
@@ -108,6 +109,7 @@ type SheetName =
   | 'text'
   | 'trace'
   | 'help'
+  | 'feedback'
   | 'canvas'
   | 'refs'
   | 'backup'
@@ -3966,6 +3968,7 @@ export default function App() {
           setSheet('trace');
         }}
         onOpenHelp={() => setSheet('help')}
+        onOpenFeedback={() => setSheet('feedback')}
         onPanTool={() => {
           changeTool('hand');
           closeSheet();
@@ -4293,6 +4296,19 @@ export default function App() {
       />
 
       <HelpSheet open={sheet === 'help'} onClose={closeSheet} />
+
+      <FeedbackSheet
+        open={sheet === 'feedback'}
+        onClose={closeSheet}
+        context={{
+          projectName,
+          canvasWidth: view.width,
+          canvasHeight: view.height,
+          layers: layers.length,
+          objects: layers.reduce((count, layer) => count + layer.paths.length, 0),
+        }}
+        onCopied={notify}
+      />
 
       <CanvasSettingsSheet
         open={sheet === 'canvas'}

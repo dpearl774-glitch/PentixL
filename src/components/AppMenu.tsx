@@ -15,6 +15,7 @@ import {
   Image as ImageIcon,
   Sparkles,
   HelpCircle,
+  MessageSquarePlus,
   Move,
   Undo2,
   Redo2,
@@ -53,6 +54,7 @@ interface AppMenuProps {
   onOpenPatterns: () => void;
   onOpenTracer: () => void;
   onOpenHelp: () => void;
+  onOpenFeedback: () => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -128,6 +130,7 @@ export const AppMenu: React.FC<AppMenuProps> = ({
   onOpenPatterns,
   onOpenTracer,
   onOpenHelp,
+  onOpenFeedback,
   canUndo,
   canRedo,
   onUndo,
@@ -249,6 +252,12 @@ export const AppMenu: React.FC<AppMenuProps> = ({
 
       <section>
         <Row icon={<HelpCircle size={16} />} label="Gestures & shortcuts" onClick={onOpenHelp} />
+        <Row
+          icon={<MessageSquarePlus size={16} />}
+          label="Send feedback"
+          hint="Bug, idea or anything odd"
+          onClick={onOpenFeedback}
+        />
         <div className="mt-1 flex items-center gap-2 px-2 pt-2">
           <BrandMark size={20} />
           <span className="font-sans text-[10px] uppercase tracking-[0.14em] text-mute">

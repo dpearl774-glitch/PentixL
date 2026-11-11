@@ -1890,6 +1890,7 @@ const menuHtml = renderToStaticMarkup(
     onOpenReferences={noop}
     onOpenTracer={noop}
     onOpenHelp={noop}
+    onOpenFeedback={noop}
     canUndo
     canRedo={false}
     onUndo={noop}
