@@ -3,6 +3,7 @@ import { Plus, ArrowRight, Frame } from 'lucide-react';
 import { LOGO_TEMPLATES, LogoTemplate } from '../data/templates';
 import { generateProjectThumbnailSvg } from '../utils/thumbnailGenerator';
 import { Button, Sheet } from './ui/primitives';
+import { BrandMark } from './BrandMark';
 
 interface StartSheetProps {
   open: boolean;
@@ -29,6 +30,15 @@ export const StartSheet: React.FC<StartSheetProps> = ({
     subtitle="A pen tool, shape builder and pathfinder that fit under your thumbs."
   >
     <div className="flex flex-col gap-2.5 pb-1">
+      <div className="mb-0.5 flex items-center gap-3">
+        <BrandMark size={46} />
+        <div className="min-w-0">
+          <div className="text-[14px] font-extrabold tracking-tight text-text">Pentix</div>
+          <div className="text-[11px] leading-snug text-mute">
+            Real vector logos, drawn on your phone.
+          </div>
+        </div>
+      </div>
       {/* Set the board first: size and colour decide how the mark is drawn, so
           this is the entry point rather than a detour through the menu. */}
       <button

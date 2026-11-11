@@ -20,6 +20,7 @@ import {
   Redo2,
 } from 'lucide-react';
 import { Sheet } from './ui/primitives';
+import { BrandMark } from './BrandMark';
 
 interface AppMenuProps {
   open: boolean;
@@ -248,9 +249,10 @@ export const AppMenu: React.FC<AppMenuProps> = ({
 
       <section>
         <Row icon={<HelpCircle size={16} />} label="Gestures & shortcuts" onClick={onOpenHelp} />
-        <div className="mt-1 px-2 pt-2">
+        <div className="mt-1 flex items-center gap-2 px-2 pt-2">
+          <BrandMark size={20} />
           <span className="font-sans text-[10px] uppercase tracking-[0.14em] text-mute">
-            Pentix · Studio
+            Pentix · Vector studio
           </span>
         </div>
       </section>
