@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Bug, Copy, ExternalLink, Lightbulb, Palette, Upload } from 'lucide-react';
 import { Button, Chip, SectionLabel, Sheet } from './ui/primitives';
-import { APP_VERSION, buildDiagnostics, buildReport, FeedbackContext } from '../utils/diagnostics';
+import { buildDiagnostics, buildReport, FeedbackContext } from '../utils/diagnostics';
 
 interface FeedbackSheetProps {
   open: boolean;
@@ -133,8 +133,8 @@ export const FeedbackSheet: React.FC<FeedbackSheetProps> = ({
         </a>
 
         <p className="px-1 text-[11px] leading-relaxed text-mute">
-          Copy packs your note with device details into one block — paste it into a message, an
-          issue or an email. Version {APP_VERSION}
+          Copy packs your note with the device details above into one block — paste it into a
+          message, an issue or an email.
         </p>
       </div>
     </Sheet>
