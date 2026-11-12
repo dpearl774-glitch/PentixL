@@ -8,6 +8,8 @@ interface FeedbackSheetProps {
   onClose: () => void;
   context: FeedbackContext;
   onCopied: (message: string) => void;
+  /** A crash note waiting to be sent, if the app caught an error earlier. */
+  initialMessage?: string | null;
 }
 
 const ISSUE_URL = 'https://github.com/dpearl774-glitch/PentixL/issues/new';
@@ -53,9 +55,16 @@ export const FeedbackSheet: React.FC<FeedbackSheetProps> = ({
   onClose,
   context,
   onCopied,
+  initialMessage,
 }) => {
   const [kind, setKind] = useState('Bug');
   const [message, setMessage] = useState('');
+
+  // A captured crash arrives as the draft, so the tester only has to say what
+  // they were doing.
+  React.useEffect(() => {
+    if (open && initialMessage) setMessage(initialMessage);
+  }, [open, initialMessage]);
   const diagnostics = useMemo(
     () => (open ? buildDiagnostics(context) : ''),
     [open, context]

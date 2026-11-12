@@ -1,4 +1,22 @@
-import opentype from 'opentype.js';
+import type opentype from 'opentype.js';
+
+/**
+ * opentype.js is ~3.5 MB of parser that only matters once a font is registered,
+ * which happens after first paint. Loading it lazily keeps it out of the shell,
+ * so the editor opens without paying for font parsing.
+ */
+type OpenTypeModule = { parse: (data: ArrayBuffer) => opentype.Font };
+let opentypeModule: Promise<OpenTypeModule> | null = null;
+
+function loadOpenType(): Promise<OpenTypeModule> {
+  if (!opentypeModule) {
+    opentypeModule = import('opentype.js').then((mod) => {
+      const candidate = (mod as unknown as { default?: unknown }).default ?? mod;
+      return candidate as OpenTypeModule;
+    });
+  }
+  return opentypeModule;
+}
 import { AnchorPoint, Point, VectorPath } from '../types/vector';
 import { pathToPolygon, simplifyPath } from './bezier';
 import {
@@ -69,11 +87,15 @@ export function weightClassOf(weight?: string | number): number {
  * Parses a font file and remembers its outlines. Called when a font is
  * imported and again on boot, so conversion never has to wait on storage.
  */
-export function registerOutlineFont(family: string, data: ArrayBuffer): RegisteredFont | null {
+export async function registerOutlineFont(
+  family: string,
+  data: ArrayBuffer
+): Promise<RegisteredFont | null> {
   const key = outlineFamilyKey(family);
   if (!key) return null;
   try {
-    const font = opentype.parse(data);
+    const parser = await loadOpenType();
+    const font = parser.parse(data);
     const os2 = (font.tables as Record<string, { usWeightClass?: number }>).os2;
     const weightClass = Number(os2?.usWeightClass) || 400;
     const entry: RegisteredFont = { font, weightClass };

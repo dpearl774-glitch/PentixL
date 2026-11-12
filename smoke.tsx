@@ -13,6 +13,7 @@ import { TextSheet } from './src/components/TextSheet';
 import { TopBar } from './src/components/TopBar';
 import { FontsSheet } from './src/components/FontsSheet';
 import { fitBezierPath } from './src/utils/curveFit';
+import { pathToPolygon } from './src/utils/bezier';
 import {
   compoundFromContours,
   fromVectorPaths,
@@ -28,10 +29,12 @@ import { BackupSheet } from './src/components/BackupSheet';
 import { HelpSheet } from './src/components/HelpSheet';
 import { ExportSheet } from './src/components/ExportSheet';
 import { offsetPaths } from './src/utils/offsetPath';
+import { isInvisibleFragment, stripInvisibleFragments } from './src/utils/fragments';
 import { splitPathsIntoGrid } from './src/utils/gridSplit';
 import {
   computeAtomicSubRegions,
   executeShapeBuilderMerge,
+  executeShapeBuilderErase,
   regionUnionOutline,
 } from './src/utils/shapeBuilderRegions';
 import { patternFromSwatch, patternLayout, syncPatternInstances } from './src/utils/effects';
@@ -1723,7 +1726,11 @@ const united = executeBooleanOperation([circleA, circleB], 'union');
 const unionAnchors = united[0]?.points ?? [];
 check(
   'shape builder output is sparse',
-  unionAnchors.length > 0 && unionAnchors.length <= 20,
+  // The fit now hugs the true curve (0.1 units) instead of simplifying first, so
+  // it keeps a few more anchors than before. The point of the check is that the
+  // result is fitted runs, not one anchor per sampled point.
+  unionAnchors.length > 0 &&
+    unionAnchors.length <= Math.max(20, (circleA.points.length + circleB.points.length) / 6),
   `anchors=${unionAnchors.length} (from ${circleA.points.length + circleB.points.length} input points)`
 );
 check(
@@ -1869,6 +1876,7 @@ const menuHtml = renderToStaticMarkup(
     storageHint="Not protected — keep a backup"
     onNewProject={noop}
     onOpenProjects={noop}
+    onCleanUpFragments={noop}
     onOpenCanvas={noop}
     canvasLabel="1000 × 500 px"
     gridLabel="40 × 20 px · snapping · locked"
@@ -2165,7 +2173,7 @@ const probeFontBytes = (() => {
   }).toArrayBuffer();
 })();
 
-const probe = registerOutlineFont('Probe Sans', probeFontBytes);
+const probe = await registerOutlineFont('Probe Sans', probeFontBytes);
 check('an imported font parses into outlines', !!probe, probe ? `weight=${probe.weightClass}` : 'unparsed');
 
 const exactLabel = expandTextToVectorPaths('A', {
@@ -2242,7 +2250,7 @@ check(
 // font's own curves rather than from a traced picture of them.
 for (const file of ['Regular', 'Bold']) {
   const bytes = fs.readFileSync(`public/fonts/PlusJakartaSans-${file}.woff`);
-  registerOutlineFont(
+  await registerOutlineFont(
     'Plus Jakarta Sans',
     bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
   );
@@ -2405,7 +2413,7 @@ check(
 // is kept exactly as offset: refitting it thinned the letter back to regular.
 // A weight the file *does* contain is not grown at all — see the check below.
 const regularBytes = fs.readFileSync('public/fonts/PlusJakartaSans-Regular.woff');
-registerOutlineFont(
+await registerOutlineFont(
   'Single Weight Probe',
   regularBytes.buffer.slice(
     regularBytes.byteOffset,
@@ -2866,6 +2874,279 @@ check(
 check(
   'a closed fit does not repeat its first node',
   Math.hypot(circleNodes[0].x - circleNodes[circleNodes.length - 1].x, circleNodes[0].y - circleNodes[circleNodes.length - 1].y) > 0.001
+);
+
+// A build keeps the paint it grew from. Shapes that never had a stroke used to
+// come back from a merge or a trim with a grey hairline, because a missing
+// stroke fell back to #E8EAED and a missing width to 3.
+const bareA: VectorPath = { ...sbA, id: 'bare-a', stroke: 'none', strokeWidth: 0 };
+const bareB: VectorPath = { ...sbB, id: 'bare-b', stroke: 'none', strokeWidth: 0 };
+const bareRegions = computeAtomicSubRegions([bareA, bareB], [bareA, bareB]);
+const bareIds = bareRegions.map((region) => region.id);
+const bareMerged = executeShapeBuilderMerge(bareIds, bareRegions, [bareA, bareB], {
+  fill: '#4c8dff',
+  stroke: 'none',
+  strokeWidth: 0,
+});
+check(
+  'a stroke-free merge stays stroke-free',
+  bareMerged.length > 0 &&
+    bareMerged.every((p: VectorPath) => p.stroke === 'none' && !p.strokeWidth),
+  `paths=${bareMerged.length} stroke=${bareMerged[0]?.stroke} width=${bareMerged[0]?.strokeWidth}`
+);
+const bareTrimmed = executeShapeBuilderErase([bareIds[bareIds.length - 1]], bareRegions, [
+  bareA,
+  bareB,
+]);
+check(
+  'a stroke-free trim stays stroke-free',
+  bareTrimmed.length > 0 &&
+    bareTrimmed.every((p: VectorPath) => p.stroke === 'none' && !p.strokeWidth),
+  `paths=${bareTrimmed.length} stroke=${bareTrimmed[0]?.stroke} width=${bareTrimmed[0]?.strokeWidth}`
+);
+const inkedA: VectorPath = { ...sbA, id: 'ink-a', stroke: '#ff0055', strokeWidth: 6 };
+const inkedB: VectorPath = { ...sbB, id: 'ink-b', stroke: '#ff0055', strokeWidth: 6 };
+const inkRegions = computeAtomicSubRegions([inkedA, inkedB], [inkedA, inkedB]);
+const inkMerged = executeShapeBuilderMerge(
+  inkRegions.map((region) => region.id),
+  inkRegions,
+  [inkedA, inkedB],
+  { fill: '#4c8dff', stroke: '#ff0055', strokeWidth: 6 }
+);
+check(
+  'a build keeps a stroke the shape already had',
+  inkMerged.length > 0 &&
+    inkMerged.every((p: VectorPath) => p.stroke === '#ff0055' && p.strokeWidth === 6),
+  `stroke=${inkMerged[0]?.stroke} width=${inkMerged[0]?.strokeWidth}`
+);
+
+// A build used to shred every participating shape into anonymous region
+// fragments, so after an erase you could not tell which shapes were left. Each
+// shape now keeps the rest of itself.
+const cutRegions = computeAtomicSubRegions([sbA, sbB], [sbA, sbB]);
+const overlapRegion = cutRegions.find((region) => region.sourcePathIds.length === 2);
+const afterErase = executeShapeBuilderErase(
+  overlapRegion ? [overlapRegion.id] : [],
+  cutRegions,
+  [sbA, sbB]
+);
+check(
+  'an erase leaves the untouched shapes in place',
+  afterErase.length === 2 && afterErase.every((p: VectorPath) => p.name !== 'Shape Builder Union'),
+  `paths=${afterErase.length} names=${afterErase.map((p) => p.name).join(' / ')}`
+);
+const afterMerge = executeShapeBuilderMerge(
+  overlapRegion ? [overlapRegion.id] : [],
+  cutRegions,
+  [sbA, sbB],
+  { fill: '#4c8dff', stroke: 'none', strokeWidth: 0 }
+);
+// Merging the overlap of two shapes hands back one joined object. Emitting the
+// union plus a crescent per shape read on screen as the shapes doubling.
+check(
+  'a merge of two shapes yields one object',
+  afterMerge.length === 1 && afterMerge[0].name === 'Shape Builder Union',
+  `paths=${afterMerge.length} names=${afterMerge.map((p) => p.name).join(' / ')}`
+);
+check(
+  'a merge of one shape changes nothing',
+  executeShapeBuilderMerge(
+    // Only one shape's own area, so there is nothing to join it to.
+    cutRegions.filter((r) => r.sourcePathIds.length === 1).slice(0, 1).map((r) => r.id),
+    cutRegions,
+    [sbA, sbB],
+    { fill: '#4c8dff', stroke: 'none', strokeWidth: 0 }
+  ).length === 2,
+  'brushing one shape should not merge it with others'
+);
+check(
+  'erasing the whole shape still removes it',
+  executeShapeBuilderErase(cutRegions.map((r) => r.id), cutRegions, [sbA, sbB]).length === 0,
+  'whole-region erase should leave nothing'
+);
+
+// A shape the build never touched must come back exactly as it was: rebuilding
+// every participant on every pass slowly refits the whole document.
+const farPath: VectorPath = {
+  ...sbA,
+  id: 'sb-far',
+  points: sbA.points.map((p, i) => ({ ...p, id: `f${i}`, x: p.x + 400 })),
+};
+const eraseWithFar = executeShapeBuilderErase(
+  overlapRegion ? [overlapRegion.id] : [],
+  cutRegions,
+  [sbA, sbB, farPath]
+);
+const keptFar = eraseWithFar.find((p: VectorPath) => p.id === 'sb-far');
+check(
+  'a shape outside the build comes back untouched',
+  keptFar === farPath,
+  keptFar ? `id=${keptFar.id}` : 'missing'
+);
+
+// Repeated builds used to leave hairline slivers: invisible objects that still
+// counted as shapes on the canvas.
+const sliverA: VectorPath = { ...sbA, id: 'sliver-a' };
+const sliverB: VectorPath = {
+  ...sbA,
+  id: 'sliver-b',
+  points: sbA.points.map((p, i) => ({ ...p, id: `s${i}`, x: p.x + 0.01 })),
+};
+const pathArea = (path: VectorPath): number =>
+  Math.abs(
+    path.points.reduce((sum, point, index) => {
+      const next = path.points[(index + 1) % path.points.length];
+      return sum + point.x * next.y - next.x * point.y;
+    }, 0)
+  ) / 2;
+let evolving: VectorPath[] = [sliverA, sliverB];
+for (let i = 0; i < 4; i += 1) {
+  const regions = computeAtomicSubRegions(evolving, evolving);
+  const first =
+    regions.find((region) => region.sourcePathIds.length === 2) ?? regions[0];
+  if (!first) break;
+  evolving = executeShapeBuilderMerge([first.id], regions, evolving, {
+    fill: '#4c8dff',
+    stroke: 'none',
+    strokeWidth: 0,
+  });
+}
+check(
+  'repeated builds do not pile up slivers',
+  evolving.length <= 4 && evolving.every((path) => pathArea(path) > 0.5),
+  `paths=${evolving.length} minArea=${Math.min(...evolving.map(pathArea)).toFixed(2)}`
+);
+
+/* ---------------------------- Fragments ----------------------------- */
+console.log('Fragments');
+check('clean up row is in the menu', menuHtml.includes('Clean up fragments'));
+
+// Slivers left by boolean passes are invisible but still real objects.
+const sliverShape: VectorPath = {
+  ...sbA,
+  id: 'sliver-frag',
+  name: 'Sliver',
+  points: [
+    { id: 'a', x: 0, y: 0, type: 'corner' },
+    { id: 'b', x: 10, y: 0, type: 'corner' },
+    { id: 'c', x: 10, y: 0.02, type: 'corner' },
+    { id: 'd', x: 0, y: 0.02, type: 'corner' },
+  ],
+};
+check('a hairline sliver counts as invisible', isInvisibleFragment(sliverShape));
+check('a real shape is not a fragment', !isInvisibleFragment(sbA));
+check(
+  'a dot with a stroke is kept',
+  !isInvisibleFragment({ ...sliverShape, id: 'dot', stroke: '#ffffff', strokeWidth: 4 })
+);
+const cleanedLayers = stripInvisibleFragments([
+  {
+    id: 'layer-1',
+    name: 'Layer 1',
+    visible: true,
+    locked: false,
+    opacity: 1,
+    paths: [sliverShape, sbA],
+  },
+]);
+check(
+  'clean up removes only the fragments',
+  cleanedLayers.removed === 1 && cleanedLayers.layers[0].paths.length === 1,
+  `removed=${cleanedLayers.removed} kept=${cleanedLayers.layers[0].paths.length}`
+);
+
+/* --------------------------- Build fidelity -------------------------- */
+console.log('Build fidelity');
+// A build must return the same artwork it took in. Arcs used to bulge by more
+// than a unit and corners drifted by half a unit, which read as "a different
+// shape" on a logo.
+const kappa = 0.5522847498;
+const arcRadius = 150;
+const arcCircle: VectorPath = {
+  ...sbA,
+  id: 'arc-circle',
+  name: 'Arc Circle',
+  points: [
+    { id: 'a0', x: 300, y: 300 - arcRadius, type: 'smooth', handleIn: { x: 300 - kappa * arcRadius, y: 300 - arcRadius }, handleOut: { x: 300 + kappa * arcRadius, y: 300 - arcRadius } },
+    { id: 'a1', x: 300 + arcRadius, y: 300, type: 'smooth', handleIn: { x: 300 + arcRadius, y: 300 - kappa * arcRadius }, handleOut: { x: 300 + arcRadius, y: 300 + kappa * arcRadius } },
+    { id: 'a2', x: 300, y: 300 + arcRadius, type: 'smooth', handleIn: { x: 300 + kappa * arcRadius, y: 300 + arcRadius }, handleOut: { x: 300 - kappa * arcRadius, y: 300 + arcRadius } },
+    { id: 'a3', x: 300 - arcRadius, y: 300, type: 'smooth', handleIn: { x: 300 - arcRadius, y: 300 + kappa * arcRadius }, handleOut: { x: 300 - arcRadius, y: 300 - kappa * arcRadius } },
+  ],
+};
+const cutSquarePath: VectorPath = {
+  ...sbA,
+  id: 'cut-square',
+  name: 'Cut Square',
+  points: [
+    { id: 'c0', x: 300, y: 200, type: 'corner' },
+    { id: 'c1', x: 450, y: 200, type: 'corner' },
+    { id: 'c2', x: 450, y: 400, type: 'corner' },
+    { id: 'c3', x: 300, y: 400, type: 'corner' },
+  ],
+};
+const fidelityRegions = computeAtomicSubRegions(
+  [arcCircle, cutSquarePath],
+  [arcCircle, cutSquarePath]
+);
+const circleOnlyRegion = fidelityRegions.find(
+  (region) => region.sourcePathIds.length === 1 && region.sourcePathIds[0] === arcCircle.id
+);
+check('the circle has a region of its own', Boolean(circleOnlyRegion));
+const fidelityMerge = executeShapeBuilderMerge(
+  circleOnlyRegion ? [circleOnlyRegion.id] : [],
+  fidelityRegions,
+  [arcCircle, cutSquarePath],
+  { fill: '#4C8DFF', stroke: 'none', strokeWidth: 0 }
+);
+const arcBack = fidelityMerge.find((p: VectorPath) => p.name === 'Arc Circle');
+let arcDrift = 0;
+if (arcBack) {
+  for (const [x, y] of pathToPolygon(arcBack, 24)) {
+    // Only the untouched half: the cut edge is not on the circle.
+    if (x > 295) continue;
+    arcDrift = Math.max(arcDrift, Math.abs(Math.hypot(x - 300, y - 300) - arcRadius));
+  }
+}
+check(
+  'a built arc stays on its original circle',
+  Boolean(arcBack) && arcDrift < 0.3,
+  `drift=${arcDrift.toFixed(3)} units`
+);
+// Straight edges must stay straight: no handle may appear on a corner the
+// artwork never had, or a built square comes back slightly bowed.
+const plainSquare = (id: string, x: number, y: number): VectorPath => ({
+  ...sbA,
+  id,
+  name: id,
+  points: [
+    { id: `${id}0`, x, y, type: 'corner' },
+    { id: `${id}1`, x: x + 200, y, type: 'corner' },
+    { id: `${id}2`, x: x + 200, y: y + 200, type: 'corner' },
+    { id: `${id}3`, x, y: y + 200, type: 'corner' },
+  ],
+});
+const plainSquareA = plainSquare('square-a', 0, 0);
+const plainSquareB = plainSquare('square-b', 100, 100);
+const plainSquareRegions = computeAtomicSubRegions([plainSquareA, plainSquareB], [plainSquareA, plainSquareB]);
+const plainSquareErase = executeShapeBuilderErase(
+  plainSquareRegions
+    .filter((region) => region.sourcePathIds.length === 2)
+    .map((region) => region.id),
+  plainSquareRegions,
+  [plainSquareA, plainSquareB]
+);
+check(
+  'a built square keeps sharp corners and straight edges',
+  plainSquareErase.length === 2 &&
+    plainSquareErase.every(
+      (p) => p.points.length === 6 && p.points.every((pt) => !pt.handleIn && !pt.handleOut)
+    ),
+  plainSquareErase
+    .map(
+      (p) =>
+        `${p.name}:${p.points.length}pt/${p.points.filter((pt) => pt.handleIn || pt.handleOut).length}h`
+    )
+    .join(' ')
 );
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);

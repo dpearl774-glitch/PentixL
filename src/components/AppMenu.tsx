@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Eraser,
   FolderOpen,
   FilePlus2,
   Save,
@@ -55,6 +56,7 @@ interface AppMenuProps {
   onOpenTracer: () => void;
   onOpenHelp: () => void;
   onOpenFeedback: () => void;
+  onCleanUpFragments: () => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -131,6 +133,7 @@ export const AppMenu: React.FC<AppMenuProps> = ({
   onOpenTracer,
   onOpenHelp,
   onOpenFeedback,
+  onCleanUpFragments,
   canUndo,
   canRedo,
   onUndo,
@@ -154,6 +157,12 @@ export const AppMenu: React.FC<AppMenuProps> = ({
         />
         <Row icon={<FolderOpen size={16} />} label="Projects" onClick={onOpenProjects} />
         <Row icon={<FilePlus2 size={16} />} label="New document" onClick={onNewProject} />
+        <Row
+          icon={<Eraser size={16} />}
+          label="Clean up fragments"
+          hint="Delete invisible leftovers"
+          onClick={onCleanUpFragments}
+        />
       </section>
 
       <section>

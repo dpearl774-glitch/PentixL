@@ -4,6 +4,9 @@ import {
   saveProject,
   type StoredProject,
 } from './projectStorage';
+import { referencesForBackup } from './referenceImages';
+import { saveBlob } from './fileSave';
+import type { SaveOutcome } from './fileSave';
 import { loadAllFonts, saveFont, type StoredFont } from './fontStorage';
 import {
   loadUserPrefs,
@@ -72,7 +75,12 @@ async function createBackup(): Promise<PentixBackup> {
     format: FORMAT,
     version: VERSION,
     exportedAt: new Date().toISOString(),
-    projects,
+    projects: await Promise.all(
+      projects.map(async (project) => ({
+        ...project,
+        references: await referencesForBackup(project.references),
+      }))
+    ),
     fonts: await Promise.all(
       fonts.map(async (font) => ({
         family: font.family,
@@ -84,15 +92,8 @@ async function createBackup(): Promise<PentixBackup> {
   };
 }
 
-function download(blob: Blob, name: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = name;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
+function download(blob: Blob, name: string): Promise<SaveOutcome> {
+  return saveBlob(blob, name);
 }
 
 /** Build and download one JSON file containing every local Pentix store. */

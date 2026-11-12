@@ -1,7 +1,7 @@
 import polygonClipping, { MultiPolygon, Polygon, Ring } from 'polygon-clipping';
 import { AnchorPoint, Point, VectorPath } from '../types/vector';
 import { pathToPolygon } from './bezier';
-import { ringToVectorPath, visibleClippingGeometry } from './shapeBuilder';
+import { FIT_TOLERANCE, ringToVectorPath, visibleClippingGeometry } from './shapeBuilder';
 
 export interface SubRegion {
   id: string;
@@ -213,7 +213,12 @@ export function computeAtomicSubRegions(
       bbox,
       centroid,
       fill: r.topPath.fill !== 'none' ? r.topPath.fill : '#4C8DFF',
-      stroke: r.topPath.stroke !== 'none' ? r.topPath.stroke : '#E8EAED',
+      // No stroke stays no stroke: a missing stroke used to fall back to a grey
+      // hairline, and every build result then inherited it.
+      stroke:
+        r.topPath.stroke && r.topPath.stroke !== 'none' && (r.topPath.strokeWidth ?? 0) > 0
+          ? r.topPath.stroke
+          : 'none',
     };
   });
 }
@@ -246,6 +251,35 @@ export function regionUnionOutline(regions: SubRegion[], ids: string[]): string 
 }
 
 /**
+ * Outline of the whole of every given shape, for the merge preview. The builder
+ * joins entire shapes, so the preview has to show those shapes rather than only
+ * the patch under the finger — otherwise the result is not what was promised.
+ */
+export function shapeUnionOutline(
+  paths: VectorPath[],
+  allPaths: VectorPath[] = paths
+): string {
+  if (paths.length < 2) return '';
+  const byId = new Map(allPaths.map((path) => [path.id, path]));
+  let united: MultiPolygon = [];
+  for (const path of paths) {
+    const geometry = visibleClippingGeometry(path, byId);
+    if (!geometry.length) continue;
+    try {
+      united = united.length
+        ? polygonClipping.union(united, geometry)
+        : (geometry as MultiPolygon);
+    } catch {
+      // A failed union leaves the preview without that piece, not without one.
+    }
+  }
+  return united
+    .map((poly) => polygonToSvgPathD(poly))
+    .join(' ')
+    .trim();
+}
+
+/**
  * Finds which sub-region contains the given point
  */
 export function findSubRegionAtPoint(point: Point, regions: SubRegion[]): SubRegion | null {
@@ -264,7 +298,7 @@ export function findSubRegionAtPoint(point: Point, regions: SubRegion[]): SubReg
   return null;
 }
 
-import { simplifyPoints, decimateContour, fitSmoothBezierCurves } from './contourTracer';
+import { fitSmoothBezierCurves } from './contourTracer';
 
 /**
  * Converts one clipping ring into anchors. The boolean output arrives as a near
@@ -289,14 +323,16 @@ function ringToAnchors(ring: Ring, idPrefix: string): AnchorPoint[] | null {
 
   // Finer than a whole artboard unit: chords that coarse are visible on a mark
   // that is only a few hundred units across.
-  const tolerance = 0.75;
-  const reduced =
-    raw.length > 3
-      ? decimateContour(simplifyPoints(raw, tolerance * 0.5), tolerance * 0.5, true)
-      : raw;
-  if (reduced.length < 3) return null;
+  if (raw.length < 3) return null;
 
-  return fitSmoothBezierCurves(reduced, idPrefix, true, tolerance);
+  // The boolean ring is already a faithful flattening of the artwork, so it is
+  // fitted directly. Simplifying it first shifted corners by up to half a unit
+  // and let the fitter bow arcs away from the shape the artist drew.
+  //
+  // The corner threshold is deliberately tight: where two outlines cross, the
+  // junction is a real cusp, and treating it as smooth rounded the tips of a
+  // lens or a crescent — the visible "the shape changed" on a built logo.
+  return fitSmoothBezierCurves(raw, idPrefix, true, FIT_TOLERANCE, CUSP_ANGLE);
 }
 
 /**
@@ -314,6 +350,9 @@ export function polygonToVectorPath(
     .map((ring, i) => ringToAnchors(ring, `${idPrefix}-hole-${i}`))
     .filter((ring): ring is AnchorPoint[] => ring !== null);
 
+  const strokeColor = baseStyle.stroke && baseStyle.stroke !== 'none' ? baseStyle.stroke : 'none';
+  const strokeThickness = strokeColor === 'none' ? 0 : (baseStyle.strokeWidth ?? 1);
+
   return {
     id: `${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     name: baseStyle.name || 'Shape',
@@ -322,8 +361,8 @@ export function polygonToVectorPath(
     closed: true,
     fill: baseStyle.fill || '#4C8DFF',
     fillOpacity: baseStyle.fillOpacity ?? 1,
-    stroke: baseStyle.stroke || '#E8EAED',
-    strokeWidth: baseStyle.strokeWidth ?? 3,
+    stroke: strokeColor,
+    strokeWidth: strokeThickness,
     strokeOpacity: baseStyle.strokeOpacity ?? 1,
     strokeCap: baseStyle.strokeCap || 'round',
     strokeJoin: baseStyle.strokeJoin || 'round',
@@ -331,9 +370,131 @@ export function polygonToVectorPath(
   };
 }
 
+/** Absolute area of a polygon, holes subtracted. */
+function polygonArea(poly: Polygon): number {
+  const ringArea = (ring: Ring): number => {
+    let sum = 0;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      sum += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+    }
+    return Math.abs(sum) / 2;
+  };
+  if (!poly.length) return 0;
+  return poly.slice(1).reduce((area, hole) => area - ringArea(hole), ringArea(poly[0]));
+}
+
 /**
- * Merges (Unites) selected sub-regions into one or more new shapes,
- * while preserving any unselected regions as clean vector paths.
+ * Boolean operations leave hairline slivers where two edges almost meet. They
+ * are invisible on the board but real objects in the document, which is how a
+ * long build session filled the canvas with shapes nobody could see.
+ */
+const SLIVER_AREA = 0.75;
+
+/**
+ * Vertex deflection, in radians, above which a fitted anchor is kept sharp.
+ * Boolean output meets its own boundary at real cusps; smoothing those is what
+ * rounded the crossing points of two built shapes.
+ */
+const CUSP_ANGLE = 0.35;
+const isReal = (poly: Polygon, sourceArea: number): boolean => {
+  if (!poly.length || !poly[0] || poly[0].length < 3) return false;
+  return polygonArea(poly) > Math.max(SLIVER_AREA, sourceArea * 0.002);
+};
+
+/** The untouched part of a shape once a region has been merged or erased out of it. */
+function remainingPieces(
+  path: VectorPath,
+  cut: MultiPolygon,
+  byId: Map<string, VectorPath>
+): VectorPath[] {
+  const pieces: VectorPath[] = [];
+  let index = 0;
+
+  for (const geometry of visibleClippingGeometry(path, byId)) {
+    if (!geometry.length || !geometry[0] || geometry[0].length < 3) continue;
+
+    // A shape the build did not actually touch is left exactly as it was: no
+    // rebuild, no refit, no drift from repeated boolean passes.
+    let touched = true;
+    try {
+      touched = polygonClipping.intersection(geometry, cut).length > 0;
+    } catch {
+      touched = true;
+    }
+    if (!touched) {
+      pieces.push(path);
+      continue;
+    }
+
+    let rest: MultiPolygon;
+    try {
+      rest = polygonClipping.difference(geometry, cut);
+    } catch {
+      // A pathological ring should keep the shape rather than delete it.
+      rest = [geometry];
+    }
+    const sourceArea = polygonArea(geometry);
+    for (const poly of rest) {
+      if (!isReal(poly, sourceArea)) continue;
+      const shell = polygonToVectorPath(
+        poly,
+        {
+          name: path.name,
+          fill: path.fill,
+          fillOpacity: path.fillOpacity,
+          stroke: path.stroke,
+          strokeWidth: path.strokeWidth,
+          strokeOpacity: path.strokeOpacity,
+          strokeCap: path.strokeCap,
+          strokeJoin: path.strokeJoin,
+          pressureProfile: path.pressureProfile,
+        },
+        `sb-keep-${index++}`
+      );
+      if (shell.points.length < 3) continue;
+      // The remainder is the same object the artist drew, with new geometry:
+      // name, paint, gradient and effects all survive the build.
+      pieces.push({
+        ...path,
+        id: shell.id,
+        points: shell.points,
+        holes: shell.holes,
+        closed: true,
+        fill: shell.fill,
+        fillOpacity: shell.fillOpacity,
+        stroke: shell.stroke,
+        strokeWidth: shell.strokeWidth,
+        strokeOpacity: shell.strokeOpacity,
+        text: undefined,
+        isClippingMask: false,
+        clipPathId: undefined,
+        cornerRadius: undefined,
+        cornerRadii: undefined,
+        cornerSource: undefined,
+      });
+    }
+  }
+
+  return pieces;
+}
+
+/** The area covered by a set of regions, as one multipolygon. */
+function regionArea(regions: SubRegion[]): MultiPolygon | null {
+  if (!regions.length) return null;
+  try {
+    return polygonClipping.union(regions[0].polygon, ...regions.slice(1).map((r) => r.polygon));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Merges the shapes whose regions were brushed into one object.
+ *
+ * The union covers the whole of each shape that took part, not just the brushed
+ * patch: merging the intersection of two circles used to hand back the lens
+ * plus two crescents, which reads on screen as the shapes doubling. Shapes that
+ * were not brushed are returned untouched.
  */
 export function executeShapeBuilderMerge(
   selectedRegionIds: string[],
@@ -341,105 +502,76 @@ export function executeShapeBuilderMerge(
   originalPaths: VectorPath[],
   activeStyle: { fill: string; stroke: string; strokeWidth: number }
 ): VectorPath[] {
-  if (selectedRegionIds.length === 0) return originalPaths;
+  const selected = allRegions.filter((region) => selectedRegionIds.includes(region.id));
+  if (!selected.length) return originalPaths;
 
-  const selectedRegions = allRegions.filter((r) => selectedRegionIds.includes(r.id));
-  const unselectedRegions = allRegions.filter((r) => !selectedRegionIds.includes(r.id));
+  const owners = new Set(selected.flatMap((region) => region.sourcePathIds));
+  // Brushing a shape's own area is not a merge: nothing joins it.
+  if (owners.size < 2) return originalPaths;
 
-  const resultingPaths: VectorPath[] = [];
-
-  // 1. Union all selected regions — fresh geometry, fit curves for smoothness
-  if (selectedRegions.length > 0) {
+  const byId = new Map(originalPaths.map((path) => [path.id, path]));
+  let merged: MultiPolygon = [];
+  for (const path of originalPaths) {
+    if (!owners.has(path.id)) continue;
+    const geometry = visibleClippingGeometry(path, byId);
+    if (!geometry.length) continue;
     try {
-      const selectedPolys = selectedRegions.map((r) => r.polygon);
-      const unitedMultiPoly = polygonClipping.union(selectedPolys[0], ...selectedPolys.slice(1));
-
-      for (let i = 0; i < unitedMultiPoly.length; i++) {
-        const poly = unitedMultiPoly[i];
-        if (poly.length > 0 && poly[0].length >= 3) {
-          resultingPaths.push(
-            polygonToVectorPath(
-              poly,
-              {
-                name: `Shape Builder Union ${resultingPaths.length + 1}`,
-                fill: activeStyle.fill,
-                fillOpacity: 1,
-                stroke: activeStyle.stroke,
-                strokeWidth: activeStyle.strokeWidth,
-                strokeOpacity: 1,
-              },
-              `sb-union-${i}`
-            )
-          );
-        }
-      }
-    } catch (err) {
-      console.error('Shape builder merge union failed:', err);
+      merged = merged.length
+        ? polygonClipping.union(merged, geometry)
+        : (geometry as MultiPolygon);
+    } catch {
+      // Keep going with what already merged rather than losing the whole build.
     }
   }
 
-  // 2. Preserve unselected regions — simple corner anchors, no Bezier refit
-  for (let i = 0; i < unselectedRegions.length; i++) {
-    const reg = unselectedRegions[i];
-    const source = originalPaths.find((p) => p.id === reg.sourcePathIds[0]) || originalPaths[0];
-
+  const resultingPaths: VectorPath[] = [];
+  merged.forEach((poly, index) => {
+    if (!isReal(poly, 0)) return;
     resultingPaths.push(
       polygonToVectorPath(
-        reg.polygon,
+        poly,
         {
-          name: `${source.name}${selectedRegions.length > 0 ? ' (Part)' : ''}`,
-          fill: reg.fill,
-          fillOpacity: source.fillOpacity ?? 1,
-          stroke: reg.stroke,
-          strokeWidth: source.strokeWidth || 3,
-          strokeOpacity: source.strokeOpacity ?? 1,
-          strokeCap: source.strokeCap,
-          strokeJoin: source.strokeJoin,
-          pressureProfile: source.pressureProfile,
+          name: owners.size > 1 ? 'Shape Builder Union' : 'Shape Builder',
+          fill: activeStyle.fill,
+          fillOpacity: 1,
+          stroke: activeStyle.stroke,
+          strokeWidth: activeStyle.strokeWidth,
+          strokeOpacity: 1,
         },
-        `sb-remain-${i}`
+        `sb-union-${index}`
       )
     );
-  }
+  });
 
+  if (!resultingPaths.length) return originalPaths;
+
+  // Whatever was not brushed stays exactly as it was. Nothing is rebuilt, so
+  // unrelated shapes cannot drift during someone else's build.
+  for (const path of originalPaths) {
+    if (!owners.has(path.id)) resultingPaths.push(path);
+  }
   return resultingPaths;
 }
 
 /**
- * Erases / Subtracts selected sub-regions from the participating shapes
+ * Erases the touched regions out of the shapes they belong to.
+ *
+ * Each surviving shape is cut individually, so after an erase you can still see
+ * and pick the shapes you had — only the erased area is gone.
  */
 export function executeShapeBuilderErase(
   erasedRegionIds: string[],
   allRegions: SubRegion[],
   originalPaths: VectorPath[]
 ): VectorPath[] {
-  if (erasedRegionIds.length === 0) return originalPaths;
+  const erased = allRegions.filter((region) => erasedRegionIds.includes(region.id));
+  const cut = regionArea(erased);
+  if (!cut) return originalPaths;
 
-  const remainingRegions = allRegions.filter((r) => !erasedRegionIds.includes(r.id));
+  const byId = new Map(originalPaths.map((path) => [path.id, path]));
   const resultingPaths: VectorPath[] = [];
-
-  for (let i = 0; i < remainingRegions.length; i++) {
-    const reg = remainingRegions[i];
-    const source = originalPaths.find((p) => p.id === reg.sourcePathIds[0]) || originalPaths[0];
-
-    resultingPaths.push(
-      polygonToVectorPath(
-        reg.polygon,
-        {
-          name: `${source.name} (Trimmed)`,
-          fill: reg.fill,
-          fillOpacity: source.fillOpacity ?? 1,
-          stroke: reg.stroke,
-          strokeWidth: source.strokeWidth || 3,
-          strokeOpacity: source.strokeOpacity ?? 1,
-          strokeCap: source.strokeCap,
-          strokeJoin: source.strokeJoin,
-          pressureProfile: source.pressureProfile,
-        },
-        `sb-erase-${i}`
-      )
-    );
+  for (const path of originalPaths) {
+    resultingPaths.push(...remainingPieces(path, cut, byId));
   }
-
   return resultingPaths;
 }

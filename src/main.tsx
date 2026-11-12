@@ -4,15 +4,16 @@ import App from './App.tsx';
 import './index.css';
 
 import { ensureBundledFonts } from './utils/bundledFonts';
+import { formatCrash } from './utils/crashReport';
 
 // Start the bundled faces loading immediately; conversion awaits the same promise.
 void ensureBundledFonts();
 
 class AppErrorBoundary extends React.Component<
   { children: React.ReactNode },
-  { failed: boolean }
+  { failed: boolean; report: string }
 > {
-  state = { failed: false };
+  state = { failed: false, report: '' };
 
   static getDerivedStateFromError() {
     return { failed: true };
@@ -20,6 +21,9 @@ class AppErrorBoundary extends React.Component<
 
   componentDidCatch(error: unknown) {
     console.error('Pentix recovered from a render error', error);
+    // Kept in state so the fallback can hand it over; the console is invisible
+    // to someone holding a phone.
+    this.setState({ report: formatCrash(error) });
   }
 
   render() {
@@ -41,6 +45,17 @@ class AppErrorBoundary extends React.Component<
             >
               Reload Pentix
             </button>
+            {this.state.report && (
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(this.state.report).catch(() => undefined);
+                }}
+                className="press h-10 rounded-lg border border-line bg-ink-2 text-[12.5px] font-semibold text-dim"
+              >
+                Copy crash report
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {

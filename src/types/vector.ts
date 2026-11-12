@@ -326,7 +326,13 @@ export interface PressureConfig {
 export interface ReferenceImage {
   id: string;
   name: string;
+  /**
+   * Live URL for drawing. Either a data URL from an older document or an object
+   * URL rebuilt from `blob` on load — a blob: URL does not survive a reload.
+   */
   url: string;
+  /** The image itself, so the reference survives a save without base64 growth. */
+  blob?: Blob;
   x: number;
   y: number;
   width: number;

@@ -52,6 +52,8 @@ import {
   toggleAnchorType,
 } from './utils/bezier';
 import { BooleanOperation, executeBooleanOperation } from './utils/shapeBuilder';
+import { stripInvisibleFragments } from './utils/fragments';
+import { installCrashCapture } from './utils/crashReport';
 import { splitPathsIntoGrid } from './utils/gridSplit';
 import { offsetPaths } from './utils/offsetPath';
 import {
@@ -76,7 +78,7 @@ import type { TextPathAlign } from './utils/textPath';
 import { textInShapeLayout } from './utils/textInShape';
 import { GridSettings, StoredProject, getProject, saveProject, seedInitialProjectsIfEmpty } from './utils/projectStorage';
 import { generateProjectThumbnailSvg } from './utils/thumbnailGenerator';
-import { referenceImageFromFile, referenceImageFromSrc } from './utils/referenceImages';
+import { referenceImageFromSrc } from './utils/referenceImages';
 import { defaultGradient } from './utils/gradients';
 import { gradientIdFor, generateSvgCode } from './utils/svgExport';
 import { outlineStroke } from './utils/strokeOutline';
@@ -115,7 +117,12 @@ type SheetName =
   | 'backup'
   | 'start';
 
-const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+// structuredClone keeps Blobs and typed arrays intact; a JSON round-trip turned
+// a reference image's bytes into {}, so a reloaded document lost its overlays.
+const clone = <T,>(value: T): T =>
+  typeof structuredClone === 'function'
+    ? structuredClone(value)
+    : (JSON.parse(JSON.stringify(value)) as T);
 
 /** A new session opens on an empty artboard — grids are opt-in from Projects. */
 const blankLayers = (): Layer[] => [
@@ -394,6 +401,10 @@ export default function App() {
   const [shapeKind, setShapeKind] = useState<ShapeKind>(userPrefs.shapeKind);
   const [shapeSides, setShapeSides] = useState(userPrefs.shapeSides);
   const [sbMode, setSbMode] = useState<'merge' | 'erase'>(userPrefs.sbMode);
+  /** Whether the layer panel takes a whole group or a single object */
+  const [groupSelectMode, setGroupSelectMode] = useState<'group' | 'objects'>(
+    userPrefs.groupSelectMode
+  );
   const [modifiers, setModifiers] = useState<ModifierState>({ shift: false, ctrl: false, alt: false });
 
   const [fillColor, setFillColor] = useState(userPrefs.fillColor);
@@ -521,6 +532,7 @@ export default function App() {
       shapeKind,
       shapeSides,
       sbMode,
+      groupSelectMode,
       fillColor,
       strokeColor,
       fillOpacity,
@@ -555,6 +567,7 @@ export default function App() {
       shapeKind,
       shapeSides,
       sbMode,
+      groupSelectMode,
       fillColor,
       strokeColor,
       fillOpacity,
@@ -666,6 +679,39 @@ export default function App() {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 2200);
   }, []);
+
+  // Testers have no console, so an uncaught error becomes a draft they can send
+  // from the feedback sheet instead of a mystery.
+  const [crashDraft, setCrashDraft] = useState<string | null>(null);
+  React.useEffect(
+    () =>
+      installCrashCapture((report) => {
+        setCrashDraft(report);
+        notify('Something failed — details are in Send feedback');
+      }),
+    [notify]
+  );
+
+  /**
+   * Clears invisibles left by earlier boolean passes: hairline slivers and
+   * empty paths that occupy the document but paint nothing. One history step,
+   * so it is always undoable.
+   */
+  const cleanUpFragments = useCallback(() => {
+    const { layers: next, removed } = stripInvisibleFragments(layersRef.current);
+    closeSheet();
+    if (!removed) {
+      notify('No invisible fragments found');
+      return;
+    }
+    const surviving = new Set(next.flatMap((layer) => layer.paths.map((path) => path.id)));
+    applyLayers(next);
+    setSelection((prev) => ({
+      ...prev,
+      selectedPathIds: prev.selectedPathIds.filter((id) => surviving.has(id)),
+    }));
+    notify(`Removed ${removed} invisible fragment${removed === 1 ? '' : 's'}`);
+  }, [applyLayers, closeSheet, notify]);
 
   const [traceSrc, setTraceSrc] = useState<string | null>(null);
   const [textOrigin, setTextOrigin] = useState<Point | null>(null);
@@ -1219,7 +1265,22 @@ export default function App() {
       applyLayers((prev) =>
         prev.map((l) => {
           const preserved = l.paths.filter((p) => !removeIds.includes(p.id));
-          return l.id === targetLayerId ? { ...l, paths: [...preserved, ...newPaths] } : { ...l, paths: preserved };
+          if (l.id !== targetLayerId) return { ...l, paths: preserved };
+          // A build can be committed twice (drag release plus the build bar, or
+          // a pad pointer). Appending blindly put the same objects in the layer
+          // twice, which is the duplicate that showed up after an erase.
+          // Only the objects that survive the replacement count as present: a
+          // shape the build left untouched keeps its id, and it is removed and
+          // re-added by this same write.
+          const present = new Set<string>();
+          for (const layer of prev)
+            for (const path of layer.paths) if (!removeIds.includes(path.id)) present.add(path.id);
+          const additions = newPaths.filter((path) => {
+            if (present.has(path.id)) return false;
+            present.add(path.id);
+            return true;
+          });
+          return { ...l, paths: [...preserved, ...additions] };
         })
       );
       setSelection({ selectedPathIds: newPaths.map((p) => p.id), selectedAnchorIndex: null, selectedHandleType: null });
@@ -3045,20 +3106,6 @@ export default function App() {
     [applyLayers, notify, resolveWritableLayerId, selectedPaths, view.height, view.width]
   );
 
-  const addReferenceFiles = useCallback(
-    async (files: FileList | File[] | null) => {
-      if (!files) return;
-      for (const file of Array.from(files)) {
-        try {
-          addReference(await referenceImageFromFile(file));
-        } catch {
-          notify('That image could not be added');
-        }
-      }
-    },
-    [addReference, notify]
-  );
-
   const addReferenceFromSrc = useCallback(
     async (src: string) => {
       try {
@@ -3082,7 +3129,7 @@ export default function App() {
       /* still usable for this session */
     }
     // Parsing here is what later lets "To curves" keep the glyphs exactly.
-    const outline = registerOutlineFont(family, buffer.slice(0));
+    const outline = await registerOutlineFont(family, buffer.slice(0));
     const face = new FontFace(
       family,
       buffer,
@@ -3436,7 +3483,7 @@ export default function App() {
         const families: string[] = [];
         for (const font of storedFonts) {
           try {
-            const outline = registerOutlineFont(font.family, font.data.slice(0));
+            const outline = await registerOutlineFont(font.family, font.data.slice(0));
             const face = new FontFace(
               font.family,
               font.data.slice(0),
@@ -3537,6 +3584,21 @@ export default function App() {
         return;
       }
 
+      // Alt + arrow reorders the selected objects inside their layer; holding
+      // shift as well jumps straight to the front or the back.
+      if (
+        e.altKey &&
+        selection.selectedPathIds.length > 0 &&
+        (e.key === 'ArrowUp' || e.key === 'ArrowDown')
+      ) {
+        e.preventDefault();
+        const toEnd = e.shiftKey;
+        const direction =
+          e.key === 'ArrowUp' ? (toEnd ? 'front' : 'up') : toEnd ? 'back' : 'down';
+        for (const id of selection.selectedPathIds) movePath(id, direction);
+        return;
+      }
+
       switch (e.key) {
         case 'Escape':
           if (sheet) setSheet(null);
@@ -3618,7 +3680,9 @@ export default function App() {
     pasteClipboard,
     redo,
     previewMode,
+    movePath,
     saveDocument,
+    selection.selectedPathIds,
     sheet,
     tool,
     undo,
@@ -3969,6 +4033,7 @@ export default function App() {
         }}
         onOpenHelp={() => setSheet('help')}
         onOpenFeedback={() => setSheet('feedback')}
+        onCleanUpFragments={cleanUpFragments}
         onPanTool={() => {
           changeTool('hand');
           closeSheet();
@@ -4056,6 +4121,7 @@ export default function App() {
         onReorderPath={reorderPath}
         onGroupSelected={groupSelectedObjects}
         onMovePathToLayer={movePathToLayer}
+        onMovePath={movePath}
         onReorderLayer={reorderLayer}
         onUngroupLayer={ungroupLayer}
         onUpdateLayerOpacity={(id, opacity) => {
@@ -4066,9 +4132,30 @@ export default function App() {
           // A slider drag is one undo step, not one per pointer event.
           commitSoon();
         }}
-        onSelectPath={(id) =>
-          setSelection({ selectedPathIds: [id], selectedAnchorIndex: null, selectedHandleType: null })
-        }
+        groupSelectMode={groupSelectMode}
+        onChangeGroupSelectMode={setGroupSelectMode}
+        onSelectLayerObjects={(id) => {
+          const layer = layersRef.current.find((l) => l.id === id);
+          if (!layer) return;
+          setActiveLayerId(id);
+          setSelection({
+            selectedPathIds: layer.paths.map((p) => p.id),
+            selectedAnchorIndex: null,
+            selectedHandleType: null,
+          });
+        }}
+        onSelectPath={(id) => {
+          // A group is one object until the panel is switched to Object mode,
+          // so tapping any member brings the whole group along.
+          const owner = layersRef.current.find((l) => l.paths.some((p) => p.id === id));
+          const wholeGroup = groupSelectMode === 'group' && owner?.isGroup === true;
+          if (wholeGroup && owner) setActiveLayerId(owner.id);
+          setSelection({
+            selectedPathIds: wholeGroup && owner ? owner.paths.map((p) => p.id) : [id],
+            selectedAnchorIndex: null,
+            selectedHandleType: null,
+          });
+        }}
         onDeletePath={(id) => {
           applyLayers((prev) =>
             prev.map((l) => ({ ...l, paths: l.paths.filter((p) => p.id !== id) }))
@@ -4308,6 +4395,7 @@ export default function App() {
           objects: layers.reduce((count, layer) => count + layer.paths.length, 0),
         }}
         onCopied={notify}
+        initialMessage={crashDraft}
       />
 
       <CanvasSettingsSheet

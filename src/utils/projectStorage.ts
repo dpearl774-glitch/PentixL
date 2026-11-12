@@ -10,6 +10,7 @@ import {
 import { LOGO_TEMPLATES } from '../data/templates';
 import { sanitizeClipReferences } from './clipping';
 import { generateProjectThumbnailSvg } from './thumbnailGenerator';
+import { hydrateReferenceUrls } from './referenceImages';
 
 /** Per-document grid system — visibility, spacing, appearance and lock */
 export interface GridSettings {
@@ -585,7 +586,7 @@ export function sanitizeBackupProject(value: unknown): StoredProject {
       : '#ffffff';
 
   const references = Array.isArray(raw.references)
-    ? (raw.references as ReferenceImage[])
+    ? hydrateReferenceUrls(raw.references as ReferenceImage[])
         .filter(
           (ref) =>
             !!ref &&

@@ -10,6 +10,10 @@
       "DOM",
       "DOM.Iterable"
     ],
+    // Every file already compiles under --strict; the flag was simply never
+    // declared, so nothing stopped a future file from relying on implicit any
+    // or a value that could be null.
+    "strict": true,
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "isolatedModules": true,

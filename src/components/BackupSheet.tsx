@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { Button, SectionLabel, Sheet } from './ui/primitives';
 import type { StorageProtection } from '../utils/storagePersistence';
+import { estimateStorage, formatBytes } from '../utils/storagePersistence';
 
 interface BackupSheetProps {
   open: boolean;
@@ -29,6 +30,21 @@ export const BackupSheet: React.FC<BackupSheetProps> = ({
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<'export' | 'restore' | 'protect' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [usage, setUsage] = useState<string | null>(null);
+
+  // Quota is only meaningful while the sheet is open, and not every browser
+  // reports it — when it does not, the line simply stays away.
+  React.useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void estimateStorage().then((estimate) => {
+      if (cancelled || !estimate) return;
+      setUsage(`${formatBytes(estimate.usage)} of ${formatBytes(estimate.quota)} used`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const run = async (kind: 'export' | 'restore' | 'protect', action: () => Promise<void>) => {
     setBusy(kind);
@@ -94,6 +110,9 @@ export const BackupSheet: React.FC<BackupSheetProps> = ({
                     ? 'This browser does not expose persistent storage. Keep a backup outside the browser.'
                     : 'The browser may clear local data under storage pressure. Protect it or keep a backup outside the browser.'}
               </p>
+              {usage && (
+                <p className="mt-1 text-[11.5px] leading-relaxed text-mute">{usage}</p>
+              )}
               {!protectedStorage && !unsupported && (
                 <Button
                   size="sm"

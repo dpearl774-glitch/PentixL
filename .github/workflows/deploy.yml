@@ -24,6 +24,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Render and feature checks
+        run: npx tsx smoke.tsx
+      - name: Geometry fixtures
+        run: npx tsx tests/geometryFixtures.ts
       - name: Build for the repository subpath
         # Project pages are served from /<repo>/, so assets need that prefix.
         env:

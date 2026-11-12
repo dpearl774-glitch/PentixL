@@ -55,6 +55,7 @@ import {
   computeAtomicSubRegions,
   findSubRegionAtPoint,
   regionUnionOutline,
+  shapeUnionOutline,
   executeShapeBuilderMerge,
   executeShapeBuilderErase,
   SubRegion,
@@ -347,6 +348,7 @@ export const Canvas: React.FC<CanvasProps> = ({
   const [sbSelectedRegionIds, setSbSelectedRegionIds] = useState<string[]>([]);
   const [sbHoveredRegionId, setSbHoveredRegionId] = useState<string | null>(null);
   const [sbDragPoints, setSbDragPoints] = useState<Point[]>([]);
+  const sbCommitRef = React.useRef(0);
 
   // Multi-touch gestures (Pinch-to-zoom & two-finger pan)
   const activePointersRef = useRef<Map<number, Point>>(new Map());
@@ -767,14 +769,16 @@ export const Canvas: React.FC<CanvasProps> = ({
   // Adobe Illustrator Shape Builder: Participating Paths & Planar Atomic Decomposition
   const participatingPaths = React.useMemo(() => {
     if (tool !== 'shape-builder') return [];
-    if (selection.selectedPathIds.length >= 2) {
-      return allPaths.filter(
-        (p) =>
-          !p.isClippingMask &&
-          selection.selectedPathIds.includes(p.id) &&
-          (p.closed || p.points.length >= 3)
-      );
-    }
+    // A finished build replaces its sources, so the previous selection can
+    // hold ids that no longer exist. Match against what still exists before
+    // falling back, otherwise the guide vanished after the first build.
+    const selectedClosed = allPaths.filter(
+      (p) =>
+        !p.isClippingMask &&
+        selection.selectedPathIds.includes(p.id) &&
+        (p.closed || p.points.length >= 3)
+    );
+    if (selectedClosed.length >= 2) return selectedClosed;
     const layerClosed = currentLayer.paths.filter(
       (p) => !p.isClippingMask && (p.closed || p.points.length >= 3)
     );
@@ -800,14 +804,30 @@ export const Canvas: React.FC<CanvasProps> = ({
     }
   }, [tool, participatingPaths, layers]);
 
-  // The build gesture's result, before release: the union outline of every
-  // region it has touched. Keyed on the ids so a pointer move does not rebuild
-  // the union unless the set of touched regions actually changed.
+  // The build gesture's result, before release. Merge joins the whole of every
+  // shape it brushed, so the preview shows those shapes; erase shows the patches
+  // that are about to disappear. Keyed on the ids so a pointer move does not
+  // rebuild the outline unless the touched set actually changed.
   const sbPreviewKey = sbSelectedRegionIds.join('|');
   const sbUnionPreviewD = React.useMemo(() => {
     const ids = sbPreviewKey ? sbPreviewKey.split('|') : [];
+    const erasing = modifiers.alt || sbMode === 'erase';
+    if (!erasing) {
+      const owners = new Set(
+        atomicRegions
+          .filter((region) => ids.includes(region.id))
+          .flatMap((region) => region.sourcePathIds)
+      );
+      const brushed = participatingPaths.filter((path) => owners.has(path.id));
+      if (brushed.length >= 2) {
+        return shapeUnionOutline(
+          brushed,
+          layers.flatMap((layer) => layer.paths)
+        );
+      }
+    }
     return regionUnionOutline(atomicRegions, ids);
-  }, [atomicRegions, sbPreviewKey]);
+  }, [atomicRegions, sbPreviewKey, modifiers.alt, sbMode, participatingPaths, layers]);
 
   shapeRegionsForPadRef.current = atomicRegions;
 
@@ -1882,31 +1902,59 @@ export const Canvas: React.FC<CanvasProps> = ({
    */
   const applyShapeBuilder = React.useCallback(
     (mode: 'merge' | 'erase') => {
+      // One gesture writes one build. A tap can arrive as both the release and
+      // a build-bar press, and two writes of the same result left the document
+      // holding the same objects twice.
+      if (Date.now() - sbCommitRef.current < 400) return;
       const ids = sbSelectedRegionIds.filter((id) =>
         atomicRegions.some((region) => region.id === id)
       );
       if (ids.length === 0 || participatingPaths.length === 0) return;
+      sbCommitRef.current = Date.now();
 
       const removeIds = participatingPaths.map((path) => path.id);
       // The merged solid keeps the paint of the region it grew from; painting it
       // in the tool's current colour made a merge look like a recolour.
-      const sourceFill = atomicRegions.find((region) => ids.includes(region.id))?.fill;
+      const sourceRegion = atomicRegions.find((region) => ids.includes(region.id));
+      const sourceFill = sourceRegion?.fill;
+      // A build keeps the paint it grew from — including "no stroke", which is
+      // what the shapes started with in the first place.
+      const sourcePath =
+        participatingPaths.find((p) => sourceRegion?.sourcePathIds.includes(p.id)) ??
+        participatingPaths[participatingPaths.length - 1];
+      const sourceStroke =
+        sourcePath?.stroke && sourcePath.stroke !== 'none' ? sourcePath.stroke : 'none';
+      const sourceStrokeWidth = sourceStroke === 'none' ? 0 : (sourcePath?.strokeWidth ?? 1);
       const newPaths =
         mode === 'erase'
           ? executeShapeBuilderErase(ids, atomicRegions, participatingPaths)
           : executeShapeBuilderMerge(ids, atomicRegions, participatingPaths, {
               fill: sourceFill ?? fillColor,
-              stroke: 'none',
-              strokeWidth: 0,
+              stroke: sourceStroke,
+              strokeWidth: sourceStrokeWidth,
             });
 
-      if (newPaths.length > 0) onReplacePaths?.(removeIds, newPaths);
+      if (newPaths.length > 0) {
+        // Name what the build produced after what it now is, not after the
+        // shape it used to be: a cut circle is no longer called Circle.
+        const produced = new Set(removeIds);
+        const used = layers.flatMap((layer) =>
+          layer.paths.map((path) => Number(/^Shape (\d+)$/.exec(path.name)?.[1] ?? 0))
+        );
+        let next = Math.max(0, ...used) + 1;
+        for (const path of newPaths) {
+          if (produced.has(path.id)) continue; // an untouched shape keeps its name
+          path.name = `Shape ${next}`;
+          next += 1;
+        }
+        onReplacePaths?.(removeIds, newPaths);
+      }
       setSbSelectedRegionIds([]);
       setSbDragPoints([]);
       setDraggingTarget(null);
       setIsPointerDown(false);
     },
-    [atomicRegions, fillColor, onReplacePaths, participatingPaths, sbSelectedRegionIds]
+    [atomicRegions, fillColor, layers, onReplacePaths, participatingPaths, sbSelectedRegionIds]
   );
 
   // Pointer Up Handler
@@ -1949,8 +1997,13 @@ export const Canvas: React.FC<CanvasProps> = ({
       setDraggingTarget(null);
       setIsPointerDown(false);
 
+      const erasing = modifiers.alt || sbMode === 'erase';
       if (travelled >= 6) {
-        applyShapeBuilder(modifiers.alt || sbMode === 'erase' ? 'erase' : 'merge');
+        applyShapeBuilder(erasing ? 'erase' : 'merge');
+      } else if (erasing) {
+        // A tap removes that one region outright: erasing a chip does not need
+        // a drag, and several taps in a row are how you clear a few.
+        applyShapeBuilder('erase');
       } else {
         setSbDragPoints([]);
       }

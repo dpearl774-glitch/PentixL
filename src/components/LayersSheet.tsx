@@ -48,7 +48,14 @@ interface LayersSheetProps {
   onReorderPath: (draggedId: string, targetId: string, place: 'above' | 'below') => void;
   /** Drops a dragged object onto another layer */
   onMovePathToLayer: (id: string, layerId: string) => void;
+  /** Reorder one object inside its own layer: one place, or to either end */
+  onMovePath: (id: string, direction: 'up' | 'down' | 'front' | 'back') => void;
   onGroupSelected: () => void;
+  /** Layer panel: take a whole group, or one object inside it */
+  groupSelectMode: 'group' | 'objects';
+  onChangeGroupSelectMode: (mode: 'group' | 'objects') => void;
+  /** Selects every object a group layer holds */
+  onSelectLayerObjects: (layerId: string) => void;
   /** Releases a group layer's objects into the layer beneath it */
   onUngroupLayer: (layerId: string) => void;
 }
@@ -94,6 +101,62 @@ const Chip: React.FC<{ path: VectorPath; small?: boolean }> = ({ path, small }) 
  * showing exactly where the row will land. Groups are layers flagged as such;
  * their members sit indented and can be released with Ungroup.
  */
+/**
+ * A step button that becomes a jump when held: a tap moves the object one place,
+ * a press sends it to the front or the back. Both behaviours are documented in
+ * the help sheet, so the pointer handling lives next to the arrows themselves.
+ */
+const StepOrJump: React.FC<{
+  label: string;
+  onStep: () => void;
+  onJump: () => void;
+  children: React.ReactNode;
+}> = ({ label, onStep, onJump, children }) => {
+  const timer = React.useRef<number | null>(null);
+  const held = React.useRef(false);
+
+  const clear = () => {
+    if (timer.current !== null) {
+      window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+  };
+
+  const start = () => {
+    held.current = false;
+    clear();
+    timer.current = window.setTimeout(() => {
+      held.current = true;
+      timer.current = null;
+      onJump();
+    }, 450);
+  };
+
+  const finish = () => {
+    clear();
+    if (held.current) {
+      held.current = false;
+      return;
+    }
+    onStep();
+  };
+
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onPointerDown={start}
+      onPointerUp={finish}
+      onPointerLeave={clear}
+      onPointerCancel={clear}
+      onContextMenu={(event) => event.preventDefault()}
+      className="press grid h-7 w-7 shrink-0 place-items-center rounded-lg text-dim"
+    >
+      {children}
+    </button>
+  );
+};
+
 export const LayersSheet: React.FC<LayersSheetProps> = ({
   open,
   onClose,
@@ -117,7 +180,11 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
   onUpdatePathOpacity,
   onReorderPath,
   onMovePathToLayer,
+  onMovePath,
   onGroupSelected,
+  groupSelectMode,
+  onChangeGroupSelectMode,
+  onSelectLayerObjects,
   onUngroupLayer,
 }) => {
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -253,9 +320,25 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
         )}
 
         <section className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <SectionLabel>Front · Layers · Back</SectionLabel>
-            <span className="font-sans text-[9px] text-mute">drag to restack</span>
+            {/* One tap decides whether a group behaves as one object or as its
+                members — the same model, both ways round. */}
+            <div className="flex shrink-0 items-center gap-px rounded-md border border-line bg-ink-0 p-[2px]">
+              {(['group', 'objects'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={groupSelectMode === mode}
+                  onClick={() => onChangeGroupSelectMode(mode)}
+                  className={`press h-6 rounded-[4px] px-1.5 font-sans text-[9px] font-bold uppercase tracking-[0.06em] ${
+                    groupSelectMode === mode ? 'bg-line-strong text-text' : 'text-mute'
+                  }`}
+                >
+                  {mode === 'group' ? 'Group' : 'Object'}
+                </button>
+              ))}
+            </div>
           </div>
 
           {ordered.map((layer) => {
@@ -331,7 +414,11 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
                   ) : (
                     <button
                       type="button"
-                      onClick={() => onSelectLayer(layer.id)}
+                      onClick={() =>
+                        isGroup && groupSelectMode === 'group'
+                          ? onSelectLayerObjects(layer.id)
+                          : onSelectLayer(layer.id)
+                      }
                       className="flex min-w-0 flex-1 items-center gap-1.5 py-2 text-left"
                     >
                       {isGroup && <LayersIcon size={12} className="shrink-0 text-accent" />}
@@ -425,7 +512,11 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
                           {grip({ kind: 'path', id: path.id }, path.name, true)}
                           <button
                             type="button"
-                            onClick={() => onSelectPath(path.id)}
+                            onClick={() =>
+                              isGroup && groupSelectMode === 'group'
+                                ? onSelectLayerObjects(layer.id)
+                                : onSelectPath(path.id)
+                            }
                             className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left"
                           >
                             <Chip path={path} small />
@@ -481,6 +572,24 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
                               <Unlock size={11} className="text-mute" />
                             )}
                           </button>
+                          {selected && (
+                            <>
+                              <StepOrJump
+                                label="Bring object forward, hold for front"
+                                onStep={() => onMovePath(path.id, 'up')}
+                                onJump={() => onMovePath(path.id, 'front')}
+                              >
+                                <ChevronUp size={12} />
+                              </StepOrJump>
+                              <StepOrJump
+                                label="Send object backward, hold for back"
+                                onStep={() => onMovePath(path.id, 'down')}
+                                onJump={() => onMovePath(path.id, 'back')}
+                              >
+                                <ChevronDown size={12} />
+                              </StepOrJump>
+                            </>
+                          )}
                           <IconButton
                             label="Delete object"
                             size="sm"

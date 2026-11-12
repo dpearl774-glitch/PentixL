@@ -1,4 +1,6 @@
 import { Layer, PressureConfig, VectorPath } from '../types/vector';
+import { saveBlob } from './fileSave';
+import type { SaveOutcome } from './fileSave';
 import { CANVAS } from '../theme';
 import { textLineHeight, textLines, textMatrixCss, textWorldBox } from './textGeometry';
 import { warpTextGlyphs } from './textWarp';
@@ -405,16 +407,12 @@ export function generateSvgCode(
 /**
  * Downloads SVG file to user's device
  */
-export function downloadSvg(svgString: string, filename = 'pentix-logo.svg'): void {
+export function downloadSvg(
+  svgString: string,
+  filename = 'pentix-logo.svg'
+): Promise<SaveOutcome> {
   const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  return saveBlob(blob, filename);
 }
 
 /**
@@ -456,15 +454,10 @@ export function exportToPng(
           reject(new Error('PNG export failed'));
           return;
         }
-        const pngUrl = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = pngUrl;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(pngUrl);
-        resolve();
+        saveBlob(blob, filename).then(
+          () => resolve(),
+          (err) => reject(err)
+        );
       }, 'image/png');
     };
 

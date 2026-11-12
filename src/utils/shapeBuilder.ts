@@ -7,8 +7,25 @@ import type { BoundingBox } from './transform';
 /**
  * Converts a VectorPath to a polygon format recognized by polygon-clipping
  */
+/**
+ * Samples per curve segment. One sample roughly every 1.5 artboard units keeps
+ * a large arc within a few hundredths of a unit of the true curve — finer than
+ * the fit that rebuilds the outline afterwards, so flattening stops being the
+ * reason a built shape differs from the one that was drawn.
+ */
+function flattenSteps(path: VectorPath): number {
+  const count = Math.max(1, path.points.length);
+  let span = 0;
+  for (let i = 0; i < count; i++) {
+    const a = path.points[i];
+    const b = path.points[(i + 1) % count];
+    span += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  return Math.max(12, Math.min(96, Math.round(span / count / 1.5) + 4));
+}
+
 export function vectorPathToClippingPolygon(path: VectorPath): Polygon {
-  const sampled = pathToPolygon(path, 24);
+  const sampled = pathToPolygon(path, flattenSteps(path));
   if (sampled.length < 3) return [];
   // Ensure the polygon is closed (first and last point match)
   const first = sampled[0];
@@ -19,7 +36,14 @@ export function vectorPathToClippingPolygon(path: VectorPath): Polygon {
   return [sampled as Ring];
 }
 
-import { simplifyPoints, decimateContour, fitSmoothBezierCurves } from './contourTracer';
+import { fitSmoothBezierCurves } from './contourTracer';
+
+/**
+ * How far a rebuilt outline may sit from the boolean result, in artboard units.
+ * Below a pixel at any normal zoom, so a built shape reads as the shape it came
+ * from instead of a close cousin of it.
+ */
+export const FIT_TOLERANCE = 0.1;
 
 /**
  * Converts a polygon-clipping Ring back to an editable VectorPath with smooth Bezier curves
@@ -41,12 +65,7 @@ export function ringToVectorPath(
 
   // Keep the boolean outline truthful, then let the fitter decide where the
   // anchors go — one per curve instead of one per sampled point.
-  const tolerance = 0.75;
-  const simplified =
-    rawPts.length > 3
-      ? decimateContour(simplifyPoints(rawPts, tolerance * 0.5), tolerance * 0.5, true)
-      : rawPts;
-  const points = fitSmoothBezierCurves(simplified, `${basePath.id}-${idSuffix}`, true, tolerance);
+  const points = fitSmoothBezierCurves(rawPts, `${basePath.id}-${idSuffix}`, true, FIT_TOLERANCE);
 
   return {
     ...basePath,

@@ -40,6 +40,8 @@ export interface UserPrefs {
   shapeKind: ShapeKind;
   shapeSides: number;
   sbMode: 'merge' | 'erase';
+  /** Layer panel selection: a group takes its objects, or one object at a time */
+  groupSelectMode: 'group' | 'objects';
 
   /* Paint defaults applied to new artwork */
   fillColor: string;
@@ -83,6 +85,7 @@ export const DEFAULT_PREFS: UserPrefs = {
   shapeKind: 'rectangle',
   shapeSides: 6,
   sbMode: 'merge',
+  groupSelectMode: 'group',
 
   fillColor: '#4c8dff',
   strokeColor: '#e8eaed',
@@ -214,6 +217,7 @@ export function sanitizeUserPrefs(raw: unknown): UserPrefs {
     ),
     shapeSides: num(p.shapeSides, d.shapeSides, 3, 12),
     sbMode: oneOf(p.sbMode, ['merge', 'erase'] as const, d.sbMode),
+    groupSelectMode: oneOf(p.groupSelectMode, ['group', 'objects'] as const, d.groupSelectMode),
 
     fillColor: str(p.fillColor, d.fillColor, HEX),
     strokeColor: str(p.strokeColor, d.strokeColor, HEX),

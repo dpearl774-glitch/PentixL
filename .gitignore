@@ -7,3 +7,6 @@ coverage/
 .env*
 !.env.example
 pw-diag.mjs
+
+# local review artefacts (screenshots, print proofs)
+artifacts/

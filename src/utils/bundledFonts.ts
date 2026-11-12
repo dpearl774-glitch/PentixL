@@ -34,7 +34,7 @@ export function ensureBundledFonts(): Promise<void> {
         const response = await fetch(`${import.meta.env.BASE_URL}${path}`);
         if (!response.ok) continue;
         const bytes = await response.arrayBuffer();
-        registerOutlineFont(family, bytes.slice(0));
+        await registerOutlineFont(family, bytes.slice(0));
         if (typeof FontFace !== 'undefined' && typeof document !== 'undefined') {
           document.fonts.add(await new FontFace(family, bytes, { weight }).load());
         }
