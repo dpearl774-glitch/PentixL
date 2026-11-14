@@ -90,11 +90,11 @@ const Row: React.FC<{
 
   if (href) {
     return (
+      // No target: a new window makes the browser ignore `download`, so the file
+      // would be saved under its URL name instead of the one given here.
       <a
         href={href}
         download={download}
-        target="_blank"
-        rel="noreferrer"
         onClick={onClick}
         className={className}
       >
