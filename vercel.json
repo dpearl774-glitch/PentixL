@@ -22,6 +22,19 @@
       ]
     },
     {
+      "source": "/pentix-tutorial.pdf",
+      "headers": [
+        {
+          "key": "Content-Disposition",
+          "value": "inline; filename=\"Pentix tutorial.pdf\""
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
       "source": "/assets/(.*)",
       "headers": [
         {
