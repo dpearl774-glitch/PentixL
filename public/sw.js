@@ -65,6 +65,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // The manual is a one-off download, not part of the shell: leaving it out of
+  // the cache keeps 2 MB of PDF out of the user's storage for good.
+  if (sameOrigin && url.pathname.endsWith('.pdf')) return;
+
   // Manifest, icon and fonts keep their URL across deploys, so they are served
   // from cache but refreshed in the background: fast, and current next load.
   event.respondWith(

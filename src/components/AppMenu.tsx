@@ -16,6 +16,7 @@ import {
   Image as ImageIcon,
   Sparkles,
   HelpCircle,
+  BookOpen,
   MessageSquarePlus,
   Move,
   Undo2,
@@ -69,23 +70,45 @@ const Row: React.FC<{
   hint?: string;
   onClick?: () => void;
   trailing?: React.ReactNode;
-}> = ({ icon, label, hint, onClick, trailing }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    disabled={!onClick}
-    className={`press flex min-h-11 w-full items-center gap-3 rounded-lg px-2 text-left ${
-      onClick ? 'hover:bg-ink-3' : ''
-    }`}
-  >
-    <span className="grid h-7 w-7 shrink-0 place-items-center text-dim">{icon}</span>
-    <span className="min-w-0 flex-1">
-      <span className="block truncate text-[13px] font-semibold text-text">{label}</span>
-      {hint && <span className="block truncate text-[11px] text-mute">{hint}</span>}
-    </span>
-    {trailing}
-  </button>
-);
+  /** When set the row is a real link, so the browser downloads rather than a tap doing nothing. */
+  href?: string;
+  download?: string;
+}> = ({ icon, label, hint, onClick, trailing, href, download }) => {
+  const content = (
+    <>
+      <span className="grid h-7 w-7 shrink-0 place-items-center text-dim">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-semibold text-text">{label}</span>
+        {hint && <span className="block truncate text-[11px] text-mute">{hint}</span>}
+      </span>
+      {trailing}
+    </>
+  );
+  const className = `press flex min-h-11 w-full items-center gap-3 rounded-lg px-2 text-left ${
+    onClick || href ? 'hover:bg-ink-3' : ''
+  }`;
+
+  if (href) {
+    return (
+      <a
+        href={href}
+        download={download}
+        target="_blank"
+        rel="noreferrer"
+        onClick={onClick}
+        className={className}
+      >
+        {content}
+      </a>
+    );
+  }
+
+  return (
+    <button type="button" onClick={onClick} disabled={!onClick} className={className}>
+      {content}
+    </button>
+  );
+};
 
 const Switch: React.FC<{ on: boolean }> = ({ on }) => (
   <span
@@ -261,6 +284,16 @@ export const AppMenu: React.FC<AppMenuProps> = ({
 
       <section>
         <Row icon={<HelpCircle size={16} />} label="Gestures & shortcuts" onClick={onOpenHelp} />
+        <Row
+          icon={<BookOpen size={16} />}
+          label="Tutorial PDF"
+          hint="The full manual, with screenshots"
+          // Relative to the document, so it resolves under "/" on a domain
+          // deploy and under "/<repo>/" on GitHub project pages.
+          href="pentix-tutorial.pdf"
+          download="Pentix tutorial.pdf"
+          onClick={onClose}
+        />
         <Row
           icon={<MessageSquarePlus size={16} />}
           label="Send feedback"
