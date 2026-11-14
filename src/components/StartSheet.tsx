@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, ArrowRight, Frame } from 'lucide-react';
+import { Plus, ArrowRight, Frame, BookOpen, Download } from 'lucide-react';
 import { LOGO_TEMPLATES, LogoTemplate } from '../data/templates';
 import { generateProjectThumbnailSvg } from '../utils/thumbnailGenerator';
 import { Button, Sheet } from './ui/primitives';
@@ -14,7 +14,7 @@ interface StartSheetProps {
   onClose: () => void;
 }
 
-/** Shown once, on the first launch. */
+/** Shown once, on the first launch — and again the first time the manual ships. */
 export const StartSheet: React.FC<StartSheetProps> = ({
   open,
   onStartBlank,
@@ -39,6 +39,27 @@ export const StartSheet: React.FC<StartSheetProps> = ({
           </div>
         </div>
       </div>
+      {/* A first-time reader is looking for the manual, so it is offered here
+          rather than only behind the menu. */}
+      <a
+        href="pentix-tutorial.pdf"
+        download="Pentix tutorial.pdf"
+        target="_blank"
+        rel="noreferrer"
+        className="press flex items-center gap-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-3 text-left"
+      >
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-accent/40 bg-accent/15 text-accent">
+          <BookOpen size={18} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[13.5px] font-semibold text-text">Read the tutorial</span>
+          <span className="block text-[11px] text-mute">
+            The whole app, chapter by chapter, with screenshots
+          </span>
+        </span>
+        <Download size={15} className="shrink-0 text-mute" />
+      </a>
+
       {/* Set the board first: size and colour decide how the mark is drawn, so
           this is the entry point rather than a detour through the menu. */}
       <button

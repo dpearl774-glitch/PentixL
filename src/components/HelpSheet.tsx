@@ -9,6 +9,8 @@ import {
   Grid3x3,
   Frame,
   Sparkles,
+  BookOpen,
+  Download,
 } from 'lucide-react';
 import { SectionLabel, Sheet } from './ui/primitives';
 
@@ -170,6 +172,25 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
           <Key>⌫</Key> delete
         </div>
       </section>
+
+      {/* The manual is the next step from here, so the sheet hands it over
+          rather than telling the reader to go and find it in the menu. */}
+      <a
+        href="pentix-tutorial.pdf"
+        download="Pentix tutorial.pdf"
+        target="_blank"
+        rel="noreferrer"
+        className="press flex items-center gap-3 rounded-lg border border-accent/35 bg-accent/10 px-3 py-3"
+      >
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent/15 text-accent">
+          <BookOpen size={16} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[12.5px] font-semibold text-text">Read the full manual</span>
+          <span className="block text-[11px] text-mute">Every tool, step by step, with screenshots</span>
+        </span>
+        <Download size={14} className="shrink-0 text-mute" />
+      </a>
     </div>
   </Sheet>
 );

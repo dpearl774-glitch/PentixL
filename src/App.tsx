@@ -3510,9 +3510,15 @@ export default function App() {
         if (!cancelled && project) openProject(project, { silent: true });
       }
 
-      if (!localStorage.getItem('pentix.onboarded')) {
+      // The start sheet doubles as the manual's introduction: it appears on the
+      // very first launch, and once more for anyone who already had Pentix
+      // before the tutorial shipped.
+      const firstLaunch = !localStorage.getItem('pentix.onboarded');
+      const firstTimeSeeingManual = !localStorage.getItem('pentix.tutorialPrompted');
+      if (firstLaunch || firstTimeSeeingManual) {
         setSheet('start');
         localStorage.setItem('pentix.onboarded', 'true');
+        localStorage.setItem('pentix.tutorialPrompted', 'true');
       }
     };
 
