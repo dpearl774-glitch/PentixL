@@ -8,7 +8,7 @@ import {
   Trash2,
   Plus,
   Pencil,
-  Sparkles,
+  ScanLine,
   Image as ImageIcon,
   Crop,
 } from 'lucide-react';
@@ -163,7 +163,7 @@ export const ReferencesSheet: React.FC<ReferencesSheetProps> = ({
                   <Pencil size={12} /> Trace with pen
                 </Button>
                 <Button size="sm" variant="quiet" onClick={() => onTrace(img.url)}>
-                  <Sparkles size={12} /> Auto-vectorise
+                  <ScanLine size={12} /> Auto-vectorise
                 </Button>
               </div>
               <Button

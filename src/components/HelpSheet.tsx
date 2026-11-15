@@ -8,7 +8,7 @@ import {
   Type as TypeIcon,
   Grid3x3,
   Frame,
-  Sparkles,
+  Layers,
   BookOpen,
   Download,
 } from 'lucide-react';
@@ -133,7 +133,7 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
         <Item term="To curves">Select the text and use “To curves” to convert glyphs into editable paths.</Item>
       </Group>
 
-      <Group icon={<Sparkles size={14} />} title="Studio">
+      <Group icon={<Layers size={14} />} title="Studio">
         <Item term="Fonts">Imported typefaces are stored on this device and return after a refresh.</Item>
         <Item term="References">Saved with the document, and locked behind the artwork until unlocked.</Item>
         <Item term="Pressure">Auto uses stylus pressure or finger speed, Speed follows motion, Uniform is constant.</Item>

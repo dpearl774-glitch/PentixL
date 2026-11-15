@@ -5,7 +5,11 @@ import './index.css';
 
 import { ensureBundledFonts } from './utils/bundledFonts';
 import { registerAppUpdates } from './utils/appUpdates';
+import { applyTheme, readThemeChoice } from './utils/appearance';
 import { formatCrash } from './utils/crashReport';
+
+// Before the first paint: a light-mode user must never see a dark flash.
+applyTheme(readThemeChoice());
 
 // Start the bundled faces loading immediately; conversion awaits the same promise.
 void ensureBundledFonts();

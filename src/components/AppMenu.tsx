@@ -14,7 +14,10 @@ import {
   SlidersHorizontal,
   Type,
   Image as ImageIcon,
-  Sparkles,
+  LayoutGrid,
+  ScanLine,
+  Newspaper,
+  RefreshCw,
   HelpCircle,
   BookOpen,
   MessageSquarePlus,
@@ -24,7 +27,8 @@ import {
   Undo2,
   Redo2,
 } from 'lucide-react';
-import { Sheet } from './ui/primitives';
+import { Chip, Sheet } from './ui/primitives';
+import type { ThemeChoice } from '../utils/appearance';
 import { BrandMark } from './BrandMark';
 
 interface AppMenuProps {
@@ -59,6 +63,11 @@ interface AppMenuProps {
   onOpenTracer: () => void;
   onOpenHelp: () => void;
   onOpenWhatsNew: () => void;
+  /** A downloaded build is waiting for the user to take it */
+  updateReady: boolean;
+  onApplyUpdate: () => void;
+  theme: ThemeChoice;
+  onThemeChange: (choice: ThemeChoice) => void;
   /** A changelog entry the user has not opened yet */
   hasUnseenChanges?: boolean;
   onOpenFeedback: () => void;
@@ -166,6 +175,10 @@ export const AppMenu: React.FC<AppMenuProps> = ({
   onOpenHelp,
   onOpenWhatsNew,
   hasUnseenChanges,
+  updateReady,
+  onApplyUpdate,
+  theme,
+  onThemeChange,
   onOpenFeedback,
   onCleanUpFragments,
   canUndo,
@@ -175,6 +188,29 @@ export const AppMenu: React.FC<AppMenuProps> = ({
 }) => (
   <Sheet open={open} onClose={onClose} title={projectName} subtitle={canvasLabel} size="sm">
     <div className="flex flex-col gap-5 pb-2">
+      {/* A waiting build stays visible here until it is taken: dismissing the
+          floating banner must not make the update disappear. */}
+      {updateReady && (
+        <section>
+          <button
+            type="button"
+            onClick={onApplyUpdate}
+            className="press flex w-full items-center gap-3 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-2 text-left"
+          >
+            <RefreshCw size={16} className="shrink-0 text-accent" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] font-semibold text-text">Update ready</span>
+              <span className="block truncate text-[11px] text-dim">
+                Downloaded — tap to finish
+              </span>
+            </span>
+            <span className="shrink-0 rounded-md bg-accent/20 px-2 py-1 text-[11px] font-bold text-accent">
+              Reload
+            </span>
+          </button>
+        </section>
+      )}
+
       <section>
         <div className="label-mono mb-1 px-2">Document</div>
         <Row
@@ -218,6 +254,28 @@ export const AppMenu: React.FC<AppMenuProps> = ({
           >
             <Redo2 size={14} /> Redo
           </button>
+        </div>
+      </section>
+
+      <section>
+        <div className="label-mono mb-1 px-2">Appearance</div>
+        <div className="flex gap-1.5 px-1">
+          {(
+            [
+              ['dark', 'Dark'],
+              ['light', 'Light'],
+              ['system', 'System'],
+            ] as const
+          ).map(([value, label]) => (
+            <Chip
+              key={value}
+              active={theme === value}
+              onClick={() => onThemeChange(value)}
+              className="flex-1 justify-center"
+            >
+              {label}
+            </Chip>
+          ))}
         </div>
       </section>
 
@@ -280,13 +338,13 @@ export const AppMenu: React.FC<AppMenuProps> = ({
         <Row icon={<Type size={16} />} label="Fonts" onClick={onOpenFonts} />
         <Row icon={<ImageIcon size={16} />} label="References" onClick={onOpenReferences} />
         <Row
-          icon={<Sparkles size={16} />}
+          icon={<LayoutGrid size={16} />}
           label="Patterns"
           hint="Named pattern swatches"
           onClick={onOpenPatterns}
         />
         <Row
-          icon={<Sparkles size={16} />}
+          icon={<ScanLine size={16} />}
           label="Trace an image"
           hint="Turn a silhouette into paths"
           onClick={onOpenTracer}
@@ -296,7 +354,7 @@ export const AppMenu: React.FC<AppMenuProps> = ({
       <section>
         <Row icon={<HelpCircle size={16} />} label="Gestures & shortcuts" onClick={onOpenHelp} />
         <Row
-          icon={<Sparkles size={16} />}
+          icon={<Newspaper size={16} />}
           label="What's new"
           hint="What changed in the latest builds"
           onClick={onOpenWhatsNew}

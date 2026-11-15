@@ -4,7 +4,23 @@
  * The SVG surface is painted with these values, so they live in TS rather
  * than CSS. Keep them in sync with the tokens in index.css.
  */
-export const CANVAS = {
+export interface CanvasPalette {
+  artboard: string;
+  artboardEdge: string;
+  page: string;
+  grid: string;
+  accent: string;
+  accentSoft: string;
+  erase: string;
+  eraseSoft: string;
+  node: string;
+  nodeActive: string;
+  nodeEdge: string;
+  handle: string;
+  ink: string;
+}
+
+export const DARK_CANVAS: CanvasPalette = {
   /** Artboard paper */
   artboard: '#101216',
   /** Hairline around the paper — a border, not a drawn shape */
@@ -27,7 +43,34 @@ export const CANVAS = {
   handle: '#5b8de0',
   /** Ink text on light chips */
   ink: '#0b0d10',
-} as const;
+};
+
+/**
+ * Light theme: paper is the page, the workspace is a soft grey. The accent and
+ * the erase red stay put — a selection reads the same in either mode.
+ */
+export const LIGHT_CANVAS: CanvasPalette = {
+  artboard: '#ffffff',
+  artboardEdge: '#ccd2da',
+  page: '#eef0f3',
+  grid: '#c9cfd8',
+  accent: '#2f6fdb',
+  accentSoft: 'rgba(47, 111, 219, 0.16)',
+  erase: '#cf4444',
+  eraseSoft: 'rgba(207, 68, 68, 0.16)',
+  node: '#14171c',
+  nodeActive: '#2f6fdb',
+  nodeEdge: '#ffffff',
+  handle: '#3f6fc0',
+  ink: '#ffffff',
+};
+
+/**
+ * The palette the SVG surface paints with. Mutated in place on a theme change:
+ * the palettes are read during render, and the switch always comes with a
+ * re-render of the editor, so every surface picks the new values up.
+ */
+export const CANVAS: CanvasPalette = { ...DARK_CANVAS };
 
 export const KEYBOARD_LABEL: Record<'shift' | 'ctrl' | 'alt', string> = {
   shift: '⇧',

@@ -27,6 +27,25 @@
   --radius-sheet: 22px;
 }
 
+/* Light theme: the same structure, flipped. Every utility in the app reads
+   these tokens, so overriding them here themes the whole editor without a
+   single component knowing which mode it is in. */
+:root[data-theme='light'] {
+  --color-ink-0: #eef0f3;
+  --color-ink-1: #f6f7f9;
+  --color-ink-2: #ffffff;
+  --color-ink-3: #e6e9ee;
+  --color-line: #d7dbe2;
+  --color-line-strong: #bcc3cd;
+  --color-text: #14171c;
+  --color-dim: #4a525d;
+  --color-mute: #737c88;
+  --color-accent: #2f6fdb;
+  --color-accent-dim: #2559b0;
+  --color-danger: #cf4444;
+  --color-warn: #a5700a;
+}
+
 @layer base {
   html,
   body,

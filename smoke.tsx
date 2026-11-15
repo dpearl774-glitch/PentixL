@@ -2019,6 +2019,10 @@ const menuHtml = renderToStaticMarkup(
     onOpenReferences={noop}
     onOpenTracer={noop}
     onOpenWhatsNew={noop}
+    updateReady={false}
+    onApplyUpdate={noop}
+    theme="dark"
+    onThemeChange={noop}
     onOpenHelp={noop}
     onOpenFeedback={noop}
     canUndo

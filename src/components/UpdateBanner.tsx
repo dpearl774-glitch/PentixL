@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefreshCw, Sparkles } from 'lucide-react';
+import { Newspaper, RefreshCw } from 'lucide-react';
 
 interface UpdateBannerProps {
   open: boolean;
@@ -47,7 +47,7 @@ export const UpdateBanner: React.FC<UpdateBannerProps> = ({
           onClick={onWhatsNew}
           className="press mt-1 flex items-center gap-1.5 pl-6 text-[11px] text-dim"
         >
-          <Sparkles size={11} className="text-accent/80" />
+          <Newspaper size={11} className="text-accent/80" />
           See what changed
         </button>
       </div>

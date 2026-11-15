@@ -15,6 +15,17 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-11-15-themes',
+    date: '15 Nov 2026',
+    title: 'Dark, light, or your system',
+    items: [
+      'The menu has an Appearance switch: Dark, Light, or System to follow the device.',
+      'The whole editor flips — panels, canvas workspace and selection colours — and the choice is remembered.',
+      'A waiting update stays in the menu even after you dismiss the banner, so it is never lost.',
+      'Sharper icon set across the menu and sheets.',
+    ],
+  },
+  {
     id: '2026-11-15-updates',
     date: '15 Nov 2026',
     title: 'Updates tell you, offline keeps working',

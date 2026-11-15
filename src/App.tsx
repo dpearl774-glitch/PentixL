@@ -22,7 +22,14 @@ import { HelpSheet } from './components/HelpSheet';
 import { WhatsNewSheet } from './components/WhatsNewSheet';
 import { UpdateBanner } from './components/UpdateBanner';
 import { CHANGELOG_SEEN_KEY, LATEST_CHANGELOG_ID } from './data/changelog';
-import { UPDATE_READY_EVENT, applyPendingUpdate } from './utils/appUpdates';
+import { applyPendingUpdate, lookForUpdate, updateStatus } from './utils/appUpdates';
+import {
+  applyTheme,
+  readThemeChoice,
+  storeThemeChoice,
+  watchSystemTheme,
+  type ThemeChoice,
+} from './utils/appearance';
 import { FeedbackSheet } from './components/FeedbackSheet';
 import { StartSheet } from './components/StartSheet';
 import { CanvasSettingsSheet } from './components/CanvasSettingsSheet';
@@ -678,12 +685,60 @@ export default function App() {
   const closeSheet = useCallback(() => setSheet(null), []);
 
   // A new build is downloaded; it is the user's call when to take it, because
-  // taking it reloads the page and unsaved work is only in memory.
+  // taking it reloads the page and unsaved work is only in memory. Dismissing
+  // the floating banner only hides the banner — the menu keeps offering it.
   const [updateReady, setUpdateReady] = useState(false);
+  const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
   React.useEffect(() => {
-    const seen = () => setUpdateReady(true);
-    window.addEventListener(UPDATE_READY_EVENT, seen);
-    return () => window.removeEventListener(UPDATE_READY_EVENT, seen);
+    if (!('serviceWorker' in navigator) || !import.meta.env.PROD) return;
+    let stopped = false;
+    let timer = 0;
+    const stop = () => {
+      stopped = true;
+      if (timer) window.clearInterval(timer);
+    };
+    const poll = async () => {
+      const status = await updateStatus();
+      // No controller means this is the first install, not an update.
+      if (!stopped && status.waiting && status.controlled) {
+        setUpdateReady(true);
+        stop();
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || stopped) return;
+      void lookForUpdate().then((status) => {
+        if (!stopped && status.waiting && status.controlled) {
+          setUpdateReady(true);
+          stop();
+        }
+      });
+    };
+    void poll();
+    timer = window.setInterval(poll, 3000);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
+  // Dark, light, or whatever the device is set to.
+  const [theme, setTheme] = useState<ThemeChoice>(() => readThemeChoice());
+  // The SVG surface reads its palette during render, so a change that comes
+  // from the OS (in System mode) needs a render of its own to repaint it.
+  const [, bumpThemeRender] = useState(0);
+  React.useEffect(() => {
+    applyTheme(theme);
+    if (theme !== 'system') return;
+    return watchSystemTheme(() => {
+      applyTheme('system');
+      bumpThemeRender((n) => n + 1);
+    });
+  }, [theme]);
+  const changeTheme = useCallback((next: ThemeChoice) => {
+    setTheme(next);
+    storeThemeChoice(next);
   }, []);
 
   // The changelog dot stays lit until the sheet has been opened once.
@@ -4098,6 +4153,10 @@ export default function App() {
         onOpenHelp={() => setSheet('help')}
         onOpenWhatsNew={() => setSheet('whatsNew')}
         hasUnseenChanges={hasUnseenChanges}
+        updateReady={updateReady}
+        onApplyUpdate={applyPendingUpdate}
+        theme={theme}
+        onThemeChange={changeTheme}
         onOpenFeedback={() => setSheet('feedback')}
         onCleanUpFragments={cleanUpFragments}
         onPanTool={() => {
@@ -4529,9 +4588,9 @@ export default function App() {
 
       <Toast message={toast} />
       <UpdateBanner
-        open={updateReady}
+        open={updateReady && !updateBannerDismissed}
         onReload={applyPendingUpdate}
-        onDismiss={() => setUpdateReady(false)}
+        onDismiss={() => setUpdateBannerDismissed(true)}
         onWhatsNew={() => {
           setUpdateReady(false);
           setSheet('whatsNew');
