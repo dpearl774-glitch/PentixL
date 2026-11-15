@@ -34,11 +34,23 @@ import {
   AlignVerticalJustifyEnd,
   AlignHorizontalSpaceAround,
   AlignVerticalSpaceAround,
+  Pipette,
 } from 'lucide-react';
 import { PencilSmoothing, ShapeKind, ToolType } from '../types/vector';
 import { BooleanOperation } from '../utils/shapeBuilder';
 import { AlignMode, DistributeAxis } from '../utils/align';
 import { Chip, IconButton, RangeInput } from './ui/primitives';
+
+/**
+ * One-tap shadow colours. They are shortcuts, not the whole story: the picker
+ * beside them reaches every colour the device can show.
+ */
+const SHADOW_PRESET_COLORS: Array<{ color: string; name: string }> = [
+  { color: '#0b1220', name: 'ink' },
+  { color: '#2f6fdb', name: 'blue' },
+  { color: '#7a5cff', name: 'violet' },
+  { color: '#ffffff', name: 'white' },
+];
 
 import { WARP_KINDS, WarpKind, WarpSpec } from '../utils/warp';
 import { TEXT_PATH_ALIGNS, TextPathAlign } from '../utils/textPath';
@@ -481,6 +493,11 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   const [shadowOpacity, setShadowOpacity] = React.useState(0.35);
   const [shadowColor, setShadowColor] = React.useState('#0b1220');
   const [shadowInset, setShadowInset] = React.useState(false);
+  const shadowColorIsPreset = SHADOW_PRESET_COLORS.some(
+    ({ color }) => color === shadowColor.toLowerCase()
+  );
+  // A colour input only accepts #rrggbb; anything else would silently show black.
+  const shadowPickerValue = /^#[0-9a-f]{6}$/i.test(shadowColor) ? shadowColor : '#0b1220';
   const [patternScale, setPatternScale] = React.useState(100);
   const [patternRotation, setPatternRotation] = React.useState(0);
   const [patternTileType, setPatternTileType] = React.useState<
@@ -1647,23 +1664,50 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
               <div className="mt-1 flex items-center justify-between px-1">
                 <span className="font-sans text-[9px] uppercase tracking-wider text-mute">Colour</span>
                 <div className="flex items-center gap-1">
-                  {['#0b1220', '#000000', '#2f6fdb', '#7a5cff', '#ffffff'].map((colour) => (
+                  {SHADOW_PRESET_COLORS.map(({ color, name }) => (
                     <button
-                      key={colour}
+                      key={color}
                       type="button"
-                      aria-label={`Shadow colour ${
-                        colour === '#0b1220' ? 'ink' : colour === '#2f6fdb' ? 'blue' : colour === '#7a5cff' ? 'violet' : colour === '#ffffff' ? 'white' : 'black'
-                      } ${colour}`}
+                      aria-label={`Shadow colour ${name} ${color}`}
                       onClick={() => {
-                        setShadowColor(colour);
-                        pushShadow({ color: colour });
+                        setShadowColor(color);
+                        pushShadow({ color });
                       }}
-                      style={{ background: colour }}
+                      style={{ background: color }}
                       className={`press h-6 w-6 rounded-md border ${
-                        shadowColor === colour ? 'border-accent' : 'border-line'
+                        shadowColor.toLowerCase() === color ? 'border-accent' : 'border-line'
                       }`}
                     />
                   ))}
+                  {/* The presets above are shortcuts; this is the whole palette.
+                      It shows the current colour when that is not a preset, so
+                      the row never has a swatch that looks unselected. */}
+                  <label
+                    className={`press relative h-6 w-6 cursor-pointer overflow-hidden rounded-md border ${
+                      shadowColorIsPreset ? 'border-line' : 'border-accent'
+                    }`}
+                    style={{ background: shadowColorIsPreset ? undefined : shadowColor }}
+                    title={`Shadow colour ${shadowColor} — pick any colour`}
+                  >
+                    {shadowColorIsPreset && <span className="absolute inset-0 bg-ink-3" />}
+                    <Pipette
+                      size={11}
+                      className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 ${
+                        shadowColorIsPreset ? 'text-dim' : 'text-white mix-blend-difference'
+                      }`}
+                    />
+                    <input
+                      type="color"
+                      value={shadowPickerValue}
+                      onChange={(event) => {
+                        const colour = event.target.value.toLowerCase();
+                        setShadowColor(colour);
+                        pushShadow({ color: colour });
+                      }}
+                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                      aria-label="Shadow colour: pick any colour"
+                    />
+                  </label>
                 </div>
               </div>
             </>
