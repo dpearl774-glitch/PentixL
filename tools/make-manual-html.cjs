@@ -35,18 +35,48 @@ const slug = (title) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
-// --- images ship next to the page so the whole manual is one cached folder
+// --- images ship next to the page so the whole manual is one cached folder.
+// The captures are 2x, so they keep their own width and are stored as WebP:
+// the set drops from ~2 MB to a few hundred kB with nothing visible lost.
+// Without sharp (an optional dev dependency) the PNGs are copied untouched.
 fs.mkdirSync(OUT_SHOTS, { recursive: true });
-const copied = new Set();
-const copyShot = (file) => {
-  if (!file || copied.has(file)) return;
-  const from = path.join(SHOTS, file);
-  if (!fs.existsSync(from)) {
+
+let sharpish = null;
+try {
+  sharpish = require('sharp');
+} catch {
+  console.warn('sharp not installed — copying full-size PNGs instead');
+}
+
+const EXT = sharpish ? '.webp' : '.png';
+const assetName = (file) => file.replace(/\.png$/i, EXT);
+const wanted = new Set();
+const useShot = (file) => {
+  if (!file) return;
+  if (!fs.existsSync(path.join(SHOTS, file))) {
     console.warn('missing screenshot', file);
     return;
   }
-  fs.copyFileSync(from, path.join(OUT_SHOTS, file));
-  copied.add(file);
+  wanted.add(file);
+};
+
+/** Writes only what changed, and clears anything an earlier run left behind. */
+const emitShots = async () => {
+  const emitted = new Set();
+  for (const file of wanted) {
+    const from = path.join(SHOTS, file);
+    const name = assetName(file);
+    const to = path.join(OUT_SHOTS, name);
+    emitted.add(name);
+    if (fs.existsSync(to) && fs.statSync(to).mtimeMs >= fs.statSync(from).mtimeMs) continue;
+    if (sharpish) await sharpish(from).webp({ quality: 82, effort: 5 }).toFile(to);
+    else fs.copyFileSync(from, to);
+  }
+  for (const existing of fs.readdirSync(OUT_SHOTS)) {
+    if (existing === 'manual.js' || emitted.has(existing)) continue;
+    fs.unlinkSync(path.join(OUT_SHOTS, existing));
+  }
+  return emitted;
 };
 
 // --- body
@@ -85,17 +115,17 @@ for (const entry of entries) {
   } else if (entry.type === 'callout') {
     body += `<aside class="callout"><h3>${esc(entry.title)}</h3><p>${esc(entry.body)}</p></aside>\n`;
   } else if (entry.type === 'img') {
-    copyShot(entry.file);
+    useShot(entry.file);
     body +=
-      `<figure><img src="manual/${esc(entry.file)}" alt="${esc(entry.caption || '')}" loading="lazy" />` +
+      `<figure><img src="manual/${esc(assetName(entry.file))}" alt="${esc(entry.caption || '')}" loading="lazy" />` +
       (entry.caption ? `<figcaption>${esc(entry.caption)}</figcaption>` : '') +
       '</figure>\n';
   } else if (entry.type === 'pair') {
-    copyShot(entry.a);
-    copyShot(entry.b);
+    useShot(entry.a);
+    useShot(entry.b);
     body +=
-      `<figure class="pair"><div><img src="manual/${esc(entry.a)}" alt="" loading="lazy" /></div>` +
-      `<div><img src="manual/${esc(entry.b)}" alt="" loading="lazy" /></div>` +
+      `<figure class="pair"><div><img src="manual/${esc(assetName(entry.a))}" alt="" loading="lazy" /></div>` +
+      `<div><img src="manual/${esc(assetName(entry.b))}" alt="" loading="lazy" /></div>` +
       (entry.caption ? `<figcaption>${esc(entry.caption)}</figcaption>` : '') +
       '</figure>\n';
   }
@@ -248,6 +278,7 @@ ${body}
 </html>
 `;
 
+emitShots().then((emitted) => {
 fs.writeFileSync(OUT_PAGE, html);
 // A separate file: the deployed CSP allows only same-origin scripts.
 fs.writeFileSync(
@@ -289,6 +320,12 @@ fs.writeFileSync(
   })();
 `
 );
-console.log(
-  `wrote public/manual.html (${(Buffer.byteLength(html) / 1024).toFixed(0)} kB, ${chapters.length} chapters, ${copied.size} screenshots)`
+const shotsBytes = [...emitted].reduce(
+  (sum, name) => sum + fs.statSync(path.join(OUT_SHOTS, name)).size,
+  0
 );
+console.log(
+  `wrote public/manual.html (${(Buffer.byteLength(html) / 1024).toFixed(0)} kB, ${chapters.length} chapters, ` +
+    `${emitted.size} screenshots ${EXT} ${(shotsBytes / 1024).toFixed(0)} kB)`
+);
+});
