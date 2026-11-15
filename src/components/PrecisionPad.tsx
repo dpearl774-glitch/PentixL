@@ -18,8 +18,13 @@ interface PrecisionPadProps {
 
 /** Cursor travel per pad pixel — a small pad still crosses the canvas. */
 const SENSITIVITY = 1.7;
-/** Hold this long to press, exactly like holding a mouse button. */
-const HOLD_MS = 180;
+/**
+ * Hold this long to press, exactly like holding a mouse button. It has to sit
+ * clearly above the length of an ordinary tap (120-250 ms on a phone), or a
+ * slow tap turns into a press and the artwork gets a pointerdown it never asked
+ * for.
+ */
+const HOLD_MS = 300;
 /** Below this much finger travel a gesture still counts as a tap. */
 const MOVE_SLOP = 8;
 
@@ -144,7 +149,11 @@ export const PrecisionPad: React.FC<PrecisionPadProps> = ({
     const dy = e.clientY - last.y;
     if (dx === 0 && dy === 0) return;
     lastRef.current = { x: e.clientX, y: e.clientY };
-    handlers.current.onMove(dx * SENSITIVITY, dy * SENSITIVITY);
+    // Aiming wants the boost — a small pad has to cross the canvas. But while a
+    // press is held the finger is moving the artwork itself, and 1.7x there
+    // makes the object run away from the thumb that is dragging it.
+    const scale = pressedRef.current ? 1 : SENSITIVITY;
+    handlers.current.onMove(dx * scale, dy * scale);
 
     if (pressedRef.current) {
       handlers.current.onDrag();

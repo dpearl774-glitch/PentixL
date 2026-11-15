@@ -364,6 +364,14 @@ export const Canvas: React.FC<CanvasProps> = ({
 
   // Velocity tracking for Touch Pressure simulation
   const lastPointerTimeRef = useRef<number>(0);
+  /**
+   * The canvas point a drag started from, kept in a ref so a touch drag can
+   * rebase itself in the same event that crosses the slop — a state update
+   * would land too late, and the object would jump first and snap back second.
+   */
+  const dragOriginRef = useRef<Point | null>(null);
+  /** A touch drag rebases once, when it first passes the slop. */
+  const touchRebasedRef = useRef(false);
   const lastPointerPosRef = useRef<Point>({ x: 0, y: 0 });
   const smoothedPressureRef = useRef<number>(0.5);
 
@@ -1045,6 +1053,8 @@ export const Canvas: React.FC<CanvasProps> = ({
       (e.target as Element).setPointerCapture?.(e.pointerId);
     } catch (_) {}
     const canvasPt = screenToCanvas(e.clientX, e.clientY);
+    dragOriginRef.current = canvasPt;
+    touchRebasedRef.current = false;
     setIsPointerDown(true);
     setDragStartPoint(canvasPt);
     setCurrentPointerPoint(canvasPt);
@@ -1528,6 +1538,25 @@ export const Canvas: React.FC<CanvasProps> = ({
 
     // 2-Finger Pinch Zoom & Pan
     if (activePointersRef.current.size === 2 && initialPinchDistRef.current !== null && !isPanZoomLocked) {
+      // The gesture has become a pinch. An object that was being dragged by the
+      // first finger has to let go: zooming changes the screen-to-canvas scale
+      // under it, and when the second finger lifts the object would jump by
+      // exactly that change.
+      if (
+        draggingTarget &&
+        (draggingTarget.type === 'path' ||
+          draggingTarget.type === 'anchor' ||
+          draggingTarget.type === 'handle-in' ||
+          draggingTarget.type === 'handle-out' ||
+          draggingTarget.type === 'transform-handle' ||
+          draggingTarget.type === 'rotate-handle' ||
+          draggingTarget.type === 'marquee' ||
+          draggingTarget.type === 'shape-preview')
+      ) {
+        setDraggingTarget(null);
+        setMarqueeBox(null);
+        dragOriginRef.current = null;
+      }
       const pts = Array.from(activePointersRef.current.values());
       const currentDist = distance(pts[0], pts[1]);
       const zoomRatio = currentDist / initialPinchDistRef.current;
@@ -1814,6 +1843,11 @@ export const Canvas: React.FC<CanvasProps> = ({
     // A trackpad click lands with a pixel of travel. Until the pointer has
     // moved a few screen pixels, a press is a selection, not a drag — otherwise
     // picking a node nudged it off its corner.
+    //
+    // A finger is sloppier than a mouse: at a zoomed-out view a couple of degrees
+    // of thumb roll is 8-10 screen pixels, which used to start a drag on what
+    // the user meant as a tap and throw the object that far at once.
+    const dragSlop = e.pointerType === 'touch' ? 10 : 3;
     if (
       draggingTarget &&
       dragStartPoint &&
@@ -1821,7 +1855,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         draggingTarget.type === 'handle-in' ||
         draggingTarget.type === 'handle-out' ||
         draggingTarget.type === 'path') &&
-      distance(canvasPt, dragStartPoint) * view.zoom < 3
+      distance(canvasPt, dragStartPoint) * view.zoom < dragSlop
     ) {
       return;
     }
@@ -1903,8 +1937,26 @@ export const Canvas: React.FC<CanvasProps> = ({
 
     // Select Tool: Moving entire selected paths
     if (effectiveTool === 'select' && draggingTarget?.type === 'path' && dragStartPoint && draggingTarget.initialSelectedPaths) {
-      const rawDx = canvasPt.x - dragStartPoint.x;
-      const rawDy = canvasPt.y - dragStartPoint.y;
+      let origin = dragOriginRef.current ?? dragStartPoint;
+
+      // The first touch move past the slop only re-anchors the drag: the object
+      // starts from where the finger crossed it, so it does not lurch by the
+      // whole travel and then continue as if nothing happened.
+      if (e.pointerType === 'touch' && !touchRebasedRef.current) {
+        touchRebasedRef.current = true;
+        const travelled = Math.hypot(canvasPt.x - origin.x, canvasPt.y - origin.y) * view.zoom;
+        if (travelled > 0) {
+          const keep = Math.max(0, (travelled - 10) / travelled);
+          origin = {
+            x: origin.x + (canvasPt.x - origin.x) * keep,
+            y: origin.y + (canvasPt.y - origin.y) * keep,
+          };
+          dragOriginRef.current = origin;
+        }
+      }
+
+      const rawDx = canvasPt.x - origin.x;
+      const rawDy = canvasPt.y - origin.y;
 
       let dx = rawDx;
       let dy = rawDy;
