@@ -2018,6 +2018,7 @@ const menuHtml = renderToStaticMarkup(
     onOpenFonts={noop}
     onOpenReferences={noop}
     onOpenTracer={noop}
+    onOpenWhatsNew={noop}
     onOpenHelp={noop}
     onOpenFeedback={noop}
     canUndo

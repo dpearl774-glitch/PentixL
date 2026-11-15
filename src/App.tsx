@@ -19,6 +19,10 @@ import { FontsSheet } from './components/FontsSheet';
 import { TextSheet } from './components/TextSheet';
 import { TraceSheet } from './components/TraceSheet';
 import { HelpSheet } from './components/HelpSheet';
+import { WhatsNewSheet } from './components/WhatsNewSheet';
+import { UpdateBanner } from './components/UpdateBanner';
+import { CHANGELOG_SEEN_KEY, LATEST_CHANGELOG_ID } from './data/changelog';
+import { UPDATE_READY_EVENT, applyPendingUpdate } from './utils/appUpdates';
 import { FeedbackSheet } from './components/FeedbackSheet';
 import { StartSheet } from './components/StartSheet';
 import { CanvasSettingsSheet } from './components/CanvasSettingsSheet';
@@ -111,6 +115,7 @@ type SheetName =
   | 'text'
   | 'trace'
   | 'help'
+  | 'whatsNew'
   | 'feedback'
   | 'canvas'
   | 'refs'
@@ -671,6 +676,30 @@ export default function App() {
    * ------------------------------------------------------------------ */
   const [sheet, setSheet] = useState<SheetName | null>(null);
   const closeSheet = useCallback(() => setSheet(null), []);
+
+  // A new build is downloaded; it is the user's call when to take it, because
+  // taking it reloads the page and unsaved work is only in memory.
+  const [updateReady, setUpdateReady] = useState(false);
+  React.useEffect(() => {
+    const seen = () => setUpdateReady(true);
+    window.addEventListener(UPDATE_READY_EVENT, seen);
+    return () => window.removeEventListener(UPDATE_READY_EVENT, seen);
+  }, []);
+
+  // The changelog dot stays lit until the sheet has been opened once.
+  const [seenChangelogId, setSeenChangelogId] = useState(
+    () => localStorage.getItem(CHANGELOG_SEEN_KEY) ?? ''
+  );
+  const hasUnseenChanges = seenChangelogId !== LATEST_CHANGELOG_ID;
+  React.useEffect(() => {
+    if (sheet !== 'whatsNew' || !hasUnseenChanges) return;
+    setSeenChangelogId(LATEST_CHANGELOG_ID);
+    try {
+      localStorage.setItem(CHANGELOG_SEEN_KEY, LATEST_CHANGELOG_ID);
+    } catch {
+      /* private mode: the dot simply stays lit */
+    }
+  }, [sheet, hasUnseenChanges]);
   const [colorMode, setColorMode] = useState<'fill' | 'stroke' | 'background'>('fill');
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
@@ -4067,6 +4096,8 @@ export default function App() {
           setSheet('trace');
         }}
         onOpenHelp={() => setSheet('help')}
+        onOpenWhatsNew={() => setSheet('whatsNew')}
+        hasUnseenChanges={hasUnseenChanges}
         onOpenFeedback={() => setSheet('feedback')}
         onCleanUpFragments={cleanUpFragments}
         onPanTool={() => {
@@ -4418,6 +4449,7 @@ export default function App() {
       />
 
       <HelpSheet open={sheet === 'help'} onClose={closeSheet} />
+      <WhatsNewSheet open={sheet === 'whatsNew'} onClose={closeSheet} />
 
       <FeedbackSheet
         open={sheet === 'feedback'}
@@ -4496,6 +4528,15 @@ export default function App() {
       />
 
       <Toast message={toast} />
+      <UpdateBanner
+        open={updateReady}
+        onReload={applyPendingUpdate}
+        onDismiss={() => setUpdateReady(false)}
+        onWhatsNew={() => {
+          setUpdateReady(false);
+          setSheet('whatsNew');
+        }}
+      />
       </div>
     </div>
   );

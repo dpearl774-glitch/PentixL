@@ -4,6 +4,7 @@ import App from './App.tsx';
 import './index.css';
 
 import { ensureBundledFonts } from './utils/bundledFonts';
+import { registerAppUpdates } from './utils/appUpdates';
 import { formatCrash } from './utils/crashReport';
 
 // Start the bundled faces loading immediately; conversion awaits the same promise.
@@ -79,15 +80,5 @@ createRoot(document.getElementById('root')!).render(
   </AppErrorBoundary>
 );
 
-if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => {
-    // updateViaCache: 'none' keeps the browser from holding a stale worker
-    // script, which would pin the old shell long after a deploy.
-    // BASE_URL is "/" at the domain root and "/<repo>/" on GitHub project pages.
-    void navigator.serviceWorker
-      .register(`${import.meta.env.BASE_URL}sw.js`, { updateViaCache: 'none' })
-      .catch(() => {
-      /* offline support is optional; the editor still works */
-    });
-  });
-}
+// Registers the offline shell and listens for a new build waiting to take over.
+registerAppUpdates();

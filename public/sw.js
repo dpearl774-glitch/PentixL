@@ -4,13 +4,18 @@
 const ROOT = self.location.pathname.replace(/[^/]*$/, '');
 const at = (path) => ROOT + path;
 // Bumped whenever the shell changes so existing installs repopulate.
-const CACHE = 'pentix-shell-v3';
+const CACHE = 'pentix-shell-v4';
 const SHELL = [at(''), at('index.html'), at('manifest.webmanifest'), at('icon.svg')];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting())
-  );
+  // No skipWaiting here: a new build waits until a page asks for it, so the
+  // editor is never reloaded out from under someone mid-drawing.
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
+});
+
+// The page asks for the swap when the user accepts the update.
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {

@@ -58,6 +58,9 @@ interface AppMenuProps {
   onOpenPatterns: () => void;
   onOpenTracer: () => void;
   onOpenHelp: () => void;
+  onOpenWhatsNew: () => void;
+  /** A changelog entry the user has not opened yet */
+  hasUnseenChanges?: boolean;
   onOpenFeedback: () => void;
   onCleanUpFragments: () => void;
   canUndo: boolean;
@@ -161,6 +164,8 @@ export const AppMenu: React.FC<AppMenuProps> = ({
   onOpenPatterns,
   onOpenTracer,
   onOpenHelp,
+  onOpenWhatsNew,
+  hasUnseenChanges,
   onOpenFeedback,
   onCleanUpFragments,
   canUndo,
@@ -290,6 +295,20 @@ export const AppMenu: React.FC<AppMenuProps> = ({
 
       <section>
         <Row icon={<HelpCircle size={16} />} label="Gestures & shortcuts" onClick={onOpenHelp} />
+        <Row
+          icon={<Sparkles size={16} />}
+          label="What's new"
+          hint="What changed in the latest builds"
+          onClick={onOpenWhatsNew}
+          trailing={
+            hasUnseenChanges ? (
+              <span
+                aria-label="Unread changes"
+                className="h-2 w-2 shrink-0 rounded-full bg-accent shadow-[0_0_6px_rgba(205,255,92,0.7)]"
+              />
+            ) : undefined
+          }
+        />
         <Row
           icon={<BookOpen size={16} />}
           label="Tutorial PDF"
