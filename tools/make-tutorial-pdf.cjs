@@ -34,6 +34,8 @@ async function build(toc) {
   doc.on('data', (c) => chunks.push(c));
 
   const W = doc.page.width - M * 2;
+  /** Structured copy of everything the document says, for the web manual. */
+  const rec = [];
   const PAGE_BOTTOM = doc.page.height - BOTTOM;
   let y = M;
   let chapter = '';
@@ -52,6 +54,7 @@ async function build(toc) {
   };
 
   const h1 = (title, kicker) => {
+    rec.push({ type: 'chapter', title, kicker: kicker || null });
     chapter = title;
     if (y > M + 8) addPage();
     starts[title] = pageChapters.length;
@@ -68,11 +71,25 @@ async function build(toc) {
     y += 15;
   };
 
-  const h2 = (title) => { need(70); y += 6; text(title, { size: 12.5, font: 'Helvetica-Bold', gap: 6 }); };
+  const h2 = (title) => {
+    rec.push({ type: 'h2', title });
+    need(70);
+    y += 6;
+    text(title, { size: 12.5, font: 'Helvetica-Bold', gap: 6 });
+  };
 
-  const p = (str) => text(str);
+  const p = (str) => {
+    rec.push({ type: 'p', text: str });
+    text(str);
+  };
 
   const bullets = (items) => {
+    rec.push({
+      type: 'ul',
+      items: items.map((item) =>
+        typeof item === 'string' ? { body: item } : { label: item.label || null, body: item.body }
+      ),
+    });
     for (const item of items) {
       const label = typeof item === 'string' ? null : item.label;
       const body = typeof item === 'string' ? item : item.body;
@@ -100,6 +117,7 @@ async function build(toc) {
   };
 
   const callout = (body, title = 'Good to know') => {
+    rec.push({ type: 'callout', title, body });
     const inner = 12;
     doc.font('Helvetica-Bold').fontSize(8.5);
     const th = doc.heightOfString(title.toUpperCase(), { characterSpacing: 0.8 });
@@ -115,6 +133,7 @@ async function build(toc) {
   };
 
   const image = (file, caption, maxWidth = 262) => {
+    rec.push({ type: 'img', file, caption: caption || null });
     const full = path.join(SHOTS, file);
     if (!fs.existsSync(full)) { console.warn('missing screenshot', file); return; }
     const probe = doc.openImage(full);
@@ -134,6 +153,7 @@ async function build(toc) {
   };
 
   const pair = (a, b, caption) => {
+    rec.push({ type: 'pair', a, b, caption: caption || null });
     const gap = 14;
     const w = (W - gap) / 2;
     const pa = doc.openImage(path.join(SHOTS, a));
@@ -238,7 +258,7 @@ async function build(toc) {
     { label: 'The screens are real captures.', body: 'A 600 × 600 px board at 61% zoom unless a caption says otherwise.' },
     { label: 'Every tool is on the bottom dock.', body: 'The strip above the dock changes with the active tool, so the screens differ by one tool at a time.' },
   ]);
-  callout('You can reopen this guide whenever you like, without this file: the Tutorial PDF row in the app menu downloads it, and Gestures & shortcuts links to it as well.');
+  callout('You can reopen this guide whenever you like: the Manual row in the app menu opens it as a web page, Download PDF below that saves a copy to print or share, and Gestures & shortcuts links to it as well.');
   text('Pentix runs in the browser and installs to your home screen. Artwork is saved on your own device, so read Saving and backup before you rely on it.', { size: 8.5, color: MUTED });
 
   /* ------------------------------------------------------ getting started */
@@ -502,7 +522,7 @@ async function build(toc) {
   const finished = new Promise((resolve) => doc.on('end', resolve));
   doc.end();
   await finished;
-  return { starts, chapters: CHAPTERS, chunks };
+  return { starts, chapters: CHAPTERS, chunks, content: rec };
 }
 
 // Pass one measures, pass two prints the numbers. The contents page is reserved
@@ -515,5 +535,10 @@ void (async () => {
 
   const pdf = Buffer.concat(second.chunks);
   for (const out of OUTS) fs.writeFileSync(out, pdf);
+  // The web manual is generated from this, so both tell the same story.
+  fs.writeFileSync(
+    path.join(ROOT, 'artifacts', 'manual-content.json'),
+    JSON.stringify(second.content, null, 2)
+  );
   console.log('wrote', OUTS.join(' and '), `${(pdf.length / 1048576).toFixed(1)} MB`);
 })();

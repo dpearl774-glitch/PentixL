@@ -15,6 +15,16 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-11-15-manual-web',
+    date: '15 Nov 2026',
+    title: 'The manual is a page, not a download',
+    items: [
+      'Menu → Manual opens the whole guide in the browser, with its own contents list and every screenshot inline.',
+      'It is stored on your device the first time you read it, so it still opens with no connection.',
+      'Prefer paper or sending it on? Menu → Download PDF still saves the printable copy.',
+    ],
+  },
+  {
     id: '2026-11-15-themes',
     date: '15 Nov 2026',
     title: 'Dark, light, or your system',

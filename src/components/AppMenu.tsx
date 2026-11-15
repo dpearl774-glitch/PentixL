@@ -17,6 +17,7 @@ import {
   LayoutGrid,
   ScanLine,
   Newspaper,
+  Download,
   RefreshCw,
   HelpCircle,
   BookOpen,
@@ -87,7 +88,9 @@ const Row: React.FC<{
   /** When set the row is a real link, so the browser downloads rather than a tap doing nothing. */
   href?: string;
   download?: string;
-}> = ({ icon, label, hint, onClick, trailing, href, download }) => {
+  /** Open away from the editor — a page the user reads, not a download */
+  newTab?: boolean;
+}> = ({ icon, label, hint, onClick, trailing, href, download, newTab }) => {
   const content = (
     <>
       <span className="grid h-7 w-7 shrink-0 place-items-center text-dim">{icon}</span>
@@ -106,7 +109,7 @@ const Row: React.FC<{
     // A download stays in place: a new window makes the browser ignore `download`,
     // so the file gets saved under its URL name instead of the one given here.
     // An outside destination is the opposite case, and opens away from the app.
-    const external = /^https?:/i.test(href);
+    const external = newTab || /^https?:/i.test(href);
     return (
       <a
         href={href}
@@ -367,12 +370,23 @@ export const AppMenu: React.FC<AppMenuProps> = ({
             ) : undefined
           }
         />
+        {/* The manual is a page now: it opens instantly, is stored on the
+            device after the first read, and does not download 2 MB each time.
+            The PDF stays for printing and sharing. */}
         <Row
           icon={<BookOpen size={16} />}
-          label="Tutorial PDF"
-          hint="The full manual, with screenshots"
+          label="Manual"
+          hint="Read it in the browser — stored for offline"
           // Relative to the document, so it resolves under "/" on a domain
           // deploy and under "/<repo>/" on GitHub project pages.
+          href="manual.html"
+          newTab
+          onClick={onClose}
+        />
+        <Row
+          icon={<Download size={16} />}
+          label="Download PDF"
+          hint="For printing or sending to someone"
           href="pentix-tutorial.pdf"
           download="Pentix tutorial.pdf"
           onClick={onClose}

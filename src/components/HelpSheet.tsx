@@ -176,8 +176,9 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
       {/* The manual is the next step from here, so the sheet hands it over
           rather than telling the reader to go and find it in the menu. */}
       <a
-        href="pentix-tutorial.pdf"
-        download="Pentix tutorial.pdf"
+        href="manual.html"
+        target="_blank"
+        rel="noreferrer"
         className="press flex items-center gap-3 rounded-lg border border-accent/35 bg-accent/10 px-3 py-3"
       >
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent/15 text-accent">

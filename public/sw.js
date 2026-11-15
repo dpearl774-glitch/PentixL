@@ -4,8 +4,8 @@
 const ROOT = self.location.pathname.replace(/[^/]*$/, '');
 const at = (path) => ROOT + path;
 // Bumped whenever the shell changes so existing installs repopulate.
-const CACHE = 'pentix-shell-v4';
-const SHELL = [at(''), at('index.html'), at('manifest.webmanifest'), at('icon.svg')];
+const CACHE = 'pentix-shell-v5';
+const SHELL = [at(''), at('index.html'), at('manual.html'), at('manifest.webmanifest'), at('icon.svg')];
 
 self.addEventListener('install', (event) => {
   // No skipWaiting here: a new build waits until a page asks for it, so the
@@ -45,7 +45,14 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE).then((cache) => cache.put(at('index.html'), copy));
           return response;
         })
-        .catch(() => caches.match(at('index.html')).then((cached) => cached || caches.match(at(''))))
+        // Offline: answer with the page that was asked for (the manual is a
+        // navigation of its own), and only fall back to the app shell after.
+        .catch(async () => {
+          const exact = await caches.match(request);
+          if (exact) return exact;
+          const shell = await caches.match(at('index.html'));
+          return shell || caches.match(at(''));
+        })
     );
     return;
   }

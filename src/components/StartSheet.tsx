@@ -42,8 +42,9 @@ export const StartSheet: React.FC<StartSheetProps> = ({
       {/* A first-time reader is looking for the manual, so it is offered here
           rather than only behind the menu. */}
       <a
-        href="pentix-tutorial.pdf"
-        download="Pentix tutorial.pdf"
+        href="manual.html"
+        target="_blank"
+        rel="noreferrer"
         className="press flex items-center gap-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-3 text-left"
       >
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-accent/40 bg-accent/15 text-accent">

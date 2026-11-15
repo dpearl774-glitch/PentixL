@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Pentix — Manual</title>
+<meta name="description" content="The Pentix manual: drawing, nodes, shapes, patterns, export and everything else." />
+<meta name="theme-color" content="#08090b" />
+<style>
+  :root {
+    --ink-0: #08090b;
+    --ink-1: #0c0e11;
+    --ink-2: #12151a;
+    --ink-3: #191d23;
+    --line: #24282f;
+    --text: #eceef1;
+    --dim: #b3b9c2;
+    --mute: #7d848e;
+    --accent: #4c8dff;
+    --panel: #101318;
+  }
+  :root[data-theme='light'] {
+    --ink-0: #eef0f3;
+    --ink-1: #f6f7f9;
+    --ink-2: #ffffff;
+    --ink-3: #e6e9ee;
+    --line: #d7dbe2;
+    --text: #14171c;
+    --dim: #3f4750;
+    --mute: #6d7681;
+    --accent: #2f6fdb;
+    --panel: #f4f6f9;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--ink-0); color: var(--text); }
+  body {
+    font: 16px/1.65 system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header.top {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 20px;
+    background: color-mix(in srgb, var(--ink-0) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { font-weight: 800; letter-spacing: -0.01em; white-space: nowrap; }
+  .brand span { color: var(--mute); font-weight: 600; }
+  header.top .spacer { flex: 1; }
+  header.top a.btn, header.top button.btn {
+    font-size: 13px; font-weight: 700; padding: 7px 12px; border-radius: 8px;
+    border: 1px solid var(--line); color: var(--text); background: var(--ink-2);
+    white-space: nowrap; cursor: pointer; font-family: inherit;
+  }
+  header.top a.btn.primary { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); border-color: transparent; }
+  .wrap { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 40px; max-width: 1080px; margin: 0 auto; padding: 28px 20px 96px; }
+  details.toc { position: sticky; top: 64px; align-self: start; max-height: calc(100vh - 96px); overflow: auto; }
+  details.toc > summary {
+    list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px;
+    font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--mute);
+    margin: 0 0 8px; padding: 2px 0;
+  }
+  details.toc > summary::-webkit-details-marker { display: none; }
+  details.toc > summary::after { content: '▾'; font-size: 10px; }
+  details.toc[open] > summary::after { content: '▴'; }
+  nav.toc { }
+  nav.toc h2 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--mute); margin: 0 0 10px; }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; }
+  nav.toc li a { display: flex; gap: 10px; padding: 6px 8px; border-radius: 7px; color: var(--dim); font-size: 13.5px; }
+  nav.toc li a:hover { background: var(--ink-3); text-decoration: none; color: var(--text); }
+  nav.toc .num { color: var(--mute); font-variant-numeric: tabular-nums; font-size: 12px; padding-top: 1px; }
+  main { min-width: 0; }
+  .lead { color: var(--mute); font-size: 15px; margin: -4px 0 26px; }
+  section.chapter { padding-top: 8px; margin-bottom: 48px; scroll-margin-top: 80px; }
+  .kicker { margin: 0 0 6px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
+  h1 { font-size: clamp(24px, 4vw, 32px); line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 18px; }
+  h2 { font-size: 17px; margin: 30px 0 8px; letter-spacing: -0.01em; }
+  p { margin: 0 0 12px; color: var(--dim); }
+  ul { margin: 0 0 16px; padding-left: 20px; color: var(--dim); }
+  li { margin-bottom: 7px; }
+  li strong { color: var(--text); }
+  aside.callout { margin: 20px 0; padding: 14px 16px; background: var(--panel); border-left: 3px solid var(--accent); border-radius: 8px; }
+  aside.callout h3 { margin: 0 0 6px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+  aside.callout p { margin: 0; font-size: 14.5px; }
+  figure { margin: 20px 0 24px; }
+  figure img { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto; border: 1px solid var(--line); border-radius: 10px; background: var(--ink-2); }
+  figure.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  figure.pair > div { min-width: 0; }
+  figure.pair img { max-width: none; }
+  figcaption { margin-top: 8px; font-size: 12.5px; color: var(--mute); text-align: center; grid-column: 1 / -1; }
+  footer.bottom { border-top: 1px solid var(--line); padding: 20px; text-align: center; color: var(--mute); font-size: 13px; }
+  @media (max-width: 860px) {
+    .wrap { grid-template-columns: 1fr; gap: 0; padding-top: 16px; }
+    details.toc { position: static; max-height: none; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+    nav.toc ol { columns: 2; column-gap: 16px; }
+  }
+  @media (max-width: 520px) {
+    nav.toc ol { columns: 1; }
+    header.top { padding: 10px 14px; gap: 8px; }
+    header.top a.btn, header.top button.btn { font-size: 12px; padding: 6px 10px; }
+    .brand span.suffix { display: none; }
+    .wrap { padding: 14px 16px 72px; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <span class="brand">Pentix <span class="suffix">· manual</span></span>
+  <span class="spacer"></span>
+  <button class="btn" id="theme" type="button" aria-label="Switch between light and dark">Theme</button>
+  <a class="btn" href="pentix-tutorial.pdf" download>PDF</a>
+  <a class="btn primary" href="./">Open Pentix</a>
+</header>
+
+<div class="wrap">
+  <details class="toc" open>
+    <summary>Contents</summary>
+    <nav aria-label="Contents">
+      <ol>
+<li><a href="#how-to-use-this-guide"><span class="num">01</span>How to use this guide</a></li>
+<li><a href="#getting-in"><span class="num">02</span>Getting in</a></li>
+<li><a href="#the-screen-at-a-glance"><span class="num">03</span>The screen at a glance</a></li>
+<li><a href="#drawing-with-the-pen"><span class="num">04</span>Drawing with the pen</a></li>
+<li><a href="#freehand-pencil-and-brush"><span class="num">05</span>Freehand: pencil and brush</a></li>
+<li><a href="#shapes-and-the-shape-library"><span class="num">06</span>Shapes and the shape library</a></li>
+<li><a href="#the-shape-builder"><span class="num">07</span>The shape builder</a></li>
+<li><a href="#pathfinder"><span class="num">08</span>Pathfinder</a></li>
+<li><a href="#layers-and-objects"><span class="num">09</span>Layers and objects</a></li>
+<li><a href="#colour"><span class="num">10</span>Colour</a></li>
+<li><a href="#text"><span class="num">11</span>Text</a></li>
+<li><a href="#images-references-and-tracing"><span class="num">12</span>Images, references and tracing</a></li>
+<li><a href="#saving-backup-and-projects"><span class="num">13</span>Saving, backup and projects</a></li>
+<li><a href="#export"><span class="num">14</span>Export</a></li>
+<li><a href="#preview-mode"><span class="num">15</span>Preview mode</a></li>
+<li><a href="#gestures-and-shortcuts"><span class="num">16</span>Gestures and shortcuts</a></li>
+<li><a href="#getting-clean-results"><span class="num">17</span>Getting clean results</a></li>
+<li><a href="#reference-card"><span class="num">18</span>Reference card</a></li>
+      </ol>
+    </nav>
+  </details>
+  <main>
+    <p class="lead">Everything Pentix does, in order. This page and its images are stored on your device the first time you read it, so it opens without a connection.</p>
+<section class="chapter" id="how-to-use-this-guide">
+<p class="kicker">Before you start</p>
+<h1>How to use this guide</h1>
+<p>Pentix is a vector design studio built for a phone held in two hands: a pen, a pencil, a shape builder and a pathfinder, all reachable by either thumb. This guide walks through every tool in the order you will meet them, with the real screens of the app beside the explanation.</p>
+<figure class="pair"><div><img src="manual/01-welcome.png" alt="" loading="lazy" /></div><div><img src="manual/06-build.png" alt="" loading="lazy" /></div><figcaption>Left: starting a document. Right: the shape builder turning two shapes into one.</figcaption></figure>
+<ul>
+<li><strong>Read it in order the first time.</strong> Chapters follow the real workflow: set up a board, draw, combine, colour, save, export.</li>
+<li><strong>The screens are real captures.</strong> A 600 × 600 px board at 61% zoom unless a caption says otherwise.</li>
+<li><strong>Every tool is on the bottom dock.</strong> The strip above the dock changes with the active tool, so the screens differ by one tool at a time.</li>
+</ul>
+<aside class="callout"><h3>Good to know</h3><p>You can reopen this guide whenever you like: the Manual row in the app menu opens it as a web page, Download PDF below that saves a copy to print or share, and Gestures &amp; shortcuts links to it as well.</p></aside>
+</section>
+<section class="chapter" id="getting-in">
+<p class="kicker">Chapter 1</p>
+<h1>Getting in</h1>
+<p>Open pentixl.vercel.app in Safari or Chrome. On a phone, add it to your home screen so it opens full screen without browser bars: Share, then “Add to Home Screen”. Everything you draw stays on the device — there is no account and nothing is uploaded.</p>
+<p>The first screen is a start sheet. You can set up a board, open one of the ready-made marks to learn by pulling them apart, or go straight to this manual.</p>
+<figure><img src="manual/01-welcome.png" alt="The start sheet: the tutorial, artboard settings, a blank 600 × 600 board, and six starter marks you can open and edit." loading="lazy" /><figcaption>The start sheet: the tutorial, artboard settings, a blank 600 × 600 board, and six starter marks you can open and edit.</figcaption></figure>
+<h2>Three ways to begin</h2>
+<ul>
+<li><strong>Artboard settings.</strong> Choose the board size first — px, cm or in, with presets for the square boards a logo is delivered at.</li>
+<li><strong>Start blank.</strong> A 600 × 600 board with nothing on it. This is what the rest of this guide uses.</li>
+<li><strong>A starter mark.</strong> Pentix Px, Orbit, Prism, Stack, Pulse or Apex. They are ordinary documents: select one, inspect the nodes, build on it.</li>
+</ul>
+<aside class="callout"><h3>Good to know</h3><p>Tap Done on the sheet to reach the canvas. Later, Projects in the menu reopens your documents, and New document starts a fresh board.</p></aside>
+</section>
+<section class="chapter" id="the-screen-at-a-glance">
+<p class="kicker">Chapter 2</p>
+<h1>The screen at a glance</h1>
+<p>The layout is fixed, so your thumbs learn it once. Nothing important hides behind a second level of navigation.</p>
+<figure><img src="manual/02-blank.png" alt="A blank board: top bar, rulers, left modifier rail, right object rail, tool dock, and the strip that belongs to the current tool." loading="lazy" /><figcaption>A blank board: top bar, rulers, left modifier rail, right object rail, tool dock, and the strip that belongs to the current tool.</figcaption></figure>
+<h2>Top bar</h2>
+<ul>
+<li><strong>Menu.</strong> Save, backup, projects, canvas settings, references, patterns, the tutorial, help and feedback.</li>
+<li><strong>Document name.</strong> Tap to rename. A dot beside it means changes are being written.</li>
+<li><strong>Undo and redo.</strong> Step backwards or forwards through the document history.</li>
+<li><strong>Layers.</strong> Opens the objects panel as a see-through sheet.</li>
+<li><strong>Grid.</strong> Shows or hides the alignment grid and its settings.</li>
+<li><strong>Eye.</strong> Preview mode — hides every panel, ruler and selection, leaving only the artboard.</li>
+<li><strong>Share.</strong> Export an SVG or a PNG, with options for size, colour and transparency.</li>
+</ul>
+<h2>Side rails</h2>
+<ul>
+<li><strong>Left: SHIFT, CTRL, ALT.</strong> On-screen modifiers. SHIFT constrains angles and proportions, CTRL switches to direct selection, ALT breaks a handle or flips the shape builder into erase.</li>
+<li><strong>Right: duplicate, delete, nudge.</strong> Duplicate copies the selection, delete removes it, and the crosshair opens the precision nudge pad in 0.5, 1, 5 or 10 px steps.</li>
+</ul>
+<h2>Dock and strip</h2>
+<p>The dock holds the seven tools and text. The strip directly above it always explains the active tool in one line and carries that tool’s options — smoothness for the pencil, pressure for the brush, Merge and Erase while building.</p>
+</section>
+<section class="chapter" id="drawing-with-the-pen">
+<p class="kicker">Chapter 3</p>
+<h1>Drawing with the pen</h1>
+<p>The pen places anchors. Tap to place a corner, drag to pull out a curve, and tap the first anchor to close the shape.</p>
+<figure><img src="manual/04-pen.png" alt="The pen strip reads “Tap to place, drag to pull curves”. An open path shows its anchors and the rubber band to the next tap." loading="lazy" /><figcaption>The pen strip reads “Tap to place, drag to pull curves”. An open path shows its anchors and the rubber band to the next tap.</figcaption></figure>
+<ul>
+<li><strong>Corner node.</strong> A plain tap. The path changes direction sharply there.</li>
+<li><strong>Smooth node.</strong> Tap and drag without lifting: two handles come out symmetrically and further taps continue the curve smoothly.</li>
+<li><strong>Break a handle.</strong> Hold ALT and drag one handle to make a cusp — a corner with one curved side.</li>
+<li><strong>Close the path.</strong> Tap the first anchor and it fills. End on a different anchor to leave it open.</li>
+<li><strong>Delete a node.</strong> ALT + tap on the node while editing its path.</li>
+<li><strong>Commit.</strong> Press the check button on the right rail, or Done in the strip.</li>
+</ul>
+<aside class="callout"><h3>Good to know</h3><p>Double-tap any object with the select tool to edit its nodes. The strip switches to node options; Select returns you to object mode.</p></aside>
+</section>
+<section class="chapter" id="freehand-pencil-and-brush">
+<p class="kicker">Chapter 4</p>
+<h1>Freehand: pencil and brush</h1>
+<p>The pencil turns a finger or stylus stroke into a small number of smooth nodes when you lift, instead of leaving hundreds of anchors behind.</p>
+<figure><img src="manual/03-pencil.png" alt="The pencil strip: “Draw freehand · end on the start to close · fills when closed”, with the smoothness control." loading="lazy" /><figcaption>The pencil strip: “Draw freehand · end on the start to close · fills when closed”, with the smoothness control.</figcaption></figure>
+<ul>
+<li><strong>Tight, Smooth, Loose.</strong> How closely the fitted curve follows your finger. Tight is most faithful, Loose evens out the most wobble.</li>
+<li><strong>Closing.</strong> Finish where you started. A cue ring appears when the stroke will close into a filled shape.</li>
+<li><strong>Single tap.</strong> Places one dot in the stroke colour.</li>
+<li><strong>Pressure brush.</strong> The next tool along draws with a tapered width. Pressure follows a stylus or your finger speed; you can also choose Speed or a flat Uniform width.</li>
+</ul>
+</section>
+<section class="chapter" id="shapes-and-the-shape-library">
+<p class="kicker">Chapter 5</p>
+<h1>Shapes and the shape library</h1>
+<p>The square icon on the dock opens the shape tools: square, circle, triangle, star, polygon and line, plus the whole library of seventeen shapes. Drag on the canvas to place one; hold SHIFT while dragging to keep it square or circular.</p>
+<figure><img src="manual/05-shapes.png" alt="A circle and a square on the board. Each is its own object, ready to be combined or edited." loading="lazy" /><figcaption>A circle and a square on the board. Each is its own object, ready to be combined or edited.</figcaption></figure>
+<p>Once placed, a shape is an ordinary path: double-tap to edit its anchors, recolour it, duplicate it, or combine it with something else.</p>
+</section>
+<section class="chapter" id="the-shape-builder">
+<p class="kicker">Chapter 6</p>
+<h1>The shape builder</h1>
+<p>This is the heart of Pentix. Two or more overlapping shapes on a layer are split into regions — the parts belonging to only one shape, and the parts they share. You brush the regions you want, and Pentix rebuilds the artwork as one clean outline.</p>
+<figure><img src="manual/06-build.png" alt="Regions are outlined and hatched once you brush one. The floating pill switches between Merge, Erase and Build; the strip below repeats the controls." loading="lazy" /><figcaption>Regions are outlined and hatched once you brush one. The floating pill switches between Merge, Erase and Build; the strip below repeats the controls.</figcaption></figure>
+<h2>The three moves</h2>
+<ul>
+<li><strong>Merge.</strong> Brush the regions you want to keep together and commit. The shapes become one object whose outline is exactly the union — no crescent left over, nothing doubled.</li>
+<li><strong>Erase.</strong> Brush regions and commit, and that patch is cut out of every shape it touches. What remains is still your artwork, with the hole gone.</li>
+<li><strong>Tap or drag.</strong> A drag collects every region the finger crosses. In erase mode a single tap removes just that one region, which is the quickest way to clear a few chips.</li>
+</ul>
+<figure><img src="manual/08-erase.png" alt="Erase mode: the region under your finger is hatched before you commit it. A tap takes one region, a drag takes every region it crosses." loading="lazy" /><figcaption>Erase mode: the region under your finger is hatched before you commit it. A tap takes one region, a drag takes every region it crosses.</figcaption></figure>
+<h2>What a build guarantees</h2>
+<ul>
+<li><strong>One object per piece.</strong> A merge produces a single object. An erase produces one object for each remaining piece, and a shape the build never touched keeps its identity — no drift, no duplicate.</li>
+<li><strong>Sharp where it should be.</strong> Corners the shapes form together stay sharp; curves stay curves.</li>
+<li><strong>Paint survives.</strong> The result takes its fill and stroke from the region it grew out of, so a merge never looks like a recolour.</li>
+<li><strong>Honest names.</strong> A cut circle is no longer a circle, so built objects become Shape 1, Shape 2 and so on. Untouched shapes keep their names.</li>
+</ul>
+<figure><img src="manual/07-merge.png" alt="After committing: one object, one outline, one fill. Nothing is doubled and no crescent is left behind." loading="lazy" /><figcaption>After committing: one object, one outline, one fill. Nothing is doubled and no crescent is left behind.</figcaption></figure>
+<h2>A worked example</h2>
+<p>Draw a circle, then a square overlapping its right side. Open the shape builder, brush the circle’s own region and the shared region, and commit with Merge. You now have a circle-and-square silhouette as a single path. Switch to Erase, tap the square’s free corner, and that corner is cut away cleanly.</p>
+</section>
+<section class="chapter" id="pathfinder">
+<p class="kicker">Chapter 7</p>
+<h1>Pathfinder</h1>
+<p>When you want a boolean operation across a whole selection rather than a brushed area, select two or more objects and use More in the strip: Unite, Minus, Intersect or Exclude.</p>
+<figure><img src="manual/13b-pathfinder.png" alt="With two objects selected the strip offers Align and More; More holds the four pathfinder operations." loading="lazy" /><figcaption>With two objects selected the strip offers Align and More; More holds the four pathfinder operations.</figcaption></figure>
+<ul>
+<li><strong>Unite.</strong> One silhouette from the union of everything selected.</li>
+<li><strong>Minus.</strong> Cuts the objects in front out of the object at the back.</li>
+<li><strong>Intersect.</strong> Keeps only the area every selected object covers.</li>
+<li><strong>Exclude.</strong> Keeps everything except the shared area.</li>
+</ul>
+<aside class="callout"><h3>Good to know</h3><p>The shape builder suits hand-brushed, local edits; the pathfinder suits a whole selection you already know should combine. Both produce the same quality of outline.</p></aside>
+</section>
+<section class="chapter" id="layers-and-objects">
+<p class="kicker">Chapter 8</p>
+<h1>Layers and objects</h1>
+<p>The layers button in the top bar opens a panel listing the artwork from front to back. Each row is an object, and each layer header expands to show its contents.</p>
+<figure><img src="manual/09-layers.png" alt="The layers panel: layer opacity, GROUP and OBJECT modes, then object rows with visibility, lock, order arrows and delete." loading="lazy" /><figcaption>The layers panel: layer opacity, GROUP and OBJECT modes, then object rows with visibility, lock, order arrows and delete.</figcaption></figure>
+<ul>
+<li><strong>Visibility and lock.</strong> The eye hides an object without deleting it; the padlock freezes it so it cannot be selected or moved by accident.</li>
+<li><strong>Opacity.</strong> The slider on a layer sets it for everything in that layer.</li>
+<li><strong>Restacking.</strong> Tap an arrow to step an object one place, or hold the arrow to send it to the front or back. Drag a row onto another to restack, or drop it on a layer name to move it into that layer.</li>
+<li><strong>Group and object modes.</strong> GROUP selects a whole layer as one unit; OBJECT selects a single object inside it. Ungroup releases a layer’s contents into the layer beneath.</li>
+<li><strong>On a keyboard.</strong> ALT + arrow up or down reorders; add SHIFT to jump to the front or back.</li>
+</ul>
+</section>
+<section class="chapter" id="colour">
+<p class="kicker">Chapter 9</p>
+<h1>Colour</h1>
+<p>Fill and stroke sit in the strip whenever an object is selected. The panel gives you swatches, a full picker, and a way to keep a colour you have mixed for reuse.</p>
+<figure><img src="manual/10-colour.png" alt="The colour panel with its palette, the custom picker, and Save this colour for anything worth keeping." loading="lazy" /><figcaption>The colour panel with its palette, the custom picker, and Save this colour for anything worth keeping.</figcaption></figure>
+<ul>
+<li><strong>Fill and stroke separately.</strong> Tap the fill swatch or the stroke swatch to choose which one you are editing.</li>
+<li><strong>No stroke.</strong> A shape drawn without a stroke keeps “none” through a build, so combining shapes never adds an outline you did not ask for.</li>
+<li><strong>Saved colours.</strong> Save this colour adds the current value to your palette at the top of the panel.</li>
+<li><strong>Patterns.</strong> Named pattern swatches live in the menu, for fills you want to reuse across documents.</li>
+</ul>
+</section>
+<section class="chapter" id="text">
+<p class="kicker">Chapter 10</p>
+<h1>Text</h1>
+<p>The T on the dock is the type tool. Tap the canvas to place a label and start typing; tap an existing label with the type tool to edit it.</p>
+<figure><img src="manual/11-text.png" alt="A committed label on the board, with the text options in the strip." loading="lazy" /><figcaption>A committed label on the board, with the text options in the strip.</figcaption></figure>
+<ul>
+<li><strong>Editing.</strong> Double-tap a label with the select tool, or tap it once with the type tool.</li>
+<li><strong>To curves.</strong> Converts the glyphs into editable paths. Do this before an operation that needs geometry, such as the shape builder or a pathfinder boolean.</li>
+<li><strong>Fonts.</strong> The menu’s Fonts section loads your own typefaces and keeps them on the device between sessions.</li>
+</ul>
+</section>
+<section class="chapter" id="images-references-and-tracing">
+<p class="kicker">Chapter 11</p>
+<h1>Images, references and tracing</h1>
+<p>Three different jobs, three different places in the menu.</p>
+<ul>
+<li><strong>References.</strong> Import one or several images as a locked underlay to draw over. They travel with the document, sit behind the artwork, and can be unlocked when you need to move them.</li>
+<li><strong>Trace an image.</strong> Turns a high-contrast silhouette into real paths you can edit — the quickest route from a scanned sketch to vector artwork.</li>
+<li><strong>Patterns.</strong> Named swatches you define once and reuse as fills.</li>
+</ul>
+</section>
+<section class="chapter" id="saving-backup-and-projects">
+<p class="kicker">Chapter 12</p>
+<h1>Saving, backup and projects</h1>
+<p>Pentix saves as you work. The menu tells you exactly where that stands, and the backup command writes a real file you control.</p>
+<figure><img src="manual/13-menu.png" alt="The menu: save state, backup, projects and canvas settings, followed by the studio tools, help and the tutorial." loading="lazy" /><figcaption>The menu: save state, backup, projects and canvas settings, followed by the studio tools, help and the tutorial.</figcaption></figure>
+<ul>
+<li><strong>Save.</strong> “Stored on this device” means the document is written locally. The dot beside the title shows a change is being written.</li>
+<li><strong>Backup &amp; restore.</strong> Writes a backup file you can keep anywhere, and restores one you saved earlier. When it reads “Not protected”, take a backup — clearing browser data would otherwise remove the document.</li>
+<li><strong>Projects.</strong> Every document made on this device, newest first.</li>
+<li><strong>New document.</strong> Starts a fresh board without touching the current one.</li>
+<li><strong>Clean up fragments.</strong> Deletes invisible leftovers — tiny slivers and stray fragments that take up space but cannot be seen or used.</li>
+</ul>
+</section>
+<section class="chapter" id="export">
+<p class="kicker">Chapter 13</p>
+<h1>Export</h1>
+<p>The share button in the top bar opens the export panel. SVG is for further editing and for the web; PNG is for handing a file to someone.</p>
+<figure><img src="manual/12-export.png" alt="The export panel: format, artboard size, what to include, colour and background options." loading="lazy" /><figcaption>The export panel: format, artboard size, what to include, colour and background options.</figcaption></figure>
+<ul>
+<li><strong>SVG.</strong> Real vector output: paths, fills and strokes, editable in any vector tool.</li>
+<li><strong>PNG.</strong> Raster output at the board size, or larger for print.</li>
+<li><strong>Include.</strong> Export the whole artboard, or only the selection when you want one element on its own.</li>
+<li><strong>One colour.</strong> Flattens every fill to black or white for reversed and mono versions of a mark.</li>
+<li><strong>Background.</strong> The artboard colour is separate from the artwork. Turning it off drops the background entirely, which gives a transparent PNG or SVG.</li>
+</ul>
+<aside class="callout"><h3>Good to know</h3><p>Grid, rulers and guides are editing aids. They are never included in an export.</p></aside>
+</section>
+<section class="chapter" id="preview-mode">
+<p class="kicker">Chapter 14</p>
+<h1>Preview mode</h1>
+<p>Before judging a mark, look at it with nothing else on screen. The eye in the top bar hides every panel, ruler, grid, guide and selection.</p>
+<figure><img src="manual/15-preview.png" alt="Preview mode: artwork only. Drag to pan, pinch to zoom, and tap Exit or press Escape to return." loading="lazy" /><figcaption>Preview mode: artwork only. Drag to pan, pinch to zoom, and tap Exit or press Escape to return.</figcaption></figure>
+</section>
+<section class="chapter" id="gestures-and-shortcuts">
+<p class="kicker">Chapter 15</p>
+<h1>Gestures and shortcuts</h1>
+<p>The same help sheet lives in the app under the menu, so you never have to remember this chapter.</p>
+<figure><img src="manual/14-help.png" alt="Gestures &amp; shortcuts, opened from the menu. The sheet also links straight to this manual." loading="lazy" /><figcaption>Gestures &amp; shortcuts, opened from the menu. The sheet also links straight to this manual.</figcaption></figure>
+<h2>On the canvas</h2>
+<ul>
+<li><strong>Two fingers.</strong> Pan and pinch to zoom. You can switch this off in the menu if you keep nudging it while drawing.</li>
+<li><strong>One finger.</strong> Drags the active tool. On empty space with the select tool it starts a marquee.</li>
+<li><strong>Tap the canvas.</strong> Deselects — or places a label, with the type tool.</li>
+<li><strong>Hold space.</strong> Pans while held, then returns you to the tool you were on.</li>
+</ul>
+<h2>On a keyboard</h2>
+</section>
+<section class="chapter" id="getting-clean-results">
+<p class="kicker">Chapter 16</p>
+<h1>Getting clean results</h1>
+<h2>Why nothing happened when I brushed</h2>
+<ul>
+<li><strong>Not enough shapes.</strong> The shape builder needs two or more shapes on the layer to make regions. A single shape has nothing to divide.</li>
+<li><strong>Nothing selected yet.</strong> In merge mode a tap only collects a region. Commit with Build, the pill’s Build button, or drag instead of tapping.</li>
+<li><strong>Locked or hidden objects.</strong> Locked and hidden objects do not take part in a build. Unlock them first.</li>
+</ul>
+<h2>Why a piece disappeared</h2>
+<ul>
+<li><strong>Slivers are dropped.</strong> A leftover thinner than about three quarters of a square unit is noise, so it is discarded rather than left as an unusable fragment.</li>
+<li><strong>A shape can vanish entirely.</strong> If the brushed area covers a whole shape, that shape is gone — undo if that was not the intent.</li>
+</ul>
+<h2>Keeping the file healthy</h2>
+<ul>
+<li><strong>Clean up fragments occasionally.</strong> Long editing sessions leave invisible slivers behind; the menu command removes them.</li>
+<li><strong>Flatten at the end.</strong> Build and pathfinder operations are best done once the shapes are in place, not on every small edit.</li>
+<li><strong>Back up before big changes.</strong> A backup file is the only protection against clearing browser data or losing a device.</li>
+</ul>
+</section>
+<section class="chapter" id="reference-card">
+<p class="kicker">Chapter 17</p>
+<h1>Reference card</h1>
+<p>The whole app on one page. Keep it open while you work.</p>
+</section>
+
+  </main>
+</div>
+
+<footer class="bottom">Pentix — a local-first vector logo studio. Your work never leaves the device.</footer>
+
+<script src="manual/manual.js" defer></script>
+</body>
+</html>
