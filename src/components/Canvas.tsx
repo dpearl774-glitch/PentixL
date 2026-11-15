@@ -352,6 +352,18 @@ export const Canvas: React.FC<CanvasProps> = ({
   } | null>(null);
 
   // Shape Builder region selection (the merge/erase mode lives in the app shell)
+  /**
+   * The transform frame while a rotation is in flight. A rigid rotation is
+   * exactly the box it started from, turned by the same angle — so the frame
+   * hugs the artwork instead of the shape spinning inside a square that keeps
+   * snapping back to the axes.
+   */
+  const [activeRotation, setActiveRotation] = useState<{
+    center: Point;
+    angle: number;
+    bbox: BoundingBox;
+  } | null>(null);
+
   const [sbSelectedRegionIds, setSbSelectedRegionIds] = useState<string[]>([]);
   const [sbHoveredRegionId, setSbHoveredRegionId] = useState<string | null>(null);
   const [sbDragPoints, setSbDragPoints] = useState<Point[]>([]);
@@ -698,6 +710,17 @@ export const Canvas: React.FC<CanvasProps> = ({
     selectedPaths,
     layers.flatMap((layer) => layer.paths)
   );
+
+  /** Box geometry plus the turn applied to it, shared by every part of the frame. */
+  const transformBox =
+    activeRotation
+      ? {
+          box: activeRotation.bbox,
+          transform: `rotate(${((activeRotation.angle * 180) / Math.PI).toFixed(3)} ${activeRotation.center.x} ${activeRotation.center.y})`,
+        }
+      : selectedBBox
+        ? { box: selectedBBox, transform: undefined }
+        : null;
   const drawInsideSource = React.useMemo(() => {
     if (!drawInsideId) return null;
     for (const layer of layers) {
@@ -1563,6 +1586,7 @@ export const Canvas: React.FC<CanvasProps> = ({
       ) {
         setDraggingTarget(null);
         setMarqueeBox(null);
+        setActiveRotation(null);
         dragOriginRef.current = null;
       }
       const pts = Array.from(activePointersRef.current.values());
@@ -1755,6 +1779,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         deltaAngle = Math.round(deltaAngle / snap) * snap;
       }
 
+      setActiveRotation({ center, angle: deltaAngle, bbox });
       const rotated = rotatePaths(draggingTarget.initialSelectedPaths, center, deltaAngle);
       rotated.forEach((p) => onUpdatePath(p, { preserveCornerSource: true }));
       return;
@@ -2090,6 +2115,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     setIsPointerDown(false);
     setMarqueeBox(null);
     setActiveSmartGuides([]);
+    setActiveRotation(null);
     referenceDragRef.current = null;
     if (guideDragRef.current) {
       const moved = guideDragStartRef.current;
@@ -3704,16 +3730,16 @@ export const Canvas: React.FC<CanvasProps> = ({
 
           {/* ================= TRANSFORM BOUNDING BOX WITH 8 STRETCHING NODES ================= */}
           {effectiveTool === 'select' &&
-            selectedBBox &&
+            transformBox &&
             selectedPaths.length > 0 &&
             !hideTransformBox && (
-            <g className="transform-bounding-box">
+            <g className="transform-bounding-box" transform={transformBox.transform}>
               {/* Outer Bounding Box Rectangle (drag to move all selected paths) */}
               <rect
-                x={selectedBBox.minX}
-                y={selectedBBox.minY}
-                width={selectedBBox.width}
-                height={selectedBBox.height}
+                x={transformBox.box.minX}
+                y={transformBox.box.minY}
+                width={transformBox.box.width}
+                height={transformBox.box.height}
                 fill="rgba(205, 255, 92, 0.05)"
                 stroke={CANVAS.accent}
                 strokeWidth={1.5 / view.zoom}
@@ -3722,7 +3748,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                 onPointerDown={(e) => {
                   startDragOperation(e, {
                     type: 'path',
-                    initialBBox: selectedBBox,                        initialSelectedPaths: JSON.parse(
+                    initialBBox: transformBox.box,                        initialSelectedPaths: JSON.parse(
                           JSON.stringify(expandWithClipSources(selectedPaths))
                         ),
                   });
@@ -3732,7 +3758,8 @@ export const Canvas: React.FC<CanvasProps> = ({
               {/* Multi-selection: hairline per object, the way a drawing tool
                   shows every piece. One outer box made a split object still read
                   as a single shape. */}
-              {selectedPaths.length > 1 &&
+              {!activeRotation &&
+                selectedPaths.length > 1 &&
                 selectedPaths.length <= 60 &&
                 selectedPaths.map((object) => {
                   const box = computePathsBoundingBox([object]);
@@ -3754,10 +3781,10 @@ export const Canvas: React.FC<CanvasProps> = ({
 
               {/* Rotation Handle Stem */}
               <line
-                x1={selectedBBox.centerX}
-                y1={selectedBBox.minY}
-                x2={selectedBBox.centerX}
-                y2={selectedBBox.minY - 26 / view.zoom}
+                x1={transformBox.box.centerX}
+                y1={transformBox.box.minY}
+                x2={transformBox.box.centerX}
+                y2={transformBox.box.minY - 26 / view.zoom}
                 stroke={CANVAS.accent}
                 strokeWidth={1.5 / view.zoom}
                 strokeDasharray="2 2"
@@ -3768,8 +3795,8 @@ export const Canvas: React.FC<CanvasProps> = ({
               <g>
                 <title>Rotate Selection (Hold Shift for 15° snap)</title>
                 <circle
-                  cx={selectedBBox.centerX}
-                  cy={selectedBBox.minY - 26 / view.zoom}
+                  cx={transformBox.box.centerX}
+                  cy={transformBox.box.minY - 26 / view.zoom}
                   r={16 / view.zoom}
                   fill="transparent"
                   style={{ cursor: 'grab' }}
@@ -3778,7 +3805,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                     startDragOperation(e, {
                       type: 'rotate-handle',
                       initialPoint: pt,
-                      initialBBox: selectedBBox,
+                      initialBBox: transformBox.box,
                       initialSelectedPaths: JSON.parse(
                         JSON.stringify(expandWithClipSources(selectedPaths))
                       ),
@@ -3787,8 +3814,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                 />
               </g>
               <circle
-                cx={selectedBBox.centerX}
-                cy={selectedBBox.minY - 26 / view.zoom}
+                cx={transformBox.box.centerX}
+                cy={transformBox.box.minY - 26 / view.zoom}
                 r={7 / view.zoom}
                 fill="#F59E0B"
                 stroke={CANVAS.ink}
@@ -3798,14 +3825,14 @@ export const Canvas: React.FC<CanvasProps> = ({
 
               {/* 8 Round Stretch Handles (TL, TR, BL, BR, TC, BC, ML, MR) */}
               {[
-                { id: 'tl', x: selectedBBox.minX, y: selectedBBox.minY, cursor: 'nwse-resize' },
-                { id: 'tr', x: selectedBBox.maxX, y: selectedBBox.minY, cursor: 'nesw-resize' },
-                { id: 'bl', x: selectedBBox.minX, y: selectedBBox.maxY, cursor: 'nesw-resize' },
-                { id: 'br', x: selectedBBox.maxX, y: selectedBBox.maxY, cursor: 'nwse-resize' },
-                { id: 'tc', x: selectedBBox.centerX, y: selectedBBox.minY, cursor: 'ns-resize' },
-                { id: 'bc', x: selectedBBox.centerX, y: selectedBBox.maxY, cursor: 'ns-resize' },
-                { id: 'ml', x: selectedBBox.minX, y: selectedBBox.centerY, cursor: 'ew-resize' },
-                { id: 'mr', x: selectedBBox.maxX, y: selectedBBox.centerY, cursor: 'ew-resize' },
+                { id: 'tl', x: transformBox.box.minX, y: transformBox.box.minY, cursor: 'nwse-resize' },
+                { id: 'tr', x: transformBox.box.maxX, y: transformBox.box.minY, cursor: 'nesw-resize' },
+                { id: 'bl', x: transformBox.box.minX, y: transformBox.box.maxY, cursor: 'nesw-resize' },
+                { id: 'br', x: transformBox.box.maxX, y: transformBox.box.maxY, cursor: 'nwse-resize' },
+                { id: 'tc', x: transformBox.box.centerX, y: transformBox.box.minY, cursor: 'ns-resize' },
+                { id: 'bc', x: transformBox.box.centerX, y: transformBox.box.maxY, cursor: 'ns-resize' },
+                { id: 'ml', x: transformBox.box.minX, y: transformBox.box.centerY, cursor: 'ew-resize' },
+                { id: 'mr', x: transformBox.box.maxX, y: transformBox.box.centerY, cursor: 'ew-resize' },
               ].map((h) => (
                 <g key={h.id}>
                   {/* Wide Touch Target */}
@@ -3819,7 +3846,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                       startDragOperation(e, {
                         type: 'transform-handle',
                         transformHandle: h.id as HandleType,
-                        initialBBox: selectedBBox,
+                        initialBBox: transformBox.box,
                         initialSelectedPaths: JSON.parse(
                         JSON.stringify(expandWithClipSources(selectedPaths))
                       ),
