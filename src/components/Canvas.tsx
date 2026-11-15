@@ -27,6 +27,7 @@ import {
   generateVariableStrokePolygon,
   insertPointOnSegment,
   nearestPointOnSegment,
+  removePointWithRefit,
   pathToSvgD,
 } from '../utils/bezier';
 import { generateShapePath } from '../utils/shapeGenerator';
@@ -1141,13 +1142,20 @@ export const Canvas: React.FC<CanvasProps> = ({
       onSelectionChange({
         selectedPathIds: [],
         selectedAnchorIndex: null,
+        selectedAnchorIndexes: [],
         selectedHandleType: null,
       });
     } else {
-      onUpdatePath({ ...path, points: path.points.filter((_, i) => i !== index) });
+      // A plain filter leaves the neighbours' handles aimed at a node that no
+      // longer exists, so the outline jumps the moment it is deleted. Refit the
+      // gap instead, and clear the anchor selection: the indexes either side of
+      // a removed node now point at different nodes.
+      const points = removePointWithRefit(path, index) ?? path.points.filter((_, i) => i !== index);
+      onUpdatePath({ ...path, points });
       onSelectionChange({
         selectedPathIds: [path.id],
         selectedAnchorIndex: null,
+        selectedAnchorIndexes: [],
         selectedHandleType: null,
       });
     }

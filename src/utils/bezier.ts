@@ -540,6 +540,14 @@ export function insertPointOnSegment(
   const r1 = lerp(q1, q2);
   const mid = lerp(r0, r1);
 
+  // The neighbours' pre-split handles travel with the new node, so deleting it
+  // restores the segment instead of leaving the curve a fitted approximation.
+  const split = {
+    prevId: a.id,
+    nextId: b.id,
+    prevHandleOut: a.handleOut,
+    nextHandleIn: b.handleIn,
+  };
   points[aIndex] = { ...a, handleOut: q0 };
   points[bIndex] = { ...b, handleIn: q2 };
   points.splice(index, 0, {
@@ -549,9 +557,130 @@ export function insertPointOnSegment(
     type: 'smooth',
     handleIn: r0,
     handleOut: r1,
+    split,
   });
 
   return { points, index };
+}
+
+/**
+ * Removes one anchor and repairs the curve across the gap it leaves.
+ *
+ * Dropping a node and keeping its neighbours' handles makes the outline jump:
+ * those handles were aimed at the node that is now gone. The two segments it
+ * joined are sampled and refitted as one, so the shape survives the deletion
+ * instead of kinking or collapsing. Straight neighbours stay straight, and
+ * removing an endpoint of an open path needs no repair.
+ */
+export function removePointWithRefit(path: VectorPath, index: number): AnchorPoint[] | null {
+  const pts = path.points;
+  const count = pts.length;
+  if (count <= 2 || !pts[index]) return null;
+
+  const prev = pts[(index - 1 + count) % count] as AnchorPoint & { handleOut?: Point };
+  const node = pts[index] as AnchorPoint & { handleIn?: Point; handleOut?: Point };
+  const next = pts[(index + 1) % count] as AnchorPoint & { handleIn?: Point };
+  const points = pts.filter((_, i) => i !== index);
+
+  // An endpoint of an open path has no gap: the segment simply disappears.
+  if (!path.closed && (index === 0 || index === count - 1)) return points;
+
+  // A node that was inserted between these two neighbours remembers how they
+  // looked before the split: put those handles back and the outline is exactly
+  // what it was before the node was added, not an approximation of it.
+  const split = (node as AnchorPoint & { split?: AnchorPoint['split'] }).split;
+  if (split && split.prevId === prev.id && split.nextId === next.id) {
+    return points.map((point) => {
+      if (point.id === prev.id) {
+        const { handleOut: _drop, ...rest } = point as AnchorPoint;
+        return (split.prevHandleOut ? { ...rest, handleOut: split.prevHandleOut } : rest) as AnchorPoint;
+      }
+      if (point.id === next.id) {
+        const { handleIn: _drop, ...rest } = point as AnchorPoint;
+        return (split.nextHandleIn ? { ...rest, handleIn: split.nextHandleIn } : rest) as AnchorPoint;
+      }
+      return point;
+    });
+  }
+
+  const beforeStraight = !prev.handleOut && !node.handleIn;
+  const afterStraight = !node.handleOut && !next.handleIn;
+  if (beforeStraight && afterStraight) return points;
+
+  const fitted = fitCubicBetween(prev, node, next);
+  if (!fitted) return points;
+
+  return points.map((point) => {
+    if (point.id === prev.id) return { ...point, handleOut: fitted.handleOut };
+    if (point.id === next.id) return { ...point, handleIn: fitted.handleIn };
+    return point;
+  });
+}
+
+/**
+ * One cubic between two anchors that still passes through the point the removed
+ * node occupied, keeping the tangent directions the outline already had at both
+ * ends.
+ *
+ * Two handle lengths, two equations (x and y at that point), so this is an exact
+ * solve rather than a fit. A least-squares fit over the whole polyline was tried
+ * first and is ill-conditioned here: the two handle basis functions peak at
+ * different points along the same span, so the normal equations amplify noise
+ * and the handles came out three times too long.
+ */
+function fitCubicBetween(
+  a: AnchorPoint & { handleOut?: Point },
+  node: AnchorPoint,
+  b: AnchorPoint & { handleIn?: Point }
+): { handleOut: Point; handleIn: Point } | null {
+  const unit = (from: Point, to: Point): Point | null => {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const len = Math.hypot(dx, dy);
+    return len > 1e-6 ? { x: dx / len, y: dy / len } : null;
+  };
+  const dirA = (a.handleOut && unit(a, a.handleOut)) || unit(a, node);
+  const dirB = (b.handleIn && unit(b, b.handleIn)) || unit(b, node);
+  if (!dirA || !dirB) return null;
+
+  // Parameter of the removed node on the new segment, by arc length: the node
+  // sits where the join was, which is not necessarily the halfway point.
+  const u = Math.min(
+    0.85,
+    Math.max(0.15, distance(a, node) / Math.max(1e-6, distance(a, node) + distance(node, b)))
+  );
+  const v = 1 - u;
+
+  const w1 = { x: 3 * v * v * u * dirA.x, y: 3 * v * v * u * dirA.y };
+  const w2 = { x: 3 * v * u * u * dirB.x, y: 3 * v * u * u * dirB.y };
+  const baseX = (v * v * v + 3 * v * v * u) * a.x + (3 * v * u * u + u * u * u) * b.x;
+  const baseY = (v * v * v + 3 * v * v * u) * a.y + (3 * v * u * u + u * u * u) * b.y;
+  const rx = node.x - baseX;
+  const ry = node.y - baseY;
+
+  const det = w1.x * w2.y - w1.y * w2.x;
+  const scale = Math.hypot(w1.x, w1.y) * Math.hypot(w2.x, w2.y);
+  if (Math.abs(det) < Math.max(1e-6, scale * 1e-4)) {
+    // Collinear tangents: nothing to solve. Keep the join's own lengths so the
+    // curve stays where the artist put it.
+    const lenA = distance(a, node) * 0.5;
+    const lenB = distance(node, b) * 0.5;
+    if (!(lenA > 1e-6) || !(lenB > 1e-6)) return null;
+    return {
+      handleOut: { x: a.x + dirA.x * lenA, y: a.y + dirA.y * lenA },
+      handleIn: { x: b.x + dirB.x * lenB, y: b.y + dirB.y * lenB },
+    };
+  }
+
+  const chord = distance(a, b);
+  const clamp = (n: number) => Math.max(chord * 0.02, Math.min(chord * 1.6, n));
+  const lenA = clamp((rx * w2.y - ry * w2.x) / det);
+  const lenB = clamp((w1.x * ry - w1.y * rx) / det);
+
+  return {
+    handleOut: { x: a.x + dirA.x * lenA, y: a.y + dirA.y * lenA },
+    handleIn: { x: b.x + dirB.x * lenB, y: b.y + dirB.y * lenB },
+  };
 }
 
 /**

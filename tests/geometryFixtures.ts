@@ -9,7 +9,7 @@
  */
 import polygonClipping from 'polygon-clipping';
 import type { MultiPolygon, Polygon } from 'polygon-clipping';
-import { pathToPolygon } from '../src/utils/bezier';
+import { insertPointOnSegment, pathToPolygon, removePointWithRefit } from '../src/utils/bezier';
 import {
   computeAtomicSubRegions,
   executeShapeBuilderErase,
@@ -243,6 +243,83 @@ for (const fixture of FIXTURES) {
       'bezier circles: each remainder keeps its own id',
       new Set(erased.map((path) => path.id)).size === erased.length,
       erased.map((path) => path.id).join(', ')
+    );
+  }
+}
+
+/* ------------------------------------------------------------------------ *
+ * Direct selection: adding and removing nodes
+ *
+ * Splitting a segment must not move the outline, and removing the node that
+ * was just added has to give back the path that was there before — that pair
+ * is the gesture users repeat most, and it used to leave the curve bent.
+ * ------------------------------------------------------------------------ */
+{
+  const outline = (path: VectorPath): [number, number][] => pathToPolygon(path, 24);
+
+  const drift = (from: [number, number][], to: [number, number][]): number => {
+    let worst = 0;
+    for (const [px, py] of from) {
+      let best = Infinity;
+      for (let i = 0; i < to.length; i++) {
+        const [x1, y1] = to[i];
+        const [x2, y2] = to[(i + 1) % to.length];
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len2 = dx * dx + dy * dy || 1;
+        const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
+        best = Math.min(best, Math.hypot(px - (x1 + dx * t), py - (y1 + dy * t)));
+      }
+      worst = Math.max(worst, best);
+    }
+    return worst;
+  };
+
+  const subjects: [string, VectorPath][] = [
+    [
+      'bezier circle',
+      generateShapePath(120, 120, 320, 320, { kind: 'circle' } as ShapeOptions, 'node-circle', STYLE),
+    ],
+    [
+      'rectangle',
+      generateShapePath(120, 400, 320, 560, { kind: 'rectangle' } as ShapeOptions, 'node-square', STYLE),
+    ],
+  ];
+
+  for (const [name, path] of subjects) {
+    const before = outline(path);
+    const segments = path.closed ? path.points.length : path.points.length - 1;
+    let worstInsert = 0;
+    let worstRoundTrip = 0;
+    for (let segment = 0; segment < segments; segment++) {
+      const split = insertPointOnSegment(path, segment, 0.5, `node-${segment}`);
+      if (!split) continue;
+      const inserted: VectorPath = { ...path, points: split.points };
+      worstInsert = Math.max(worstInsert, drift(before, outline(inserted)));
+      const back = removePointWithRefit(inserted, split.index);
+      worstRoundTrip = Math.max(
+        worstRoundTrip,
+        drift(before, outline({ ...inserted, points: back ?? split.points.filter((_, i) => i !== split.index) }))
+      );
+    }
+    check(`${name}: adding a node leaves the outline where it was`, worstInsert < OUTLINE_TOLERANCE, `worst ${worstInsert.toFixed(3)}`);
+    check(`${name}: removing the added node restores the outline exactly`, worstRoundTrip < 0.01, `worst ${worstRoundTrip.toFixed(3)}`);
+
+    // Removing a node that was always there changes the shape by definition —
+    // the corner is gone — so the invariant is that the repair never drifts
+    // further from the original outline than simply dropping the node did.
+    let plainWorst = 0;
+    let repairedWorst = 0;
+    for (let i = 0; i < path.points.length; i++) {
+      const plainPoints = path.points.filter((_, j) => j !== i);
+      const repaired = removePointWithRefit(path, i) ?? plainPoints;
+      plainWorst = Math.max(plainWorst, drift(before, outline({ ...path, points: plainPoints })));
+      repairedWorst = Math.max(repairedWorst, drift(before, outline({ ...path, points: repaired })));
+    }
+    check(
+      `${name}: deleting a node is never worse than a plain drop`,
+      repairedWorst <= plainWorst + 0.01,
+      `plain ${plainWorst.toFixed(2)} · repaired ${repairedWorst.toFixed(2)}`
     );
   }
 }

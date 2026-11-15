@@ -13,6 +13,17 @@ export interface AnchorPoint {
   handleOut?: Point;  // Outgoing Bezier control point
   type: AnchorType;
   pressure?: number;  // 0.0 to 1.0 (touch pressure or speed-derived)
+  /**
+   * Set on a node that was inserted into a segment: the handles its two
+   * neighbours had before the split, so removing the node can put them back
+   * exactly instead of approximating the curve it cut in half.
+   */
+  split?: {
+    prevId: string;
+    nextId: string;
+    prevHandleOut?: Point;
+    nextHandleIn?: Point;
+  };
 }
 
 export interface GradientStop {
