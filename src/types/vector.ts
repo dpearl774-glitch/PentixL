@@ -71,6 +71,22 @@ export interface CornerSource {
   holes?: AnchorPoint[][];
 }
 
+/**
+ * A drop shadow: painted behind the object, never part of its geometry, so
+ * moving, snapping and boolean work all ignore it — exactly like blur.
+ */
+export interface ShadowEffect {
+  /** Offset in artboard units, y down */
+  dx: number;
+  dy: number;
+  /** Softness of the shadow's edge, artboard units */
+  blur: number;
+  /** hex colour of the shadow itself */
+  color: string;
+  /** 0..1 */
+  opacity: number;
+}
+
 export interface BlurEffect {
   kind: 'gaussian' | 'motion';
   /** Spread, in artboard units */
@@ -177,6 +193,7 @@ export interface VectorPath {
   image?: { url: string; width: number; height: number };
   /** Soft focus or speed lines — paint only, the geometry never moves */
   blur?: BlurEffect;
+  shadow?: ShadowEffect;
   /** Tiled artwork used as this object's fill paint */
   pattern?: PatternFill;
   stroke: string;

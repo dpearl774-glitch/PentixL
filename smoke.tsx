@@ -310,6 +310,7 @@ const toolOptionsBase: React.ComponentProps<typeof ToolOptions> = {
   onSplitGrid: noop,
   onOffsetPath: noop,
   onBlurSelection: noop,
+  onShadowSelection: noop,
   onPattern: noop,
   onClearPattern: noop,
   onExtrudeBevel: noop,
@@ -629,9 +630,9 @@ const gaussianSvg = generateSvgCode(
 );
 check(
   'gaussian blur exports as a filter on the object',
-  gaussianSvg.includes('id="pentix-blur-soft"') &&
+  gaussianSvg.includes('id="pentix-effect-soft"') &&
     gaussianSvg.includes('stdDeviation="8.00 8.00"') &&
-    gaussianSvg.includes('filter="url(#pentix-blur-soft)"'),
+    gaussianSvg.includes('filter="url(#pentix-effect-soft)"'),
   gaussianSvg.slice(0, 160)
 );
 const motionSvg = generateSvgCode(
@@ -650,8 +651,69 @@ const motionSvg = generateSvgCode(
 );
 check(
   'motion blur smears along its angle',
-  motionSvg.includes('stdDeviation="20.00 0.01"') && motionSvg.includes('id="pentix-blur-smear"'),
+  motionSvg.includes('stdDeviation="20.00 0.01"') && motionSvg.includes('id="pentix-effect-smear"'),
   motionSvg.slice(0, 160)
+);
+
+// A drop shadow rides the same filter as blur: one attribute per element, so
+// the two effects are built into a single graph rather than fighting for it.
+const shadowSvg = generateSvgCode(
+  [
+    {
+      id: 'shadow-layer',
+      name: 'Shadow',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      paths: [
+        {
+          ...squarePath,
+          id: 'cast',
+          shadow: { dx: 8, dy: 12, blur: 6, color: '#0b1220', opacity: 0.4 },
+        },
+      ],
+    },
+  ],
+  blurOpts,
+  pressure
+);
+check(
+  'a drop shadow exports as its own filter',
+  shadowSvg.includes('id="pentix-effect-cast"') &&
+    shadowSvg.includes('<feDropShadow dx="8.00" dy="12.00"') &&
+    shadowSvg.includes('flood-color="#0b1220"') &&
+    shadowSvg.includes('flood-opacity="0.40"') &&
+    shadowSvg.includes('filter="url(#pentix-effect-cast)"'),
+  shadowSvg.slice(0, 200)
+);
+check(
+  'shadow and blur share one filter element',
+  (() => {
+    const both = generateSvgCode(
+      [
+        {
+          id: 'both-layer',
+          name: 'Both',
+          visible: true,
+          locked: false,
+          opacity: 1,
+          paths: [
+            {
+              ...squarePath,
+              id: 'both',
+              blur: { kind: 'gaussian', amount: 3, angle: 0 },
+              shadow: { dx: 4, dy: 4, blur: 2, color: '#000000', opacity: 0.5 },
+            },
+          ],
+        },
+      ],
+      blurOpts,
+      pressure
+    );
+    const filters = both.match(/<filter /g) ?? [];
+    return filters.length === 1 && both.includes('<feDropShadow') && both.includes('<feGaussianBlur');
+  })(),
+  'expected one filter carrying both effects'
 );
 const patternSvg = generateSvgCode(
   [

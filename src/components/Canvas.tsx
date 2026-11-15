@@ -78,9 +78,12 @@ import {
   imageClipIdFor,
 } from '../utils/clipping';
 import {
-  blurFilterId,
+  effectFilterId,
+  hasVisibleEffect,
   blurStdDeviation,
   hasVisibleBlur,
+  hasVisibleShadow,
+  shadowStdDeviation,
   patternIdFor,
   patternTransform,
   patternLayout,
@@ -866,18 +869,29 @@ export const Canvas: React.FC<CanvasProps> = ({
         .flatMap((layer) => layer.paths)
         .flatMap((path) => {
           const nodes: React.ReactNode[] = [];
-          if (hasVisibleBlur(path.blur) && path.blur) {
-            const { stdX, stdY } = blurStdDeviation(path.blur);
+          if (hasVisibleEffect(path)) {
+            const { stdX, stdY } = path.blur ? blurStdDeviation(path.blur) : { stdX: 0, stdY: 0 };
             nodes.push(
               <filter
-                key={`blur-${path.id}`}
-                id={blurFilterId(path.id)}
-                x="-50%"
-                y="-50%"
-                width="200%"
-                height="200%"
+                key={`effect-${path.id}`}
+                id={effectFilterId(path.id)}
+                x="-60%"
+                y="-60%"
+                width="220%"
+                height="220%"
               >
-                <feGaussianBlur stdDeviation={`${stdX.toFixed(2)} ${stdY.toFixed(2)}`} />
+                {path.shadow && hasVisibleShadow(path.shadow) && (
+                  <feDropShadow
+                    dx={path.shadow.dx}
+                    dy={path.shadow.dy}
+                    stdDeviation={shadowStdDeviation(path.shadow)}
+                    floodColor={path.shadow.color}
+                    floodOpacity={Math.max(0, Math.min(1, path.shadow.opacity))}
+                  />
+                )}
+                {hasVisibleBlur(path.blur) && (
+                  <feGaussianBlur stdDeviation={`${stdX.toFixed(2)} ${stdY.toFixed(2)}`} />
+                )}
               </filter>
             );
           }
@@ -2970,9 +2984,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         key={path.id}
                         opacity={path.opacity ?? 1}
                         clipPath={clipPath}
-                        filter={
-                          hasVisibleBlur(path.blur) ? `url(#${blurFilterId(path.id)})` : undefined
-                        }
+                        filter={hasVisibleEffect(path) ? `url(#${effectFilterId(path.id)})` : undefined}
                       >
                         {warpedGlyphs ? (
                           <>
@@ -3165,9 +3177,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                       key={path.id}
                       opacity={path.opacity ?? 1}
                       clipPath={clipPath}
-                      filter={
-                        hasVisibleBlur(path.blur) ? `url(#${blurFilterId(path.id)})` : undefined
-                      }
+                      filter={hasVisibleEffect(path) ? `url(#${effectFilterId(path.id)})` : undefined}
                     >
                       {/* Image paint sits inside the object's outline; the hit
                           box below still owns every pointer event. */}

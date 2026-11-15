@@ -67,7 +67,7 @@ import { applyShapeWarp, clearShapeWarp, WarpSpec, warpPathsInBox } from './util
 import type { PatternSettings } from './utils/effects';
 import { isPatternPreviewPath, patternFromSwatch, syncPatternInstances } from './utils/effects';
 import { pathToSvgD } from './utils/bezier';
-import type { PatternSwatch } from './types/vector';
+import type { PatternSwatch, ShadowEffect } from './types/vector';
 import {
   measureTextMetrics,
   textBaselineForCenterY,
@@ -2509,6 +2509,33 @@ export default function App() {
     [applyLayers, commitSoon, notify, selectedPaths]
   );
 
+  /** Paints a drop shadow behind every selected object, or clears it. */
+  const shadowSelection = useCallback(
+    (shadow: ShadowEffect | null) => {
+      if (!selectedPaths.length) return;
+      const ids = new Set(selectedPaths.map((path) => path.id));
+      applyLayers(
+        (prev) =>
+          prev.map((layer) => ({
+            ...layer,
+            paths: layer.paths.map((path) => {
+              if (!ids.has(path.id)) return path;
+              if (!shadow) {
+                const rest = { ...path };
+                delete rest.shadow;
+                return rest;
+              }
+              return { ...path, shadow };
+            }),
+          })),
+        { commit: false }
+      );
+      commitSoon();
+      if (!shadow) notify('Shadow removed');
+    },
+    [applyLayers, commitSoon, notify, selectedPaths]
+  );
+
   /** The canvas preview is scaffolding, never a tile or a pattern source. */
   const isPatternPreview = isPatternPreviewPath;
 
@@ -3923,6 +3950,7 @@ export default function App() {
         onSplitGrid={splitSelectionIntoGrid}
         onOffsetPath={offsetSelection}
         selectionBlur={selectedPaths.length ? selectedPaths[0].blur ?? null : null}
+        selectionShadow={selectedPaths.length ? selectedPaths[0].shadow ?? null : null}
         selectionPattern={selectedPaths.length ? selectedPaths[0].pattern ?? null : null}
         patternMask={(() => {
           const first = selectedPaths.find((path) => path.pattern);
@@ -3957,6 +3985,7 @@ export default function App() {
         onTextPathAlign={setTextPathAlign}
         onTextPathReverse={setTextPathReverse}
         onBlurSelection={blurSelection}
+        onShadowSelection={shadowSelection}
         onPattern={patternFromSelection}
         onClearPattern={clearPattern}
         onSavePattern={savePatternAndPreview}

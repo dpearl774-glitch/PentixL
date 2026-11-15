@@ -44,7 +44,7 @@ import { WARP_KINDS, WarpKind, WarpSpec } from '../utils/warp';
 import { TEXT_PATH_ALIGNS, TextPathAlign } from '../utils/textPath';
 import { PathAlignThumb, WarpThumb } from './EffectPreviews';
 import { warpFold } from '../utils/warpFold';
-import type { BlurEffect, PatternFill } from '../types/vector';
+import type { BlurEffect, PatternFill, ShadowEffect } from '../types/vector';
 import { patternLayout,
   patternTransform, PatternSettings } from '../utils/effects';
 import { pathToSvgD } from '../utils/bezier';
@@ -149,6 +149,8 @@ interface ToolOptionsProps {
   onOffsetPath: (distance: number) => void;
   /** Blur every selected object; 'none' clears it */
   onBlurSelection: (kind: 'none' | 'gaussian' | 'motion', amount: number, angle: number) => void;
+  /** Paint a drop shadow behind every selected object; null clears it */
+  onShadowSelection: (shadow: ShadowEffect | null) => void;
   /** Tiles the selection as each object's own fill */
   onPattern: (settings: PatternSettings) => void;
   onClearPattern: () => void;
@@ -160,6 +162,7 @@ interface ToolOptionsProps {
   onOpenPatterns?: () => void;
   /** The selection's current paint, so the panels open on what you see */
   selectionBlur?: BlurEffect | null;
+  selectionShadow?: ShadowEffect | null;
   selectionPattern?: PatternFill | null;
   /** The shape paint preview: the selected outline plus its artboard box */
   patternMask?: { d: string; x: number; y: number; width: number; height: number } | null;
@@ -419,12 +422,14 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   onSplitGrid,
   onOffsetPath,
   onBlurSelection,
+  onShadowSelection,
   onPattern,
   onClearPattern,
   onSavePattern,
   onPreviewPattern,
   onOpenPatterns,
   selectionBlur = null,
+  selectionShadow = null,
   selectionPattern = null,
   patternMask = null,
   onWarp,
@@ -465,6 +470,16 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   const [blurKind, setBlurKind] = React.useState<'none' | 'gaussian' | 'motion'>('gaussian');
   const [blurAmount, setBlurAmount] = React.useState(8);
   const [blurAngle, setBlurAngle] = React.useState(0);
+
+  // Shadow: offsets and softness in artboard units, painted behind the object.
+  // The defaults are the shadow a logo usually wants — down and right, soft,
+  // and dark enough to read on white without turning into a smudge.
+  const [shadowOn, setShadowOn] = React.useState(false);
+  const [shadowDx, setShadowDx] = React.useState(6);
+  const [shadowDy, setShadowDy] = React.useState(10);
+  const [shadowBlur, setShadowBlur] = React.useState(18);
+  const [shadowOpacity, setShadowOpacity] = React.useState(0.35);
+  const [shadowColor, setShadowColor] = React.useState('#0b1220');
   const [patternScale, setPatternScale] = React.useState(100);
   const [patternRotation, setPatternRotation] = React.useState(0);
   const [patternTileType, setPatternTileType] = React.useState<
@@ -509,6 +524,36 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
     setBlurAmount(Math.round(selectionBlur.amount));
     setBlurAngle(Math.round(selectionBlur.angle));
   }, [selectionBlur?.kind, selectionBlur?.amount, selectionBlur?.angle]);
+
+  React.useEffect(() => {
+    if (!selectionShadow) {
+      setShadowOn(false);
+      return;
+    }
+    setShadowOn(true);
+    setShadowDx(Math.round(selectionShadow.dx));
+    setShadowDy(Math.round(selectionShadow.dy));
+    setShadowBlur(Math.round(selectionShadow.blur));
+    setShadowOpacity(selectionShadow.opacity);
+    setShadowColor(selectionShadow.color);
+  }, [
+    selectionShadow?.dx,
+    selectionShadow?.dy,
+    selectionShadow?.blur,
+    selectionShadow?.opacity,
+    selectionShadow?.color,
+  ]);
+
+  const pushShadow = (patch: Partial<ShadowEffect>) => {
+    onShadowSelection({
+      dx: shadowDx,
+      dy: shadowDy,
+      blur: shadowBlur,
+      opacity: shadowOpacity,
+      color: shadowColor,
+      ...patch,
+    });
+  };
 
   // The panel opens on whatever warp the selection already carries — a label's
   // spec, or a shape's recorded one — so the amount shown is the amount in use.
@@ -1244,6 +1289,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
               ['Corner', 'Corner'],
               ['Path', 'Pathfinder'],
               ['Blur', 'Blur'],
+              ['Shadow', 'Shadow'],
               ['Pattern', 'Pattern fill'],
               ['Warp', 'Warp'],
               ['Text path', 'Text on a path'],
@@ -1464,6 +1510,115 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                 </button>
               </div>
             </div>
+          )}
+
+          {/* Shadow paints behind the object, so it never touches geometry:
+              the object still snaps, aligns and booleans on its own outline. */}
+          <span className="mt-1.5 block px-1 py-0.5 font-sans text-[9px] uppercase tracking-[0.08em] text-mute">
+            Shadow
+          </span>
+          <div className="grid grid-cols-2 gap-1">
+            {(
+              [
+                [false, 'None'],
+                [true, 'Drop shadow'],
+              ] as const
+            ).map(([on, label]) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => {
+                  setShadowOn(on);
+                  if (!on) onShadowSelection(null);
+                  else pushShadow({});
+                }}
+                className={`press h-7 rounded-md text-[10px] font-semibold ${
+                  shadowOn === on ? 'bg-accent/20 text-accent' : 'bg-ink-3 text-dim hover:text-accent'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {shadowOn && (
+            <>
+              {stepperRow(
+                'X',
+                `${shadowDx} px`,
+                () => {
+                  const next = Math.max(-200, shadowDx - 2);
+                  setShadowDx(next);
+                  pushShadow({ dx: next });
+                },
+                () => {
+                  const next = Math.min(200, shadowDx + 2);
+                  setShadowDx(next);
+                  pushShadow({ dx: next });
+                }
+              )}
+              {stepperRow(
+                'Y',
+                `${shadowDy} px`,
+                () => {
+                  const next = Math.max(-200, shadowDy - 2);
+                  setShadowDy(next);
+                  pushShadow({ dy: next });
+                },
+                () => {
+                  const next = Math.min(200, shadowDy + 2);
+                  setShadowDy(next);
+                  pushShadow({ dy: next });
+                }
+              )}
+              {stepperRow(
+                'Softness',
+                `${shadowBlur} px`,
+                () => {
+                  const next = Math.max(0, shadowBlur - 2);
+                  setShadowBlur(next);
+                  pushShadow({ blur: next });
+                },
+                () => {
+                  const next = Math.min(120, shadowBlur + 2);
+                  setShadowBlur(next);
+                  pushShadow({ blur: next });
+                }
+              )}
+              {stepperRow(
+                'Opacity',
+                `${Math.round(shadowOpacity * 100)}%`,
+                () => {
+                  const next = Math.max(0.05, Math.round((shadowOpacity - 0.05) * 100) / 100);
+                  setShadowOpacity(next);
+                  pushShadow({ opacity: next });
+                },
+                () => {
+                  const next = Math.min(1, Math.round((shadowOpacity + 0.05) * 100) / 100);
+                  setShadowOpacity(next);
+                  pushShadow({ opacity: next });
+                }
+              )}
+              <div className="mt-1 flex items-center justify-between px-1">
+                <span className="font-sans text-[9px] uppercase tracking-wider text-mute">Colour</span>
+                <div className="flex items-center gap-1">
+                  {['#0b1220', '#000000', '#2f6fdb', '#7a5cff', '#ffffff'].map((colour) => (
+                    <button
+                      key={colour}
+                      type="button"
+                      aria-label={`Shadow colour ${colour}`}
+                      onClick={() => {
+                        setShadowColor(colour);
+                        pushShadow({ color: colour });
+                      }}
+                      style={{ background: colour }}
+                      className={`press h-6 w-6 rounded-md border ${
+                        shadowColor === colour ? 'border-accent' : 'border-line'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+            </>
           )}
 
           {/* Pattern: captured once from the selection, then every control

@@ -416,6 +416,29 @@ function sanitizeLayers(value: unknown): Layer[] {
           };
         })(),
         ...(() => {
+          const shadow = (path as { shadow?: unknown }).shadow;
+          if (!shadow || typeof shadow !== 'object') return {};
+          const candidate = shadow as {
+            dx?: unknown;
+            dy?: unknown;
+            blur?: unknown;
+            color?: unknown;
+            opacity?: unknown;
+          };
+          const dx = clamp(finite(candidate.dx, 0), -400, 400);
+          const dy = clamp(finite(candidate.dy, 0), -400, 400);
+          const blur = clamp(finite(candidate.blur, 0), 0, 200);
+          const opacity = clamp(finite(candidate.opacity, 0), 0, 1);
+          const color =
+            typeof candidate.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(candidate.color)
+              ? candidate.color
+              : '#0b1220';
+          // A shadow with no offset and no softness paints nothing: drop it
+          // rather than keeping an effect the user can see no sign of.
+          if (opacity <= 0.01 || (Math.hypot(dx, dy) <= 0.01 && blur <= 0.05)) return {};
+          return { shadow: { dx, dy, blur, color, opacity } };
+        })(),
+        ...(() => {
           const pattern = (path as { pattern?: unknown }).pattern;
           if (!pattern || typeof pattern !== 'object') return {};
           const raw = pattern as {

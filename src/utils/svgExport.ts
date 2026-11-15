@@ -24,9 +24,9 @@ import {
 } from './clipping';
 import { computePathsBoundingBox } from './transform';
 import {
-  blurFilterId,
-  blurFilterMarkup,
-  hasVisibleBlur,
+  effectFilterId,
+  effectFilterMarkup,
+  hasVisibleEffect,
   isPatternPreviewPath,
   patternIdFor,
   patternMarkup,
@@ -143,8 +143,8 @@ export function generateSvgCode(
     for (const path of layer.paths) {
       if (!isVisible(path)) continue;
       if (onlyIds && !onlyIds.has(path.id)) continue;
-      const blur = blurFilterMarkup(path);
-      if (blur) effectDefs.push(blur);
+      const effect = effectFilterMarkup(path);
+      if (effect) effectDefs.push(effect);
       const pattern = patternMarkup(path);
       if (pattern) effectDefs.push(pattern);
     }
@@ -182,9 +182,7 @@ export function generateSvgCode(
       const objectAlpha = path.opacity ?? 1;
       const clipUrl = clippingUrlFor(path);
       const clipAttr = clipUrl ? `clip-path="${clipUrl}"` : '';
-      const filterAttr = hasVisibleBlur(path.blur)
-        ? ` filter="url(#${blurFilterId(path.id)})"`
-        : '';
+      const filterAttr = hasVisibleEffect(path) ? ` filter="url(#${effectFilterId(path.id)})"` : '';
 
       // Live text objects export as <text> so the string stays editable
       if (path.text) {

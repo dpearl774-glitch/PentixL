@@ -1,4 +1,4 @@
-import { BlurEffect, Layer, PatternFill, PatternSwatch, VectorPath } from '../types/vector';
+import { BlurEffect, Layer, PatternFill, PatternSwatch, ShadowEffect, VectorPath } from '../types/vector';
 import { pathToSvgD } from './bezier';
 
 /**
@@ -9,8 +9,31 @@ import { pathToSvgD } from './bezier';
 
 const sanitizeId = (id: string) => id.replace(/[^a-zA-Z0-9_-]/g, '_');
 
-export function blurFilterId(pathId: string): string {
-  return `pentix-blur-${sanitizeId(pathId)}`;
+/**
+ * Blur and shadow share one filter per object. SVG allows a single `filter`
+ * attribute on an element and filter chaining is not portable, so the shadow
+ * and the blur are built into the same filter graph instead of fighting for it.
+ */
+export function effectFilterId(pathId: string): string {
+  return `pentix-effect-${sanitizeId(pathId)}`;
+}
+
+export function hasVisibleShadow(shadow?: ShadowEffect | null): boolean {
+  if (!shadow) return false;
+  if (!Number.isFinite(shadow.opacity) || shadow.opacity <= 0.01) return false;
+  const dx = Number.isFinite(shadow.dx) ? shadow.dx : 0;
+  const dy = Number.isFinite(shadow.dy) ? shadow.dy : 0;
+  const blur = Number.isFinite(shadow.blur) ? shadow.blur : 0;
+  return Math.hypot(dx, dy) > 0.01 || blur > 0.05;
+}
+
+/** Softness of the shadow's edge, clamped the way the editor shows it. */
+export function shadowStdDeviation(shadow: ShadowEffect): number {
+  return Math.max(0.01, Math.min(120, Math.abs(shadow.blur)));
+}
+
+export function hasVisibleEffect(path: VectorPath): boolean {
+  return hasVisibleBlur(path.blur) || hasVisibleShadow(path.shadow);
 }
 
 /**
@@ -48,12 +71,26 @@ export function blurStdDeviation(blur: BlurEffect): { stdX: number; stdY: number
 }
 
 /** Filter markup for the exported file; the editor builds the same filter. */
-export function blurFilterMarkup(path: VectorPath): string {
-  if (!path.blur || !hasVisibleBlur(path.blur)) return '';
-  const { stdX, stdY } = blurStdDeviation(path.blur);
-  return `    <filter id="${blurFilterId(path.id)}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${stdX.toFixed(
-    2
-  )} ${stdY.toFixed(2)}" /></filter>`;
+export function effectFilterMarkup(path: VectorPath): string {
+  if (!hasVisibleEffect(path)) return '';
+  const parts: string[] = [];
+  if (path.shadow && hasVisibleShadow(path.shadow)) {
+    const { dx, dy, color, opacity } = path.shadow;
+    parts.push(
+      `<feDropShadow dx="${dx.toFixed(2)}" dy="${dy.toFixed(2)}" stdDeviation="${shadowStdDeviation(
+        path.shadow
+      ).toFixed(2)}" flood-color="${color}" flood-opacity="${Math.max(0, Math.min(1, opacity)).toFixed(2)}" />`
+    );
+  }
+  if (path.blur && hasVisibleBlur(path.blur)) {
+    const { stdX, stdY } = blurStdDeviation(path.blur);
+    parts.push(`<feGaussianBlur stdDeviation="${stdX.toFixed(2)} ${stdY.toFixed(2)}" />`);
+  }
+  // The region has to be big enough for the offset plus the softness, or a
+  // generous shadow gets clipped into a rectangle at the object's edge.
+  return `    <filter id="${effectFilterId(path.id)}" x="-60%" y="-60%" width="220%" height="220%">${parts.join(
+    ''
+  )}</filter>`;
 }
 
 export interface PatternSettings {
