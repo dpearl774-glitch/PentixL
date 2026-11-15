@@ -18,6 +18,7 @@ import {
   HelpCircle,
   BookOpen,
   MessageSquarePlus,
+  Send,
   Move,
   Undo2,
   Redo2,
@@ -89,12 +90,16 @@ const Row: React.FC<{
   }`;
 
   if (href) {
+    // A download stays in place: a new window makes the browser ignore `download`,
+    // so the file gets saved under its URL name instead of the one given here.
+    // An outside destination is the opposite case, and opens away from the app.
+    const external = /^https?:/i.test(href);
     return (
-      // No target: a new window makes the browser ignore `download`, so the file
-      // would be saved under its URL name instead of the one given here.
       <a
         href={href}
         download={download}
+        target={external ? '_blank' : undefined}
+        rel={external ? 'noreferrer' : undefined}
         onClick={onClick}
         className={className}
       >
@@ -299,6 +304,13 @@ export const AppMenu: React.FC<AppMenuProps> = ({
           label="Send feedback"
           hint="Bug, idea or anything odd"
           onClick={onOpenFeedback}
+        />
+        <Row
+          icon={<Send size={16} />}
+          label="Telegram"
+          hint="Testers' channel and chat"
+          href="https://t.me/pentixapp"
+          onClick={onClose}
         />
         <div className="mt-1 flex items-center gap-2 px-2 pt-2">
           <BrandMark size={20} />
