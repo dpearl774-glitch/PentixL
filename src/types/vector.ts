@@ -85,6 +85,11 @@ export interface ShadowEffect {
   color: string;
   /** 0..1 */
   opacity: number;
+  /**
+   * Inner shadows fall inside the object's own silhouette — the pressed-in
+   * look — instead of landing behind it. Absent means outer.
+   */
+  inset?: boolean;
 }
 
 export interface BlurEffect {

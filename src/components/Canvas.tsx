@@ -83,6 +83,8 @@ import {
   blurStdDeviation,
   hasVisibleBlur,
   hasVisibleShadow,
+  shadowColorOf,
+  shadowOpacityOf,
   shadowStdDeviation,
   patternIdFor,
   patternTransform,
@@ -880,14 +882,37 @@ export const Canvas: React.FC<CanvasProps> = ({
                 width="220%"
                 height="220%"
               >
-                {path.shadow && hasVisibleShadow(path.shadow) && (
+                {path.shadow && hasVisibleShadow(path.shadow) && !path.shadow.inset && (
                   <feDropShadow
                     dx={path.shadow.dx}
                     dy={path.shadow.dy}
                     stdDeviation={shadowStdDeviation(path.shadow)}
-                    floodColor={path.shadow.color}
-                    floodOpacity={Math.max(0, Math.min(1, path.shadow.opacity))}
+                    floodColor={shadowColorOf(path.shadow)}
+                    floodOpacity={shadowOpacityOf(path.shadow)}
                   />
+                )}
+                {path.shadow && hasVisibleShadow(path.shadow) && path.shadow.inset && (
+                  <>
+                    <feOffset
+                      in="SourceAlpha"
+                      dx={path.shadow.dx}
+                      dy={path.shadow.dy}
+                      result="pentix-offset"
+                    />
+                    <feGaussianBlur
+                      in="pentix-offset"
+                      stdDeviation={shadowStdDeviation(path.shadow)}
+                      result="pentix-soft"
+                    />
+                    <feComposite in="SourceAlpha" in2="pentix-soft" operator="out" result="pentix-inverse" />
+                    <feFlood
+                      floodColor={shadowColorOf(path.shadow)}
+                      floodOpacity={shadowOpacityOf(path.shadow)}
+                      result="pentix-flood"
+                    />
+                    <feComposite in="pentix-flood" in2="pentix-inverse" operator="in" result="pentix-inner" />
+                    <feComposite in="pentix-inner" in2="SourceGraphic" operator="over" />
+                  </>
                 )}
                 {hasVisibleBlur(path.blur) && (
                   <feGaussianBlur stdDeviation={`${stdX.toFixed(2)} ${stdY.toFixed(2)}`} />

@@ -715,6 +715,65 @@ check(
   })(),
   'expected one filter carrying both effects'
 );
+
+// An inner shadow is a different graph entirely: the object's own area minus a
+// shifted blurred copy of itself, painted inside the gap.
+const innerSvg = generateSvgCode(
+  [
+    {
+      id: 'inner-layer',
+      name: 'Inner',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      paths: [
+        {
+          ...squarePath,
+          id: 'pressed',
+          shadow: { dx: 3, dy: 5, blur: 4, color: '#0b1220', opacity: 0.6, inset: true },
+        },
+      ],
+    },
+  ],
+  blurOpts,
+  pressure
+);
+check(
+  'an inner shadow composites inside the shape',
+  innerSvg.includes('<feOffset in="SourceAlpha" dx="3.00" dy="5.00"') &&
+    innerSvg.includes('operator="out"') &&
+    innerSvg.includes('flood-color="#0b1220"') &&
+    innerSvg.includes('in2="SourceGraphic" operator="over"') &&
+    !innerSvg.includes('<feDropShadow'),
+  innerSvg.slice(0, 200)
+);
+check(
+  'a shadow with no colour falls back to ink, never black',
+  (() => {
+    const bare = generateSvgCode(
+      [
+        {
+          id: 'bare-layer',
+          name: 'Bare',
+          visible: true,
+          locked: false,
+          opacity: 1,
+          paths: [
+            {
+              ...squarePath,
+              id: 'bare',
+              shadow: { dx: 2, dy: 2, blur: 2, opacity: 0.5 } as never,
+            },
+          ],
+        },
+      ],
+      blurOpts,
+      pressure
+    );
+    return bare.includes('flood-color="#0b1220"');
+  })(),
+  'expected the ink default'
+);
 const patternSvg = generateSvgCode(
   [
     {

@@ -480,6 +480,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   const [shadowBlur, setShadowBlur] = React.useState(18);
   const [shadowOpacity, setShadowOpacity] = React.useState(0.35);
   const [shadowColor, setShadowColor] = React.useState('#0b1220');
+  const [shadowInset, setShadowInset] = React.useState(false);
   const [patternScale, setPatternScale] = React.useState(100);
   const [patternRotation, setPatternRotation] = React.useState(0);
   const [patternTileType, setPatternTileType] = React.useState<
@@ -536,13 +537,46 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
     setShadowBlur(Math.round(selectionShadow.blur));
     setShadowOpacity(selectionShadow.opacity);
     setShadowColor(selectionShadow.color);
+    setShadowInset(selectionShadow.inset === true);
   }, [
     selectionShadow?.dx,
     selectionShadow?.dy,
     selectionShadow?.blur,
     selectionShadow?.opacity,
     selectionShadow?.color,
+    selectionShadow?.inset,
   ]);
+
+  /** A shadow stepper whose buttons name the effect they change. */
+  const shadowStepper = (
+    label: string,
+    value: string,
+    onMinus: () => void,
+    onPlus: () => void
+  ) => (
+    <div className="mt-1 flex items-center justify-between px-1" key={label}>
+      <span className="font-sans text-[9px] uppercase tracking-wider text-mute">{label}</span>
+      <div className="flex items-center gap-0.5">
+        <button
+          type="button"
+          aria-label={`Decrease shadow ${label.toLowerCase()}`}
+          onClick={onMinus}
+          className="press grid h-6 w-6 place-items-center rounded-md bg-ink-3 text-dim"
+        >
+          <Minus size={10} />
+        </button>
+        <span className="w-12 text-center font-mono text-[10px] font-bold text-text">{value}</span>
+        <button
+          type="button"
+          aria-label={`Increase shadow ${label.toLowerCase()}`}
+          onClick={onPlus}
+          className="press grid h-6 w-6 place-items-center rounded-md bg-ink-3 text-dim"
+        >
+          <Plus size={10} />
+        </button>
+      </div>
+    </div>
+  );
 
   const pushShadow = (patch: Partial<ShadowEffect>) => {
     onShadowSelection({
@@ -551,6 +585,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
       blur: shadowBlur,
       opacity: shadowOpacity,
       color: shadowColor,
+      ...(shadowInset ? { inset: true } : {}),
       ...patch,
     });
   };
@@ -1517,32 +1552,43 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
           <span className="mt-1.5 block px-1 py-0.5 font-sans text-[9px] uppercase tracking-[0.08em] text-mute">
             Shadow
           </span>
-          <div className="grid grid-cols-2 gap-1">
+          <div className="grid grid-cols-3 gap-1">
             {(
               [
-                [false, 'None'],
-                [true, 'Drop shadow'],
+                ['none', 'None'],
+                ['outer', 'Outer'],
+                ['inner', 'Inner'],
               ] as const
-            ).map(([on, label]) => (
-              <button
-                key={label}
-                type="button"
-                onClick={() => {
-                  setShadowOn(on);
-                  if (!on) onShadowSelection(null);
-                  else pushShadow({});
-                }}
-                className={`press h-7 rounded-md text-[10px] font-semibold ${
-                  shadowOn === on ? 'bg-accent/20 text-accent' : 'bg-ink-3 text-dim hover:text-accent'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+            ).map(([mode, label]) => {
+              const active = mode === 'none' ? !shadowOn : shadowOn && (mode === 'inner') === shadowInset;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-label={`${label} shadow`}
+                  onClick={() => {
+                    if (mode === 'none') {
+                      setShadowOn(false);
+                      onShadowSelection(null);
+                      return;
+                    }
+                    const inset = mode === 'inner';
+                    setShadowOn(true);
+                    setShadowInset(inset);
+                    pushShadow({ ...(inset ? { inset: true } : { inset: undefined }) });
+                  }}
+                  className={`press h-7 rounded-md text-[10px] font-semibold ${
+                    active ? 'bg-accent/20 text-accent' : 'bg-ink-3 text-dim hover:text-accent'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
           </div>
           {shadowOn && (
             <>
-              {stepperRow(
+              {shadowStepper(
                 'X',
                 `${shadowDx} px`,
                 () => {
@@ -1556,7 +1602,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                   pushShadow({ dx: next });
                 }
               )}
-              {stepperRow(
+              {shadowStepper(
                 'Y',
                 `${shadowDy} px`,
                 () => {
@@ -1570,7 +1616,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                   pushShadow({ dy: next });
                 }
               )}
-              {stepperRow(
+              {shadowStepper(
                 'Softness',
                 `${shadowBlur} px`,
                 () => {
@@ -1584,7 +1630,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                   pushShadow({ blur: next });
                 }
               )}
-              {stepperRow(
+              {shadowStepper(
                 'Opacity',
                 `${Math.round(shadowOpacity * 100)}%`,
                 () => {
@@ -1605,7 +1651,9 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                     <button
                       key={colour}
                       type="button"
-                      aria-label={`Shadow colour ${colour}`}
+                      aria-label={`Shadow colour ${
+                        colour === '#0b1220' ? 'ink' : colour === '#2f6fdb' ? 'blue' : colour === '#7a5cff' ? 'violet' : colour === '#ffffff' ? 'white' : 'black'
+                      } ${colour}`}
                       onClick={() => {
                         setShadowColor(colour);
                         pushShadow({ color: colour });

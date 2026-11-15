@@ -304,6 +304,28 @@ function sanitizePoint(value: unknown, id: string): AnchorPoint | null {
     ...(sanitizeHandle(raw.handleIn) ? { handleIn: sanitizeHandle(raw.handleIn) } : {}),
     ...(sanitizeHandle(raw.handleOut) ? { handleOut: sanitizeHandle(raw.handleOut) } : {}),
     ...(Number.isFinite(raw.pressure) ? { pressure: clamp(Number(raw.pressure), 0, 1) } : {}),
+    // The split memory is what makes removing an inserted node exact after a
+    // reload; without it the segment is only refitted approximately.
+    ...(sanitizeSplit(raw.split) ? { split: sanitizeSplit(raw.split) } : {}),
+  };
+}
+
+function sanitizeSplit(value: unknown): AnchorPoint['split'] | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as {
+    prevId?: unknown;
+    nextId?: unknown;
+    prevHandleOut?: unknown;
+    nextHandleIn?: unknown;
+  };
+  if (typeof raw.prevId !== 'string' || typeof raw.nextId !== 'string') return undefined;
+  const prevHandleOut = sanitizeHandle(raw.prevHandleOut);
+  const nextHandleIn = sanitizeHandle(raw.nextHandleIn);
+  return {
+    prevId: raw.prevId,
+    nextId: raw.nextId,
+    ...(prevHandleOut ? { prevHandleOut } : {}),
+    ...(nextHandleIn ? { nextHandleIn } : {}),
   };
 }
 
@@ -424,6 +446,7 @@ function sanitizeLayers(value: unknown): Layer[] {
             blur?: unknown;
             color?: unknown;
             opacity?: unknown;
+            inset?: unknown;
           };
           const dx = clamp(finite(candidate.dx, 0), -400, 400);
           const dy = clamp(finite(candidate.dy, 0), -400, 400);
@@ -433,10 +456,11 @@ function sanitizeLayers(value: unknown): Layer[] {
             typeof candidate.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(candidate.color)
               ? candidate.color
               : '#0b1220';
+          const inset = candidate.inset === true;
           // A shadow with no offset and no softness paints nothing: drop it
           // rather than keeping an effect the user can see no sign of.
           if (opacity <= 0.01 || (Math.hypot(dx, dy) <= 0.01 && blur <= 0.05)) return {};
-          return { shadow: { dx, dy, blur, color, opacity } };
+          return { shadow: { dx, dy, blur, color, opacity, ...(inset ? { inset: true } : {}) } };
         })(),
         ...(() => {
           const pattern = (path as { pattern?: unknown }).pattern;

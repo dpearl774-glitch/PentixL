@@ -18,6 +18,24 @@ export function effectFilterId(pathId: string): string {
   return `pentix-effect-${sanitizeId(pathId)}`;
 }
 
+/** The ink the shadow uses when an object carries no colour of its own. */
+export const DEFAULT_SHADOW_COLOR = '#0b1220';
+
+/**
+ * A shadow's colour, or the ink default. SVG falls back to *black* for a
+ * missing flood-colour, which is how a document could show a shadow that was
+ * never asked for that dark.
+ */
+export function shadowColorOf(shadow?: ShadowEffect | null): string {
+  const value = shadow?.color;
+  return typeof value === 'string' && /^#[0-9a-f]{3,8}$/i.test(value) ? value : DEFAULT_SHADOW_COLOR;
+}
+
+export function shadowOpacityOf(shadow?: ShadowEffect | null): number {
+  const value = shadow?.opacity;
+  return Number.isFinite(value) ? Math.max(0, Math.min(1, Number(value))) : 0.35;
+}
+
 export function hasVisibleShadow(shadow?: ShadowEffect | null): boolean {
   if (!shadow) return false;
   if (!Number.isFinite(shadow.opacity) || shadow.opacity <= 0.01) return false;
@@ -75,12 +93,26 @@ export function effectFilterMarkup(path: VectorPath): string {
   if (!hasVisibleEffect(path)) return '';
   const parts: string[] = [];
   if (path.shadow && hasVisibleShadow(path.shadow)) {
-    const { dx, dy, color, opacity } = path.shadow;
-    parts.push(
-      `<feDropShadow dx="${dx.toFixed(2)}" dy="${dy.toFixed(2)}" stdDeviation="${shadowStdDeviation(
-        path.shadow
-      ).toFixed(2)}" flood-color="${color}" flood-opacity="${Math.max(0, Math.min(1, opacity)).toFixed(2)}" />`
-    );
+    const { dx, dy } = path.shadow;
+    const color = shadowColorOf(path.shadow);
+    const opacity = shadowOpacityOf(path.shadow).toFixed(2);
+    const blur = shadowStdDeviation(path.shadow).toFixed(2);
+    if (path.shadow.inset) {
+      // An inner shadow is the object's own area minus a shifted, blurred copy
+      // of itself, painted inside that gap.
+      parts.push(
+        `<feOffset in="SourceAlpha" dx="${dx.toFixed(2)}" dy="${dy.toFixed(2)}" result="pentix-offset" />`,
+        `<feGaussianBlur in="pentix-offset" stdDeviation="${blur}" result="pentix-soft" />`,
+        `<feComposite in="SourceAlpha" in2="pentix-soft" operator="out" result="pentix-inverse" />`,
+        `<feFlood flood-color="${color}" flood-opacity="${opacity}" result="pentix-flood" />`,
+        `<feComposite in="pentix-flood" in2="pentix-inverse" operator="in" result="pentix-inner" />`,
+        `<feComposite in="pentix-inner" in2="SourceGraphic" operator="over" />`
+      );
+    } else {
+      parts.push(
+        `<feDropShadow dx="${dx.toFixed(2)}" dy="${dy.toFixed(2)}" stdDeviation="${blur}" flood-color="${color}" flood-opacity="${opacity}" />`
+      );
+    }
   }
   if (path.blur && hasVisibleBlur(path.blur)) {
     const { stdX, stdY } = blurStdDeviation(path.blur);
