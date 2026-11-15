@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { CANVAS } from '../theme';
+import { POINTER_DRAG_SLOP, TOUCH_DRAG_SLOP } from '../utils/pointer';
 import {
   AnchorPoint,
   CanvasView,
@@ -372,6 +373,12 @@ export const Canvas: React.FC<CanvasProps> = ({
   const dragOriginRef = useRef<Point | null>(null);
   /** A touch drag rebases once, when it first passes the slop. */
   const touchRebasedRef = useRef(false);
+  /**
+   * How far the finger had already travelled when a touch drag re-anchored.
+   * Absolute drags (the bezier handles) subtract it so they start where the
+   * finger crossed the slop instead of jumping the whole travel in one frame.
+   */
+  const touchDragOffsetRef = useRef<Point>({ x: 0, y: 0 });
   const lastPointerPosRef = useRef<Point>({ x: 0, y: 0 });
   const smoothedPressureRef = useRef<number>(0.5);
 
@@ -1055,6 +1062,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     const canvasPt = screenToCanvas(e.clientX, e.clientY);
     dragOriginRef.current = canvasPt;
     touchRebasedRef.current = false;
+    touchDragOffsetRef.current = { x: 0, y: 0 };
     setIsPointerDown(true);
     setDragStartPoint(canvasPt);
     setCurrentPointerPoint(canvasPt);
@@ -1847,17 +1855,35 @@ export const Canvas: React.FC<CanvasProps> = ({
     // A finger is sloppier than a mouse: at a zoomed-out view a couple of degrees
     // of thumb roll is 8-10 screen pixels, which used to start a drag on what
     // the user meant as a tap and throw the object that far at once.
-    const dragSlop = e.pointerType === 'touch' ? 10 : 3;
-    if (
+    const isTouch = e.pointerType === 'touch';
+    const dragSlop = isTouch ? TOUCH_DRAG_SLOP : POINTER_DRAG_SLOP;
+    const draggingElement =
       draggingTarget &&
-      dragStartPoint &&
       (draggingTarget.type === 'anchor' ||
         draggingTarget.type === 'handle-in' ||
         draggingTarget.type === 'handle-out' ||
-        draggingTarget.type === 'path') &&
-      distance(canvasPt, dragStartPoint) * view.zoom < dragSlop
-    ) {
+        draggingTarget.type === 'path');
+
+    if (draggingElement && dragStartPoint && distance(canvasPt, dragStartPoint) * view.zoom < dragSlop) {
       return;
+    }
+
+    // Whatever was grabbed — object, node or handle — re-anchors at the point
+    // where the finger crossed the slop. It starts from there and trails the
+    // finger by that much, instead of lurching the whole travel in one frame.
+    if (isTouch && draggingElement && dragStartPoint && !touchRebasedRef.current) {
+      touchRebasedRef.current = true;
+      dragOriginRef.current = canvasPt;
+      touchDragOffsetRef.current = {
+        x: canvasPt.x - dragStartPoint.x,
+        y: canvasPt.y - dragStartPoint.y,
+      };
+      // A node drags by the difference from its last point, so re-anchoring is
+      // the whole update: moving it as well would apply the slop twice.
+      if (draggingTarget.type === 'anchor') {
+        setDraggingTarget({ ...draggingTarget, initialPoint: canvasPt });
+        return;
+      }
     }
 
     // Direct Select: Dragging an Anchor Point or Bezier Handle
@@ -1896,7 +1922,11 @@ export const Canvas: React.FC<CanvasProps> = ({
         );
         setDraggingTarget({ ...draggingTarget, initialPoint: canvasPt });
       } else if (draggingTarget.type === 'handle-out') {
-        let hOut = canvasPt;
+        const fingerPt = {
+          x: canvasPt.x - touchDragOffsetRef.current.x,
+          y: canvasPt.y - touchDragOffsetRef.current.y,
+        };
+        let hOut = fingerPt;
         if (modifiers.shift) hOut = snapAngle(currPt, hOut);
 
         let hIn = currPt.handleIn;
@@ -1913,7 +1943,11 @@ export const Canvas: React.FC<CanvasProps> = ({
           handleIn: hIn,
         };
       } else if (draggingTarget.type === 'handle-in') {
-        let hIn = canvasPt;
+        const fingerPt = {
+          x: canvasPt.x - touchDragOffsetRef.current.x,
+          y: canvasPt.y - touchDragOffsetRef.current.y,
+        };
+        let hIn = fingerPt;
         if (modifiers.shift) hIn = snapAngle(currPt, hIn);
 
         let hOut = currPt.handleOut;
@@ -1937,24 +1971,7 @@ export const Canvas: React.FC<CanvasProps> = ({
 
     // Select Tool: Moving entire selected paths
     if (effectiveTool === 'select' && draggingTarget?.type === 'path' && dragStartPoint && draggingTarget.initialSelectedPaths) {
-      let origin = dragOriginRef.current ?? dragStartPoint;
-
-      // The first touch move past the slop only re-anchors the drag: the object
-      // starts from where the finger crossed it, so it does not lurch by the
-      // whole travel and then continue as if nothing happened.
-      if (e.pointerType === 'touch' && !touchRebasedRef.current) {
-        touchRebasedRef.current = true;
-        const travelled = Math.hypot(canvasPt.x - origin.x, canvasPt.y - origin.y) * view.zoom;
-        if (travelled > 0) {
-          const keep = Math.max(0, (travelled - 10) / travelled);
-          origin = {
-            x: origin.x + (canvasPt.x - origin.x) * keep,
-            y: origin.y + (canvasPt.y - origin.y) * keep,
-          };
-          dragOriginRef.current = origin;
-        }
-      }
-
+      const origin = dragOriginRef.current ?? dragStartPoint;
       const rawDx = canvasPt.x - origin.x;
       const rawDy = canvasPt.y - origin.y;
 

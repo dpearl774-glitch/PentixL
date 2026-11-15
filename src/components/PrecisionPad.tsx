@@ -1,6 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { haptic } from '../theme';
+// A gesture that stays inside the shared touch slop is still a tap.
+import { TOUCH_DRAG_SLOP as MOVE_SLOP } from '../utils/pointer';
 
 interface PrecisionPadProps {
   /** Screen-pixel movement for the crosshair. */
@@ -25,8 +27,6 @@ const SENSITIVITY = 1.7;
  * for.
  */
 const HOLD_MS = 300;
-/** Below this much finger travel a gesture still counts as a tap. */
-const MOVE_SLOP = 8;
 
 /**
  * A trackpad for the space between the thumb clusters.
