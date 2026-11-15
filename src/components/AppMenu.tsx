@@ -19,6 +19,7 @@ import {
   BookOpen,
   MessageSquarePlus,
   Send,
+  MessageCircle,
   Move,
   Undo2,
   Redo2,
@@ -307,9 +308,16 @@ export const AppMenu: React.FC<AppMenuProps> = ({
         />
         <Row
           icon={<Send size={16} />}
-          label="Telegram"
-          hint="Testers' channel and chat"
+          label="Telegram updates"
+          hint="Builds, fixes and downtime"
           href="https://t.me/pentixapp"
+          onClick={onClose}
+        />
+        <Row
+          icon={<MessageCircle size={16} />}
+          label="Testers' chat"
+          hint="Ask, report, compare notes"
+          href="https://t.me/pentixchat"
           onClick={onClose}
         />
         <div className="mt-1 flex items-center gap-2 px-2 pt-2">
