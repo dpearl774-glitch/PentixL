@@ -330,3 +330,12 @@ input[type="color"]::-webkit-color-swatch {
   border: none;
   border-radius: 10px;
 }
+
+/* The armed eyedropper is a pipette, not a crosshair: the glyph says a tap
+   picks a colour instead of drawing. Hotspot at the nib, bottom left. */
+.cursor-pipette {
+  cursor:
+    url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 22l1-1h3l9-9'/%3E%3Cpath d='M3 21v-3l9-9'/%3E%3Cpath d='M15 6l3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4z'/%3E%3C/svg%3E")
+      2 26,
+    crosshair;
+}

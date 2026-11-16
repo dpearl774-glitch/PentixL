@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { Canvas } from './src/components/Canvas';
 import { ToolDock } from './src/components/ToolDock';
+import { ReferencesSheet } from './src/components/ReferencesSheet';
 import { ToolOptions } from './src/components/ToolOptions';
 import { TextSheet } from './src/components/TextSheet';
 import { TopBar } from './src/components/TopBar';
@@ -234,6 +235,39 @@ const penHtml = renderToStaticMarkup(
 );
 check('pen path with stroke off still draws a guide', penHtml.includes('stroke-dasharray="7 5"'));
 check('the pen guide uses the accent colour', penHtml.includes('stroke="#4c8dff"'));
+/* Eyedropper: the armed state has to look different from drawing */
+const samplingHtml = renderToStaticMarkup(
+  <Canvas {...canvasProps} eyedropperActive />
+);
+check(
+  'the armed eyedropper swaps in a pipette cursor',
+  samplingHtml.includes('cursor-pipette'),
+  samplingHtml.includes('cursor-pipette') ? 'pipette' : 'plain crosshair'
+);
+
+/* Pictures on the canvas and pictures to trace over are two different jobs */
+const refsHtml = renderToStaticMarkup(
+  <ReferencesSheet
+    open
+    onClose={noop}
+    references={[]}
+    onUpdate={noop}
+    onDelete={noop}
+    onAdd={noop}
+    onAddArtwork={noop}
+    onTrace={noop}
+    onTraceWithPen={noop}
+    onPlaceImage={noop}
+    hasSelection={false}
+  />
+);
+check(
+  'a picture can be added as artwork without a trace overlay',
+  refsHtml.includes('Add image') &&
+    refsHtml.includes('Trace overlay') &&
+    refsHtml.includes('fainter overlay')
+);
+
 check(
   'pen keeps its own stroke when it has one',
   renderToStaticMarkup(

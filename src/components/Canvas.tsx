@@ -231,6 +231,9 @@ interface CanvasProps {
   strokeOpacity?: number;
   eyedropperActive?: boolean;
   onSamplePoint?: (point: Point) => void;
+  /** Live colour under the finger while the eyedropper is armed */
+  onSampleHover?: (point: Point) => void;
+  eyedropperHex?: string | null;
   fillColor: string;
   strokeColor: string;
   strokeWidth: number;
@@ -296,6 +299,8 @@ export const Canvas: React.FC<CanvasProps> = ({
   strokeOpacity = 1,
   eyedropperActive = false,
   onSamplePoint,
+  onSampleHover,
+  eyedropperHex = null,
   fillColor,
   strokeColor,
   strokeWidth,
@@ -1292,6 +1297,7 @@ export const Canvas: React.FC<CanvasProps> = ({
     // Eyedropper: sample the artwork under the finger and hand it back
     if (eyedropperActive) {
       onSamplePoint?.(rawCanvasPoint(e.clientX, e.clientY));
+      setProbe(null);
       return;
     }
 
@@ -1501,8 +1507,19 @@ export const Canvas: React.FC<CanvasProps> = ({
   };
 
   // Pointer Move Handler
+  /** Where the eyedropper loupe sits, in container pixels */
+  const [probe, setProbe] = React.useState<{ x: number; y: number } | null>(null);
+
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (padPressRef.current && e.pointerId !== PAD_POINTER_ID) return;
+
+    // Armed eyedropper: report the pixel under the finger instead of drawing.
+    if (eyedropperActive) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) setProbe({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+      onSampleHover?.(rawCanvasPoint(e.clientX, e.clientY));
+      return;
+    }
 
     if (activePointersRef.current.has(e.pointerId)) {
       activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -2847,6 +2864,9 @@ export const Canvas: React.FC<CanvasProps> = ({
   }, [padAvailable]);
 
   const getCanvasCursor = () => {
+    // The eyedropper gets its own glyph: a bare crosshair gave no hint that a
+    // tap would pick a colour instead of drawing.
+    if (eyedropperActive) return 'cursor-pipette';
     if (effectiveTool === 'hand') return 'cursor-grab active:cursor-grabbing';
     if (effectiveTool === 'pen') return 'cursor-crosshair';
     if (effectiveTool === 'pencil') return 'cursor-crosshair';
@@ -4528,6 +4548,43 @@ export const Canvas: React.FC<CanvasProps> = ({
           )}
         </g>
       </svg>
+
+      {/* Eyedropper capture layer: the artwork's own hit areas stop the pointer
+          event, so sampling only worked on empty artboard. While armed, this
+          surface takes every tap and move instead. */}
+      {eyedropperActive && (
+        <div
+          className="cursor-pipette absolute inset-0 z-20"
+          onPointerDown={(e) => {
+            onSamplePoint?.(rawCanvasPoint(e.clientX, e.clientY));
+            setProbe(null);
+          }}
+          onPointerMove={(e) => {
+            const rect = containerRef.current?.getBoundingClientRect();
+            if (rect) setProbe({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+            onSampleHover?.(rawCanvasPoint(e.clientX, e.clientY));
+          }}
+          onPointerLeave={() => setProbe(null)}
+        />
+      )}
+
+      {/* Eyedropper loupe: what is under the finger, as a colour, before the tap */}
+      {eyedropperActive && probe && (
+        <div
+          className="pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-[calc(100%+14px)]"
+          style={{ left: probe.x, top: probe.y }}
+        >
+          <div className="flex items-center gap-1.5 rounded-full border border-white/25 bg-ink-2/95 px-2 py-1 shadow-xl backdrop-blur">
+            <span
+              className="h-4 w-4 rounded-full border border-white/50"
+              style={{ backgroundColor: eyedropperHex ?? 'transparent' }}
+            />
+            <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-text">
+              {eyedropperHex ?? '—'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {renderRulers()}
 

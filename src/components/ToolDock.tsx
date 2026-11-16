@@ -68,8 +68,11 @@ export const ToolDock: React.FC<ToolDockProps> = ({ currentTool, onSelectTool, o
               aria-pressed={active}
               onClick={() => {
                 haptic(8);
+                // The slot is a tool first and a sheet second: tapping Shapes arms
+                // the shape tool, so closing the library leaves you ready to draw
+                // instead of back in Select with nothing highlighted.
+                onSelectTool(slot.id);
                 if (slot.opensSheet) onOpenShapes();
-                else onSelectTool(slot.id);
               }}
               className="press relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg"
             >

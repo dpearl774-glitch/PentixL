@@ -89,7 +89,7 @@ import type { TextPathAlign } from './utils/textPath';
 import { textInShapeLayout } from './utils/textInShape';
 import { GridSettings, StoredProject, getProject, saveProject, seedInitialProjectsIfEmpty } from './utils/projectStorage';
 import { generateProjectThumbnailSvg } from './utils/thumbnailGenerator';
-import { referenceImageFromSrc } from './utils/referenceImages';
+import { imagePaintFromReference, referenceImageFromFile, referenceImageFromSrc } from './utils/referenceImages';
 import { defaultGradient } from './utils/gradients';
 import { gradientIdFor, generateSvgCode } from './utils/svgExport';
 import { outlineStroke } from './utils/strokeOutline';
@@ -187,6 +187,23 @@ const emptySelection: SelectionState = {
   selectedAnchorIndexes: [],
   selectedHandleType: null,
 };
+
+/** One pixel of a rasterised artboard as an uppercase hex, or null off the edge. */
+function hexFromRaster(canvas: HTMLCanvasElement, point: Point): string | null {
+  const x = Math.floor(point.x);
+  const y = Math.floor(point.y);
+  if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return null;
+  try {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    const data = ctx.getImageData(x, y, 1, 1).data;
+    return `#${[data[0], data[1], data[2]]
+      .map((n) => n.toString(16).padStart(2, '0'))
+      .join('')}`.toUpperCase();
+  } catch {
+    return null;
+  }
+}
 
 export default function App() {
   /* ------------------------------------------------------------------ *
@@ -439,6 +456,9 @@ export default function App() {
   const [samplingTarget, setSamplingTarget] = useState<
     'fill' | 'stroke' | 'stop' | 'background' | null
   >(null);
+  /** One raster of the artboard while sampling is armed, for the live loupe */
+  const samplingRasterRef = useRef<HTMLCanvasElement | null>(null);
+  const [samplingHex, setSamplingHex] = useState<string | null>(null);
   const [strokeWidth, setStrokeWidth] = useState(userPrefs.strokeWidth);
   const [strokeCap, setStrokeCap] = useState<StrokeCap>(userPrefs.strokeCap);
   const [strokeJoin, setStrokeJoin] = useState<StrokeJoin>(userPrefs.strokeJoin);
@@ -1572,6 +1592,8 @@ export default function App() {
         setActivePathInProgress(null);
       }
       setTool(next);
+      // Picking a tool means drawing: whatever sheet was open gets out of the way.
+      setSheet(null);
       // A picked node belongs to direct select; leaving it clears the anchor
       if (next !== 'direct-select') {
         setSelection((prev) =>
@@ -1722,6 +1744,56 @@ export default function App() {
     ]
   );
 
+  /** Rasterises the artboard once, so the loupe can answer as the finger moves. */
+  const rasteriseArtboard = useCallback(async () => {
+    const { width, height } = viewRef.current;
+    const svg = generateSvgCode(
+      layersRef.current,
+      { width, height, includeBackground: true, backgroundColor: artboardColor },
+      pressureConfig
+    );
+    // A blob URL, not a data URL: a placed photo makes the markup far larger
+    // than a data URL can carry, and the load then never settles.
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+    try {
+      const img = await new Promise<HTMLImageElement | null>((resolve) => {
+        const picture = new Image();
+        picture.onload = () => resolve(picture);
+        picture.onerror = () => resolve(null);
+        picture.src = url;
+      });
+      if (!img) return null;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(img, 0, 0, width, height);
+      return canvas;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }, [artboardColor, pressureConfig]);
+
+  useEffect(() => {
+    samplingRasterRef.current = null;
+    setSamplingHex(null);
+    if (!samplingTarget) return;
+    let alive = true;
+    void rasteriseArtboard().then((canvas) => {
+      if (alive) samplingRasterRef.current = canvas;
+    });
+    return () => {
+      alive = false;
+    };
+  }, [rasteriseArtboard, samplingTarget]);
+
+  /** Live hex under the finger while the eyedropper is armed. */
+  const sampleHoverAt = useCallback((point: Point) => {
+    const canvas = samplingRasterRef.current;
+    setSamplingHex(canvas ? hexFromRaster(canvas, point) : null);
+  }, []);
+
   const sampleColorAt = useCallback(
     (point: Point) => {
       const { width, height } = viewRef.current;
@@ -1736,6 +1808,9 @@ export default function App() {
         pressureConfig
       );
       const img = new Image();
+      // A blob URL, not a data URL: a placed photo makes the markup far larger
+      // than a data URL can carry, and the load then never settles.
+      const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
       img.onload = () => {
         try {
           const canvas = document.createElement('canvas');
@@ -1744,21 +1819,22 @@ export default function App() {
           const ctx = canvas.getContext('2d');
           if (!ctx) throw new Error('no context');
           ctx.drawImage(img, 0, 0, width, height);
-          const data = ctx.getImageData(Math.floor(point.x), Math.floor(point.y), 1, 1).data;
-          const hex = `#${[data[0], data[1], data[2]]
-            .map((n) => n.toString(16).padStart(2, '0'))
-            .join('')}`.toUpperCase();
+          const hex = hexFromRaster(canvas, point);
+          if (!hex) throw new Error('no pixel');
           applySampled(hex);
         } catch {
           setSamplingTarget(null);
           notify('Could not read that colour');
+        } finally {
+          URL.revokeObjectURL(url);
         }
       };
       img.onerror = () => {
+        URL.revokeObjectURL(url);
         setSamplingTarget(null);
         notify('Could not read that colour');
       };
-      img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      img.src = url;
     },
     [applySampled, artboardColor, notify, pressureConfig]
   );
@@ -3144,18 +3220,38 @@ export default function App() {
     [applyLayers, selectedPaths]
   );
 
+  /** A placed picture is artwork now, so its ghost would just double it. */
+  const hidePlacedReference = useCallback(
+    (referenceId: string) => {
+      setReferences((prev) =>
+        prev.map((reference) =>
+          reference.id === referenceId ? { ...reference, visible: false } : reference
+        )
+      );
+      setSelectedReferenceId(null);
+    },
+    []
+  );
+
   /**
    * Turns a reference picture into artwork. With closed shapes selected the
    * photo is cropped to them; otherwise it arrives as its own rectangle.
    */
   const placeImageAsArtwork = useCallback(
-    (reference: ReferenceImage) => {
+    async (reference: ReferenceImage) => {
       const targetLayerId = resolveWritableLayerId() ?? layersRef.current[0]?.id;
       if (!targetLayerId) {
         notify('Nothing to draw into');
         return;
       }
-      const image = { url: reference.url, width: reference.width, height: reference.height };
+      let image: { url: string; width: number; height: number };
+      try {
+        // Embed the pixels: an object URL cannot be exported, shared or reloaded.
+        image = await imagePaintFromReference(reference);
+      } catch {
+        notify('That image could not be placed');
+        return;
+      }
       const clipTargets = selectedPaths.filter(
         (path) => path.closed && path.points.length >= 3 && !path.text && !path.isClippingMask
       );
@@ -3170,6 +3266,7 @@ export default function App() {
             ),
           }))
         );
+        hidePlacedReference(reference.id);
         notify(
           clipTargets.length === 1
             ? 'Image clipped into the shape'
@@ -3179,8 +3276,7 @@ export default function App() {
       }
 
       // No closed selection: drop the picture in as its own rectangle, centred.
-      const ratio =
-        reference.width > 0 && reference.height > 0 ? reference.height / reference.width : 1;
+      const ratio = image.width > 0 && image.height > 0 ? image.height / image.width : 1;
       const width = Math.min(view.width * 0.6, 720);
       const height = Math.max(16, width * ratio);
       const left = (view.width - width) / 2;
@@ -3212,9 +3308,33 @@ export default function App() {
         )
       );
       setSelection({ selectedPathIds: [id], selectedAnchorIndex: null, selectedHandleType: null });
+      hidePlacedReference(reference.id);
       notify('Image placed as artwork');
     },
-    [applyLayers, notify, resolveWritableLayerId, selectedPaths, view.height, view.width]
+    [
+      applyLayers,
+      hidePlacedReference,
+      notify,
+      resolveWritableLayerId,
+      selectedPaths,
+      view.height,
+      view.width,
+    ]
+  );
+
+  /** Imports a file straight into the artwork, with no trace overlay behind it. */
+  const addImageAsArtwork = useCallback(
+    async (file: File) => {
+      try {
+        const reference = await referenceImageFromFile(file);
+        await placeImageAsArtwork(reference);
+        // The file was never added as a reference, so there is no ghost to hide.
+        URL.revokeObjectURL(reference.url);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'That image could not be added');
+      }
+    },
+    [notify, placeImageAsArtwork]
   );
 
   const addReferenceFromSrc = useCallback(
@@ -3868,6 +3988,8 @@ export default function App() {
           strokeOpacity={strokeOpacity}
           eyedropperActive={!previewMode && samplingTarget !== null}
           onSamplePoint={sampleColorAt}
+          onSampleHover={sampleHoverAt}
+          eyedropperHex={samplingTarget ? samplingHex : null}
           fillColor={fillColor}
           strokeColor={strokeColor}
           strokeWidth={strokeWidth}
@@ -4299,6 +4421,7 @@ export default function App() {
         onUpdate={updateReference}
         onDelete={removeReference}
         onAdd={addReference}
+        onAddArtwork={addImageAsArtwork}
         onPlaceImage={placeImageAsArtwork}
         hasSelection={selectedPaths.some(
           (path) => path.closed && path.points.length >= 3 && !path.text && !path.isClippingMask

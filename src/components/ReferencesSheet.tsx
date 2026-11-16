@@ -23,6 +23,8 @@ interface ReferencesSheetProps {
   onUpdate: (image: ReferenceImage) => void;
   onDelete: (id: string) => void;
   onAdd: (image: ReferenceImage) => void;
+  /** A file added as a picture on the canvas, with no trace overlay behind it */
+  onAddArtwork: (file: File) => void;
   onTrace: (src: string) => void;
   onTraceWithPen: () => void;
   /** Turns a reference into artwork, cropped to the selection when there is one */
@@ -41,18 +43,29 @@ export const ReferencesSheet: React.FC<ReferencesSheetProps> = ({
   onUpdate,
   onDelete,
   onAdd,
+  onAddArtwork,
   onTrace,
   onTraceWithPen,
   onPlaceImage,
   hasSelection,
 }) => {
   const fileRef = useRef<HTMLInputElement>(null);
+  const artworkRef = useRef<HTMLInputElement>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  const handleFiles = async (files: FileList | null) => {
+  /**
+   * Two different intents, kept apart: a picture you want in the artwork, and a
+   * picture you want to trace over. Adding a file used to do both at once, so a
+   * placed photo arrived twice — once as artwork and once as a translucent ghost.
+   */
+  const handleFiles = async (files: FileList | null, mode: 'artwork' | 'overlay') => {
     if (!files?.length) return;
     setUploadError(null);
     for (const file of Array.from(files)) {
+      if (mode === 'artwork') {
+        onAddArtwork(file);
+        continue;
+      }
       try {
         onAdd(await referenceImageFromFile(file));
       } catch (err) {
@@ -67,19 +80,28 @@ export const ReferencesSheet: React.FC<ReferencesSheetProps> = ({
       onClose={onClose}
       title="References"
       eyebrow="Studio"
-      subtitle="Sketches and photos you trace over. Saved with the document."
+      subtitle="Pictures on the canvas, or overlays you trace over."
       size="md"
     >
       <div className="flex flex-col gap-2.5 pb-1">
         <div className="flex items-center justify-between">
           <SectionLabel>Images · {references.length}</SectionLabel>
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            className="press flex h-8 items-center gap-1 rounded-lg border border-line bg-ink-2 px-2.5 text-[11px] font-semibold text-dim"
-          >
-            <Plus size={12} /> Add image
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              className="press flex h-8 items-center gap-1 rounded-lg border border-line bg-ink-2 px-2.5 text-[11px] font-semibold text-dim"
+            >
+              <ScanLine size={12} /> Trace overlay
+            </button>
+            <button
+              type="button"
+              onClick={() => artworkRef.current?.click()}
+              className="press flex h-8 items-center gap-1 rounded-lg bg-accent px-2.5 text-[11px] font-bold text-ink-0"
+            >
+              <Plus size={12} /> Add image
+            </button>
+          </div>
         </div>
         <input
           ref={fileRef}
@@ -88,7 +110,18 @@ export const ReferencesSheet: React.FC<ReferencesSheetProps> = ({
           multiple
           className="hidden"
           onChange={(e) => {
-            void handleFiles(e.target.files);
+            void handleFiles(e.target.files, 'overlay');
+            e.target.value = '';
+          }}
+        />
+        <input
+          ref={artworkRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            void handleFiles(e.target.files, 'artwork');
             e.target.value = '';
           }}
         />
@@ -97,7 +130,9 @@ export const ReferencesSheet: React.FC<ReferencesSheetProps> = ({
         {references.length === 0 ? (
           <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-line px-3 py-8 text-center">
             <ImageIcon size={18} className="text-mute" />
-            <p className="text-[12px] text-mute">Drop a sketch or photo to trace over.</p>
+            <p className="text-[12px] text-mute">
+              Add a picture to the canvas, or a fainter overlay to trace over.
+            </p>
           </div>
         ) : (
           references.map((img) => (

@@ -366,6 +366,9 @@ export interface ReferenceImage {
   url: string;
   /** The image itself, so the reference survives a save without base64 growth. */
   blob?: Blob;
+  /** The file's own pixel size, before the on-screen preview was scaled down. */
+  naturalWidth?: number;
+  naturalHeight?: number;
   x: number;
   y: number;
   width: number;
