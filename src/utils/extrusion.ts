@@ -406,9 +406,9 @@ function poseFor(path: VectorPath, contour: [number, number][]): Pose {
   const box = boundsOf(contour);
   const diagonal = Math.hypot(box.width, box.height) || 1;
   const strength = extrudePerspective(path);
-  // Honest perspective: the camera sits a few object-widths away, so edges
-  // converge instead of staying parallel. Orthographic at strength 0.
-  const focal = strength < 0.001 ? Infinity : diagonal * (6 - strength * 4.5);
+  // 0 is orthographic; at 1 the camera is close enough for visible convergence.
+  // The former 6-to-1.5 diagonal range made the perspective slider barely visible.
+  const focal = strength < 0.001 ? Infinity : diagonal * (2.8 - 1.8 * strength);
 
   return {
     center,

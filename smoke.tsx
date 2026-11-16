@@ -1326,18 +1326,38 @@ check(
   turnedBack ? projectBox(turnedBack.d).maxX.toFixed(1) : 'null'
 );
 
-// A tilt with perspective on must keystone: the near edge is taller than the
-// far one, which is the giveaway that the camera is real and not a squash.
+// Perspective must visibly keystone the face, and strength zero must stay
+// orthographic. Compare the height of the two ends, not the whole bounding box.
+const faceSpans = (d: string) => {
+  const points = [...d.matchAll(/(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g)].map(
+    (m) => [Number(m[1]), Number(m[2])] as [number, number]
+  );
+  const xs = points.map((point) => point[0]);
+  const midX = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const span = (near: boolean) => {
+    const side = points.filter((point) => (near ? point[0] > midX : point[0] < midX));
+    if (side.length === 0) return 0;
+    const ys = side.map((point) => point[1]);
+    return Math.max(...ys) - Math.min(...ys);
+  };
+  return { near: span(true), far: span(false) };
+};
 const keystoned = extrusionFrontPath({ ...uprightPath, extrudeTilt: 60, extrudePerspective: 0.9 });
 if (keystoned) {
-  const box = projectBox(keystoned);
-  const ortho = projectBox(tiltedFace!);
+  const spans = faceSpans(keystoned);
   check(
     'perspective keystones the face instead of only squashing it',
-    box.height > ortho.height + 4 && Math.abs(box.width - ortho.width) < 6,
-    `${box.width.toFixed(1)}×${box.height.toFixed(1)} vs ${ortho.width.toFixed(1)}×${ortho.height.toFixed(1)}`
+    spans.near > spans.far * 1.15,
+    `near ${spans.near.toFixed(1)} vs far ${spans.far.toFixed(1)}`
   );
 }
+const orthoSpans = tiltedFace ? faceSpans(tiltedFace) : { near: 0, far: 0 };
+check(
+  'perspective at 0 is orthographic',
+  tiltedFace !== null &&
+    Math.abs(orthoSpans.near - orthoSpans.far) < Math.max(2, orthoSpans.near * 0.03),
+  `near ${orthoSpans.near.toFixed(1)} vs far ${orthoSpans.far.toFixed(1)}`
+);
 
 check(
   'the key light stays in the room when the direction turns',
