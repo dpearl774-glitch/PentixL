@@ -17,6 +17,8 @@ import {
   GripVertical,
   Layers as LayersIcon,
   Ungroup,
+  CheckSquare,
+  Combine,
 } from 'lucide-react';
 import { Layer, VectorPath } from '../types/vector';
 import { IconButton, Panel, SectionLabel } from './ui/primitives';
@@ -58,6 +60,16 @@ interface LayersSheetProps {
   onSelectLayerObjects: (layerId: string) => void;
   /** Releases a group layer's objects into the layer beneath it */
   onUngroupLayer: (layerId: string) => void;
+  /**
+   * Select mode works on ticks rather than on the canvas selection, so a set of
+   * rows can be picked without hunting for them on the artboard first. The
+   * ticks are also pushed to the canvas, so the strip follows along.
+   */
+  onSelectPaths: (ids: string[]) => void;
+  onGroupPaths: (ids: string[]) => void;
+  /** One editable path from several objects (never a raster merge) */
+  onMergePaths: (ids: string[]) => void;
+  onDeletePaths: (ids: string[]) => void;
 }
 
 type Drop = { kind: 'path' | 'layer'; id: string; place: 'above' | 'below' };
@@ -186,8 +198,22 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
   onChangeGroupSelectMode,
   onSelectLayerObjects,
   onUngroupLayer,
+  onSelectPaths,
+  onGroupPaths,
+  onMergePaths,
+  onDeletePaths,
 }) => {
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [ticked, setTicked] = useState<string[]>([]);
+  const setTicks = (next: string[]) => {
+    setTicked(next);
+    onSelectPaths(next);
+  };
+  const toggleTick = (id: string) => {
+    haptic(8);
+    setTicks(ticked.includes(id) ? ticked.filter((x) => x !== id) : [...ticked, id]);
+  };
   const [draft, setDraft] = useState('');
   const [drag, setDrag] = useState<Drag | null>(null);
   const [drop, setDrop] = useState<Drop | null>(null);
@@ -287,9 +313,27 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
       title="Layers & objects"
       eyebrow="Document"
       action={
-        <IconButton label="Add layer" size="sm" onClick={onAddLayer}>
-          <Plus size={15} />
-        </IconButton>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-pressed={selectMode}
+            aria-label={selectMode ? 'Leave select mode' : 'Select several objects'}
+            onClick={() => {
+              const next = !selectMode;
+              setSelectMode(next);
+              if (!next) setTicks([]);
+              haptic(8);
+            }}
+            className={`press flex h-7 items-center gap-1 rounded-lg px-2 text-[10px] font-bold uppercase tracking-[0.06em] ${
+              selectMode ? 'bg-accent/15 text-accent' : 'text-mute'
+            }`}
+          >
+            <CheckSquare size={13} /> Select
+          </button>
+          <IconButton label="Add layer" size="sm" onClick={onAddLayer}>
+            <Plus size={15} />
+          </IconButton>
+        </div>
       }
     >
       <div
@@ -509,14 +553,40 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
                           } ${rowDrop ? 'bg-accent/10' : ''} ${isDragged ? 'opacity-50' : ''}`}
                         >
                           {rowDrop && <DropLine edge={drop.place} />}
+                          {selectMode && (
+                            <button
+                              type="button"
+                              role="checkbox"
+                              aria-checked={ticked.includes(path.id)}
+                              aria-label={`Tick ${path.name}`}
+                              onClick={() => toggleTick(path.id)}
+                              className="press grid h-8 w-7 shrink-0 place-items-center"
+                            >
+                              <span
+                                className={`grid h-4 w-4 place-items-center rounded-[4px] border ${
+                                  ticked.includes(path.id)
+                                    ? 'border-accent bg-accent text-ink-0'
+                                    : 'border-line-strong text-transparent'
+                                }`}
+                              >
+                                <Check size={11} strokeWidth={3} />
+                              </span>
+                            </button>
+                          )}
                           {grip({ kind: 'path', id: path.id }, path.name, true)}
                           <button
                             type="button"
-                            onClick={() =>
-                              isGroup && groupSelectMode === 'group'
-                                ? onSelectLayerObjects(layer.id)
-                                : onSelectPath(path.id)
-                            }
+                            onClick={() => {
+                              if (selectMode) {
+                                toggleTick(path.id);
+                                return;
+                              }
+                              if (isGroup && groupSelectMode === 'group') {
+                                onSelectLayerObjects(layer.id);
+                                return;
+                              }
+                              onSelectPath(path.id);
+                            }}
                             className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left"
                           >
                             <Chip path={path} small />
@@ -627,6 +697,87 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
             <span className="w-9 shrink-0 text-right font-mono text-[11px] font-bold text-accent">
               {Math.round((selectedPath.opacity ?? 1) * 100)}%
             </span>
+          </div>
+        )}
+
+        {selectMode && (
+          <div className="sticky bottom-0 -mx-1 flex flex-col gap-1.5 rounded-xl border border-accent/30 bg-ink-1/95 px-2 py-2 backdrop-blur">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono text-[11px] font-bold text-accent">
+                {ticked.length} ticked
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setTicks(
+                      layers.flatMap((layer) =>
+                        layer.visible === false ? [] : layer.paths.map((path) => path.id)
+                      )
+                    )
+                  }
+                  className="press h-6 rounded-md px-1.5 text-[10px] font-semibold text-mute hover:text-text"
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTicks([])}
+                  className="press h-6 rounded-md px-1.5 text-[10px] font-semibold text-mute hover:text-text"
+                >
+                  None
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-1">
+              <button
+                type="button"
+                disabled={ticked.length < 2}
+                onClick={() => {
+                  onGroupPaths(ticked);
+                  setTicks([]);
+                  setSelectMode(false);
+                }}
+                className="press flex h-8 items-center justify-center gap-1 rounded-lg bg-ink-3 text-[11px] font-semibold text-dim disabled:opacity-40"
+              >
+                <LayersIcon size={12} /> Group
+              </button>
+              <button
+                type="button"
+                disabled={
+                  ticked.length < 2 ||
+                  layers.some((layer) =>
+                    layer.paths.some((path) => ticked.includes(path.id) && !!path.text)
+                  )
+                }
+                title={
+                  layers.some((layer) =>
+                    layer.paths.some((path) => ticked.includes(path.id) && !!path.text)
+                  )
+                    ? 'Convert the text to curves before merging'
+                    : 'One editable path from the ticked objects'
+                }
+                onClick={() => {
+                  onMergePaths(ticked);
+                  setTicks([]);
+                  setSelectMode(false);
+                }}
+                className="press flex h-8 items-center justify-center gap-1 rounded-lg bg-ink-3 text-[11px] font-semibold text-dim disabled:opacity-40"
+              >
+                <Combine size={12} /> Merge
+              </button>
+              <button
+                type="button"
+                disabled={ticked.length === 0}
+                onClick={() => {
+                  onDeletePaths(ticked);
+                  setTicks([]);
+                }}
+                className="press flex h-8 items-center justify-center gap-1 rounded-lg bg-danger/15 text-[11px] font-semibold text-danger disabled:opacity-40"
+              >
+                <Trash2 size={12} /> Delete
+              </button>
+            </div>
           </div>
         )}
 

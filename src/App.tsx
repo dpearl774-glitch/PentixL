@@ -1145,6 +1145,32 @@ export default function App() {
     }, 420);
   }, []);
 
+  /** The panel's select mode drives the canvas selection from its ticks. */
+  const selectPathsByIds = useCallback((ids: string[]) => {
+    setSelection({
+      selectedPathIds: ids,
+      selectedAnchorIndex: null,
+      selectedAnchorIndexes: [],
+      selectedHandleType: null,
+    });
+  }, []);
+
+  const deletePathsByIds = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.filter((path) => !ids.includes(path.id)),
+        }))
+      );
+      pruneSelection(layersRef.current);
+      notify(`Deleted ${ids.length} object${ids.length === 1 ? '' : 's'}`);
+      haptic(16);
+    },
+    [applyLayers, notify, pruneSelection]
+  );
+
   const deleteSelection = useCallback(() => {
     const ids = selection.selectedPathIds;
     if (ids.length === 0) return;
@@ -2326,8 +2352,8 @@ export default function App() {
    * of their layers into one of their own, so the group can be shown, locked,
    * faded, reordered and deleted as a unit.
    */
-  const groupSelectedObjects = useCallback(() => {
-    const ids = new Set(selection.selectedPathIds);
+  const groupSelectedObjects = useCallback((explicitIds?: string[]) => {
+    const ids = new Set(explicitIds ?? selection.selectedPathIds);
     if (ids.size < 2) return;
     const groupId = `layer-${Date.now()}`;
     applyLayers((prev) => {
@@ -2362,6 +2388,64 @@ export default function App() {
     setActiveLayerId(groupId);
     notify(`Grouped ${ids.size} objects`);
   }, [applyLayers, notify, selection.selectedPathIds]);
+
+  /**
+   * Panel Merge: one editable object from the ticked set. Overlapping shapes
+   * unite into a single path; shapes that do not touch still merge into one
+   * group row, so the panel shows one object either way — and nothing is
+   * rasterised, which is the property PixelLab's merge gives up.
+   */
+  const mergePathsByIds = useCallback(
+    (ids: string[]) => {
+      const targets = allPaths.filter((path) => ids.includes(path.id));
+      if (targets.length < 2) return;
+      const targetLayerId = resolveWritableLayerId();
+      if (!targetLayerId) return;
+      const result = executeBooleanOperation(targets, 'union', allPaths);
+      if (!result.length) return;
+      const many = result.length > 1;
+      const pieces = many
+        ? result.map((path, index) => ({ ...path, name: `Merged ${index + 1}` }))
+        : result;
+      const groupId = `layer-merge-${Date.now()}`;
+      const remove = new Set(ids);
+      applyLayers((prev) => {
+        const stripped = prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.filter((path) => !remove.has(path.id)),
+        }));
+        if (!many) {
+          return stripped.map((layer) =>
+            layer.id === targetLayerId ? { ...layer, paths: [...layer.paths, pieces[0]] } : layer
+          );
+        }
+        const at = stripped.findIndex((layer) => layer.id === targetLayerId);
+        const group: Layer = {
+          id: groupId,
+          name: 'Merged',
+          visible: true,
+          locked: false,
+          opacity: 1,
+          paths: pieces,
+          isGroup: true,
+        };
+        // Sits above the layer it came from, so merging never sends artwork back.
+        const next = [...stripped];
+        next.splice(Math.max(0, at + 1), 0, group);
+        return next;
+      });
+      if (many) setActiveLayerId(groupId);
+      setSelection({
+        selectedPathIds: pieces.map((path) => path.id),
+        selectedAnchorIndex: null,
+        selectedAnchorIndexes: [],
+        selectedHandleType: null,
+      });
+      notify(many ? `Merged ${targets.length} objects into one group` : 'Merged into one path');
+      haptic(16);
+    },
+    [allPaths, applyLayers, notify, resolveWritableLayerId]
+  );
 
   /** Releasing a group puts its objects back into the layer beneath it. */
   const ungroupLayer = useCallback(
@@ -4556,7 +4640,11 @@ export default function App() {
         onDuplicateLayer={duplicateLayer}
         onMoveLayer={moveLayer}
         onReorderPath={reorderPath}
-        onGroupSelected={groupSelectedObjects}
+        onGroupSelected={() => groupSelectedObjects()}
+        onSelectPaths={selectPathsByIds}
+        onGroupPaths={groupSelectedObjects}
+        onMergePaths={mergePathsByIds}
+        onDeletePaths={deletePathsByIds}
         onMovePathToLayer={movePathToLayer}
         onMovePath={movePath}
         onReorderLayer={reorderLayer}
