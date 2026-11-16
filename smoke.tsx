@@ -2514,18 +2514,20 @@ check(
     outlineFontWeight('Plus Jakarta Sans, sans-serif', 'regular') === 400
 );
 
-// Font conversion performs a guarded low-node fit up front, so a freshly
-// outlined word is already manageable in node mode. Simplify remains usable
-// for a second pass and must never add anchors or remove a glyph counter.
+// Font conversion keeps the file's own contours. It used to refit them to save
+// nodes, and the fit's error budget showed as wrinkled edges and notched joins —
+// visible damage traded for a smaller node count. Simplify is still there for
+// anyone who wants that trade.
 const heaviestGlyph = bundledOutlines.reduce((a, b) => (b.points.length > a.points.length ? b : a));
 const simplifiedGlyph = simplifyPath(heaviestGlyph, 0.5);
 const anchorTotal = (glyph: VectorPath) =>
   glyph.points.length + (glyph.holes?.reduce((count, hole) => count + hole.length, 0) ?? 0);
 check(
-  'font outlines arrive fitted and Simplify preserves their contours',
-  heaviestGlyph.points.length <= 20 &&
+  'font outlines arrive exact and Simplify can still thin them',
+  heaviestGlyph.points.length >= 8 &&
     anchorTotal(simplifiedGlyph) <= anchorTotal(heaviestGlyph) &&
-    (simplifiedGlyph.holes?.length ?? 0) === (heaviestGlyph.holes?.length ?? 0)
+    (simplifiedGlyph.holes?.length ?? 0) === (heaviestGlyph.holes?.length ?? 0),
+  `anchors=${heaviestGlyph.points.length} simplified=${anchorTotal(simplifiedGlyph)}`
 );
 
 // A TrueType contour repeats points as zero-length lines. Each repeat used to
@@ -2562,7 +2564,9 @@ check(
 const eOutline = repeatedPointOutlines.find((path) => path.name.includes('3'));
 check(
   'a converted e is not doubled up',
-  !!eOutline && eOutline.points.length <= 18 && eOutline.points.length >= 10,
+  // The file's own 'e' is compact; anything past this is repeated nodes, not
+  // detail, because the check above already proved there are no coincident ones.
+  !!eOutline && eOutline.points.length <= 40 && eOutline.points.length >= 10,
   `anchors=${eOutline?.points.length}`
 );
 

@@ -337,7 +337,7 @@ function nestContours(contours: Contour[]): { anchors: AnchorPoint[]; holes: Anc
       { points: contour.anchors, closed: true } as VectorPath,
       10
     ).map(([x, y]) => ({ x, y }));
-    return { polygon, area: Math.abs(signedArea(polygon)) };
+    return { polygon, area: Math.abs(signedArea(polygon)), sign: signedArea(polygon) >= 0 ? 1 : -1 };
   });
 
   const depth = contours.map(() => 0);
@@ -349,23 +349,51 @@ function nestContours(contours: Contour[]): { anchors: AnchorPoint[]; holes: Anc
     for (let j = 0; j < contours.length; j++) {
       if (i === j || rings[j].area <= rings[i].area) continue;
       if (!pointInPolygon(probe, rings[j].polygon)) continue;
-      depth[i]++;
+      depth[i] += 1;
       if (parent[i] < 0 || rings[j].area < rings[parent[i]].area) parent[i] = j;
     }
   }
+
+  const fullyInside = (index: number, owner: number) =>
+    rings[index].polygon.every((point) => pointInPolygon(point, rings[owner].polygon));
+
+  /**
+   * One node inside another does not make a counter. A composite glyph draws an
+   * overlapping stem and bowl as two contours, and the stem's first node sits
+   * inside the bowl: treating that as a hole subtracted the stem and left the
+   * letter a hollow ribbon with notched joins.
+   *
+   * A real counter is wholly inside its parent, and in almost every font it also
+   * runs the other way round. Either signal alone is enough; a contour that only
+   * pokes into its neighbour is more of the same filled area.
+   */
+  const isHole = (index: number) => {
+    const owner = parent[index];
+    if (owner < 0) return false;
+    if (rings[index].sign !== rings[owner].sign) return true;
+    return fullyInside(index, owner);
+  };
 
   const regions: { anchors: AnchorPoint[]; holes: AnchorPoint[][] }[] = [];
   const regionOf = new Map<number, number>();
 
   for (let i = 0; i < contours.length; i++) {
-    if (depth[i] % 2 !== 0) continue;
+    if (isHole(i)) continue;
     regionOf.set(i, regions.length);
     regions.push({ anchors: contours[i].anchors, holes: [] });
   }
   for (let i = 0; i < contours.length; i++) {
-    if (depth[i] % 2 === 0) continue;
-    const owner = regionOf.get(parent[i]);
-    if (owner !== undefined) regions[owner].holes.push(contours[i].anchors);
+    if (!isHole(i)) continue;
+    // Attach the counter to the nearest same-winding ring above it.
+    let owner = parent[i];
+    let guard = 0;
+    while (owner >= 0 && isHole(owner) && guard < contours.length) {
+      owner = parent[owner];
+      guard += 1;
+    }
+    const target = regionOf.get(owner);
+    if (target !== undefined) regions[target].holes.push(contours[i].anchors);
+    else regions.push({ anchors: contours[i].anchors, holes: [] });
   }
 
   return regions.length ? regions : [{ anchors: contours[0].anchors, holes: [] }];
@@ -378,52 +406,47 @@ function nestContours(contours: Contour[]): { anchors: AnchorPoint[]; holes: Anc
  * runs, while others use points to hold real corners; measuring both outlines
  * prevents the latter from being rounded away.
  */
+/**
+ * Tidies a glyph's own contours without redrawing them.
+ *
+ * This used to refit every ring to fresh curves. The fit is allowed a slice of
+ * error, and on letterforms that slice is visible: terminals shaved, joins
+ * notched, the smooth side of an o slightly wavy. A font file already carries
+ * the drawing, so the only thing worth cleaning is a node that sits on top of
+ * its neighbour — TrueType contours repeat the on-curve point where two
+ * quadratic curves meet, and that duplicate is what made "To curves" arrive with
+ * two nodes in one spot.
+ */
 function simplifyGlyphOutline(path: VectorPath, fontSize: number): VectorPath {
-  const fitted = simplifyPath(path, 0.1);
-  if (fitted === path) return path;
-
-  const originalRings = [path.points, ...(path.holes ?? [])];
-  const fittedRings = [fitted.points, ...(fitted.holes ?? [])];
-  if (originalRings.length !== fittedRings.length) return path;
-
-  const sampled = (ring: AnchorPoint[]) =>
-    pathToPolygon({ points: ring, closed: true } as VectorPath, 32).map(([x, y]) => ({ x, y }));
-  const distanceToSegment = (point: Point, a: Point, b: Point) => {
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const lengthSquared = dx * dx + dy * dy;
-    const t = lengthSquared > 0
-      ? Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared))
-      : 0;
-    return Math.hypot(point.x - a.x - dx * t, point.y - a.y - dy * t);
-  };
-  const directedError = (from: Point[], to: Point[]) => {
-    if (from.length < 3 || to.length < 3) return Infinity;
-    let worst = 0;
-    for (const point of from) {
-      let nearest = Infinity;
-      for (let index = 0; index < to.length; index++) {
-        nearest = Math.min(nearest, distanceToSegment(point, to[index], to[(index + 1) % to.length]));
+  void fontSize;
+  const epsilon = 0.02;
+  const dedupeRing = (ring: AnchorPoint[]): AnchorPoint[] => {
+    const out: AnchorPoint[] = [];
+    for (const anchor of ring) {
+      const previous = out[out.length - 1];
+      if (previous && Math.hypot(previous.x - anchor.x, previous.y - anchor.y) <= epsilon) {
+        // Keep the handle that leaves the shared point, not the dead one.
+        if (anchor.handleOut) previous.handleOut = anchor.handleOut;
+        continue;
       }
-      worst = Math.max(worst, nearest);
+      out.push({ ...anchor });
     }
-    return worst;
+    if (out.length > 2) {
+      const first = out[0];
+      const last = out[out.length - 1];
+      if (Math.hypot(first.x - last.x, first.y - last.y) <= epsilon) {
+        if (last.handleOut) first.handleIn = last.handleIn ?? first.handleIn;
+        out.pop();
+      }
+    }
+    return out;
   };
 
-  // A small font-unit-scaled budget allows gentle fitting at any size, while
-  // retaining sharp terminals or corners the fitter cannot reproduce cleanly.
-  const maxError = Math.max(0.25, fontSize * 0.008);
-  for (let index = 0; index < originalRings.length; index++) {
-    const original = sampled(originalRings[index]);
-    const candidate = sampled(fittedRings[index]);
-    if (
-      Math.sign(signedArea(original)) !== Math.sign(signedArea(candidate)) ||
-      Math.max(directedError(original, candidate), directedError(candidate, original)) > maxError
-    ) {
-      return path;
-    }
-  }
-  return fitted;
+  return {
+    ...path,
+    points: dedupeRing(path.points),
+    ...(path.holes ? { holes: path.holes.map(dedupeRing) } : {}),
+  };
 }
 
 /**
