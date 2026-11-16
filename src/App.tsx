@@ -90,6 +90,7 @@ import { textInShapeLayout } from './utils/textInShape';
 import { GridSettings, StoredProject, getProject, saveProject, seedInitialProjectsIfEmpty } from './utils/projectStorage';
 import { generateProjectThumbnailSvg } from './utils/thumbnailGenerator';
 import { imagePaintFromReference, referenceImageFromFile, referenceImageFromSrc } from './utils/referenceImages';
+import { svgTextToVectorPaths } from './utils/svgImport';
 import { defaultGradient } from './utils/gradients';
 import { gradientIdFor, generateSvgCode } from './utils/svgExport';
 import { outlineStroke } from './utils/strokeOutline';
@@ -3449,6 +3450,102 @@ export default function App() {
     ]
   );
 
+  /** Hidden input behind the menu's Import row. */
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+
+  /**
+   * One entrance for everything a designer drags in: a picture becomes artwork,
+   * an SVG becomes editable geometry, a font is installed, and a project file is
+   * handed to the restorer rather than read here.
+   */
+  const importFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files?.length) return;
+      const list = Array.from(files);
+      let pictures = 0;
+      let drawings = 0;
+      let fonts = 0;
+      const unread: string[] = [];
+
+      for (const file of list) {
+        const name = file.name.toLowerCase();
+        const isSvg = file.type === 'image/svg+xml' || name.endsWith('.svg');
+        const isFont = /\.(ttf|otf|woff2?)$/.test(name) || file.type.startsWith('font/');
+        const isImage = file.type.startsWith('image/') && !isSvg;
+        const isProject = /\.(pentix|json)$/.test(name);
+
+        if (isProject) {
+          notify('Open Projects to restore a .pentix file');
+          continue;
+        }
+        if (isFont) {
+          const family = file.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim() || 'Imported';
+          await addFont(family, file);
+          fonts += 1;
+          continue;
+        }
+        if (isSvg) {
+          try {
+            const text = await file.text();
+            const imported = svgTextToVectorPaths(text, viewRef.current, {
+              name: file.name.replace(/\.svg$/i, '') || 'Imported SVG',
+            });
+            const targetLayerId = resolveWritableLayerId() ?? layersRef.current[0]?.id;
+            if (!targetLayerId) {
+              notify('Nothing to draw into');
+              continue;
+            }
+            applyLayers((prev) =>
+              prev.map((layer) =>
+                layer.id === targetLayerId
+                  ? { ...layer, paths: [...layer.paths, ...imported.paths] }
+                  : layer
+              )
+            );
+            setSelection({
+              selectedPathIds: imported.paths.map((path) => path.id),
+              selectedAnchorIndex: null,
+              selectedHandleType: null,
+            });
+            drawings += imported.paths.length;
+            if (imported.skipped.length) {
+              notify(`Imported ${imported.paths.length} shape(s); ${imported.skipped.join(', ')} needs converting first`);
+            }
+          } catch (error) {
+            notify(error instanceof Error ? error.message : 'That SVG could not be read');
+          }
+          continue;
+        }
+        if (isImage) {
+          await addImageAsArtwork(file);
+          pictures += 1;
+          continue;
+        }
+        unread.push(file.name);
+      }
+
+      const done = [
+        pictures ? `${pictures} image${pictures === 1 ? '' : 's'}` : null,
+        drawings ? `${drawings} SVG shape${drawings === 1 ? '' : 's'}` : null,
+        fonts ? `${fonts} font${fonts === 1 ? '' : 's'}` : null,
+      ].filter(Boolean);
+      if (done.length) {
+        commitHistory();
+        notify(`Imported ${done.join(' · ')}`);
+      }
+      if (unread.length) notify(`Could not import ${unread.slice(0, 2).join(', ')}`);
+    },
+    [
+      addFont,
+      addImageAsArtwork,
+      applyLayers,
+      commitHistory,
+      notify,
+      resolveWritableLayerId,
+    ]
+  );
+
+
   const saveDocument = useCallback(
     async (nameOverride?: string, options: { silent?: boolean } = {}) => {
       const name = (nameOverride ?? projectName).trim() || 'Untitled';
@@ -4231,6 +4328,19 @@ export default function App() {
       )}
 
       {/* ------------------------------ Sheets ------------------------------ */}
+      {/* One file picker behind Import: pictures, SVG, fonts and projects. */}
+      <input
+        ref={importInputRef}
+        type="file"
+        multiple
+        accept="image/*,.svg,image/svg+xml,.ttf,.otf,.woff,.woff2,.pentix,.json"
+        className="hidden"
+        onChange={(e) => {
+          void importFiles(e.target.files);
+          e.target.value = '';
+        }}
+      />
+
       <AppMenu
         open={sheet === 'menu'}
         onClose={closeSheet}
@@ -4241,6 +4351,10 @@ export default function App() {
         }}
         onOpenBackup={() => setSheet('backup')}
         storageHint={storageProtectionHint(storageProtection)}
+        onImport={() => {
+          importInputRef.current?.click();
+          closeSheet();
+        }}
         onNewProject={() => {
           void newDocument();
           closeSheet();

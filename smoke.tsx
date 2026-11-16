@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { Canvas } from './src/components/Canvas';
 import { ToolDock } from './src/components/ToolDock';
 import { ReferencesSheet } from './src/components/ReferencesSheet';
+import { nestSubpaths, parsePathDataToSubpaths, parseTransform } from './src/utils/svgImport';
 import { ToolOptions } from './src/components/ToolOptions';
 import { TextSheet } from './src/components/TextSheet';
 import { TopBar } from './src/components/TopBar';
@@ -266,6 +267,57 @@ check(
   refsHtml.includes('Add image') &&
     refsHtml.includes('Trace overlay') &&
     refsHtml.includes('fainter overlay')
+);
+
+/* Import: an .svg has to arrive as editable geometry, not a flattened picture */
+console.log('Import');
+const importedRect = parsePathDataToSubpaths('M0 0 H120 V80 H0 Z');
+check(
+  'an svg rectangle imports as four corners',
+  importedRect.length === 1 &&
+    importedRect[0].closed &&
+    importedRect[0].anchors.length === 4 &&
+    importedRect[0].anchors[2].x === 120 &&
+    importedRect[0].anchors[2].y === 80,
+  `subpaths=${importedRect.length} anchors=${importedRect[0]?.anchors.length ?? 0}`
+);
+const importedCurve = parsePathDataToSubpaths('M0 0 C20 0 40 20 40 40');
+check(
+  'an svg cubic keeps its handles on the anchors',
+  importedCurve[0]?.anchors.length === 2 &&
+    importedCurve[0].anchors[0].handleOut?.x === 20 &&
+    importedCurve[0].anchors[1].handleIn?.x === 40 &&
+    importedCurve[0].anchors[1].handleIn?.y === 20,
+  JSON.stringify(importedCurve[0]?.anchors.map((a) => [a.handleIn, a.handleOut]))
+);
+const importedArc = parsePathDataToSubpaths('M0 0 A20 20 0 0 1 40 0');
+check(
+  'an svg arc becomes curves, not a straight line',
+  importedArc[0]?.anchors.length >= 3,
+  `anchors=${importedArc[0]?.anchors.length ?? 0}`
+);
+const importedRelative = parsePathDataToSubpaths('m10 10 l30 0 l0 30 z');
+check(
+  'relative path commands land where they should',
+  importedRelative[0]?.anchors.length === 3 &&
+    importedRelative[0].anchors[1].x === 40 &&
+    importedRelative[0].anchors[2].y === 40,
+  JSON.stringify(importedRelative[0]?.anchors.map((a) => [a.x, a.y]))
+);
+const importedTransform = parseTransform('translate(10 20) scale(2)');
+check(
+  'svg transforms stack',
+  importedTransform[0] === 2 && importedTransform[4] === 10 && importedTransform[5] === 20,
+  JSON.stringify(importedTransform)
+);
+const nested = nestSubpaths([
+  ...parsePathDataToSubpaths('M0 0 H200 V200 H0 Z'),
+  ...parsePathDataToSubpaths('M60 60 H140 V140 H60 Z'),
+]);
+check(
+  'a shape inside a shape imports as a hole',
+  nested.length === 1 && nested[0].holes.length === 1,
+  `objects=${nested.length} holes=${nested[0]?.holes.length ?? 0}`
 );
 
 check(
@@ -2050,6 +2102,7 @@ const menuHtml = renderToStaticMarkup(
     onOpenPatterns={noop}
     storageHint="Not protected — keep a backup"
     onNewProject={noop}
+    onImport={noop}
     onOpenProjects={noop}
     onCleanUpFragments={noop}
     onOpenCanvas={noop}

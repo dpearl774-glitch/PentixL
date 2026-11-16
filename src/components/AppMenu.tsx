@@ -3,6 +3,7 @@ import {
   Eraser,
   FolderOpen,
   FilePlus2,
+  FileUp,
   Save,
   Database,
   Grid3x3,
@@ -41,6 +42,8 @@ interface AppMenuProps {
   storageHint: string;
   onNewProject: () => void;
   onOpenProjects: () => void;
+  /** One door for pictures, SVG, fonts and project files */
+  onImport: () => void;
   onOpenCanvas: () => void;
   canvasLabel: string;
   gridLabel: string;
@@ -154,6 +157,7 @@ export const AppMenu: React.FC<AppMenuProps> = ({
   storageHint,
   onNewProject,
   onOpenProjects,
+  onImport,
   onOpenCanvas,
   canvasLabel,
   gridLabel,
@@ -230,6 +234,12 @@ export const AppMenu: React.FC<AppMenuProps> = ({
         />
         <Row icon={<FolderOpen size={16} />} label="Projects" onClick={onOpenProjects} />
         <Row icon={<FilePlus2 size={16} />} label="New document" onClick={onNewProject} />
+        <Row
+          icon={<FileUp size={16} />}
+          label="Import"
+          hint="Image, SVG, font or project file"
+          onClick={onImport}
+        />
         <Row
           icon={<Eraser size={16} />}
           label="Clean up fragments"
