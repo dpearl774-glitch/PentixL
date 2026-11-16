@@ -1,0 +1,90 @@
+# Feedback badges
+
+Every point from the tester (Pearl Eli, AIMA Graphics concept) is broken into one
+badge that can be picked up, solved and ticked off. One badge = one shippable
+change with a testable “done”.
+
+Status legend: `OPEN` · `DOING` · `DONE` · `PARKED` (agreed not now)
+Size: **S** half a day · **M** a day · **L** several days · **XL** a project
+
+## Text
+
+| Badge | Item | Size | Status | Done when |
+|---|---|---|---|---|
+| **FB-01** | Converted outlines arrived as one object per letter, including the dot of an `i` | S | **DONE** `39353ba` | “To curves” lands the letters in one named group; one colour applies to the whole word, the group still opens for a single letter |
+| **FB-02** | No way to re-colour part of a converted word without hunting rows | S | **DONE** with FB-01 | Selecting one letter inside the group tints only that letter |
+| **FB-03** | Text editing is split between canvas editing and a strip that changes under you | M | OPEN | Editing a label opens one panel that owns font, size, tracking, line height, align and fill, and stays put while you type |
+| **FB-04** | No exact size/tracking entry for type | S | OPEN | Type size and tracking accept typed numbers; the canvas follows live |
+| **FB-05** | Converting to curves feels mandatory for effects | M | OPEN | Warp, outline and gradient all work on live text, so conversion is a choice, not a step |
+
+## Objects & layers
+
+| Badge | Item | Size | Status | Done when |
+|---|---|---|---|---|
+| **FB-06** | Cannot select more than one row in the Objects panel | M | OPEN | Tapping selects, a second tap with Shift (or a row checkbox) extends; delete, colour, hide and reorder act on all selected rows |
+| **FB-07** | Grouping exists but is not discoverable | S | OPEN | A Group action sits in the Objects panel and in More when two or more objects are selected |
+| **FB-08** | No merge for selected objects | S | OPEN | Two selected objects can be merged into one path without leaving the panel (uses the existing pathfinder Unite) |
+| **FB-09** | Panel shows no origin of an object — hard to tell what the row is | S | OPEN | Object rows show a thumbnail or shape type, so a row is identifiable before tapping it |
+
+## Transform & precision
+
+| Badge | Item | Size | Status | Done when |
+|---|---|---|---|---|
+| **FB-10** | No way to type an exact rotation angle | S | OPEN | A number field sets rotation in degrees about the selection centre; Shift-snap on the handle stays |
+| **FB-11** | No exact position/size entry | S | OPEN | X, Y, W, H fields in the strip for any selection, with the same values the nudge pad uses |
+| **FB-12** | Transform frame drifted from warped text | S | **DONE** `a613ab6` | Frame hugs the bent letters through rotate and scale |
+
+## Colour
+
+| Badge | Item | Size | Status | Done when |
+|---|---|---|---|---|
+| **FB-13** | Gradient editor is a thin line compared with PixelLab’s full panel | L | OPEN | Gradient opens a panel with a wide ramp, draggable stops, angle, type (linear/radial), and the canvas previews every drag (the `warpPreview` pattern) |
+| **FB-14** | Gradient stops cannot be added, moved or deleted with confidence | M | OPEN | Stop handles hit at thumb size, with add on tap, delete on drag-away |
+
+## Learning & predictability
+
+| Badge | Item | Size | Status | Done when |
+|---|---|---|---|---|
+| **FB-15** | A beginner cannot predict where a tool’s options will appear | L | OPEN | Each tool opens a named panel that persists until closed; the strip no longer re-arranges itself per tool |
+| **FB-16** | First-run gives no guided first mark | M | OPEN | A three-step “draw, combine, export” walkthrough that can be skipped and never returns |
+| **FB-17** | Manual exists but is not where a beginner looks | S | **DONE** `a613ab6` | Manual opens on a cover with a four-step tour, and the in-app sheet links to it |
+
+## Efficiency
+
+| Badge | Item | Size | Status | Done when |
+|---|---|---|---|---|
+| **FB-18** | “A quarter of the time in PixelLab” — no measurement | M | OPEN | Time-to-logo instrumented on three fixed tasks (one shape, one word, one export) so speed claims are measured, not felt |
+
+## From the PixelLab study (`docs/UX-PIXELLAB.md`)
+
+| Badge | Item | Size | Status | Done when |
+|---|---|---|---|---|
+| **FB-21** | A selection bar that never moves: Align · Group · Merge · More · Delete | S | OPEN | Those five actions are always in the same place for any selection; panels open around them |
+| **FB-22** | Named panels per job that stay put (Text, Fill, Gradient, Effects) | L | OPEN | Opening one does not re-arrange the others, and it remembers where it was left |
+| **FB-23** | Style part of a word without converting it (PixelLab's range colours) | L | OPEN | Selecting letters in the text editor can tint or refont just those letters while the label stays type |
+| **FB-24** | Saved text/gradient styles (“My Styles”) | M | OPEN | A styled label can be saved and applied to another label in one tap, staying editable |
+| **FB-25** | Locked and hidden objects let taps pass through | S | OPEN | A tap over a locked object reaches the object beneath it, as PixelLab does on iOS |
+| **FB-26** | Merge must stay vector, never raster | S | OPEN | Merge/Unite produces one editable path (never an image), unlike PixelLab's permanent raster merge |
+
+## Parked
+
+| Badge | Item | Why parked |
+|---|---|---|
+| **FB-19** | Copy PixelLab’s visual shell wholesale | Copying a competitor’s chrome buys familiarity but not their polish; take the panel *structure*, keep Pentix’s own look |
+| **FB-20** | Image-texture fills | Big feature, no tester evidence of need yet |
+
+## Counts
+
+- DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`)
+- OPEN, small: FB-04, FB-07, FB-08, FB-09, FB-10, FB-11, FB-21, FB-25, FB-26
+- OPEN, medium: FB-03, FB-05, FB-06, FB-14, FB-16, FB-18, FB-24
+- OPEN, large: FB-13, FB-15, FB-22, FB-23
+- PARKED: FB-19, FB-20
+
+## Order I would work them
+
+1. **FB-06** panel multi-select, then **FB-07**/**FB-08** — the tester’s daily friction, and they make the panel worth using.
+2. **FB-10**/**FB-11** exact numbers — small, and they answer “predictability”.
+3. **FB-03**/**FB-04** one text panel — stops the strip moving under the thumb while typing.
+4. **FB-13**/**FB-14** gradient behind a wide ramp with live preview.
+5. **FB-15**/**FB-16** beginner path, once the panels above exist to be predictable about.
