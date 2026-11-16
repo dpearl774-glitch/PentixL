@@ -92,12 +92,119 @@
   figure.pair img { max-width: none; }
   figcaption { margin-top: 8px; font-size: 12.5px; color: var(--mute); text-align: center; grid-column: 1 / -1; }
   footer.bottom { border-top: 1px solid var(--line); padding: 20px; text-align: center; color: var(--mute); font-size: 13px; }
+
+  /* ---- Cover, tour, and the pieces that break up the wall of bullets ---- */
+  .hero {
+    position: relative; overflow: hidden;
+    margin: 0 0 40px; padding: 34px 30px 30px;
+    border: 1px solid var(--line); border-radius: 18px;
+    background:
+      radial-gradient(circle at 12% -10%, color-mix(in srgb, var(--accent) 26%, transparent), transparent 58%),
+      radial-gradient(circle at 92% 110%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 52%),
+      var(--ink-1);
+  }
+  .hero::before {
+    content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+    background-image:
+      linear-gradient(to right, color-mix(in srgb, var(--line) 70%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in srgb, var(--line) 70%, transparent) 1px, transparent 1px);
+    background-size: 34px 34px;
+    mask-image: radial-gradient(circle at 30% 0%, #000 30%, transparent 78%);
+    -webkit-mask-image: radial-gradient(circle at 30% 0%, #000 30%, transparent 78%);
+  }
+  .hero > * { position: relative; }
+  .hero .eyebrow { margin: 0 0 10px; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); font-weight: 800; }
+  .hero h1 {
+    margin: 0 0 10px; font-size: clamp(30px, 6vw, 46px); line-height: 1.02;
+    letter-spacing: -0.035em; font-weight: 800;
+  }
+  .hero h1 em { font-style: normal; color: var(--accent); }
+  .hero .promise { max-width: 46ch; margin: 0 0 20px; font-size: 16px; color: var(--dim); }
+  .hero .stats { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0; padding: 0; list-style: none; }
+  .hero .stats li { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--mute); display: flex; align-items: center; gap: 8px; }
+  .hero .stats li::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 22px 0 0; padding: 0; list-style: none; }
+  .tiles a {
+    display: block; height: 100%; padding: 14px 15px; border-radius: 12px; color: var(--text);
+    border: 1px solid var(--line); background: color-mix(in srgb, var(--ink-2) 82%, transparent);
+    transition: transform .15s ease, border-color .15s ease;
+  }
+  .tiles a:hover { text-decoration: none; transform: translateY(-2px); border-color: var(--accent); }
+  .tiles .step { display: block; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 800; margin-bottom: 6px; }
+  .tiles .what { display: block; font-size: 14.5px; font-weight: 700; margin-bottom: 3px; }
+  .tiles .why { display: block; font-size: 12.5px; color: var(--mute); line-height: 1.45; }
+
+  .tour { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 22px 0 26px; padding: 0; list-style: none; counter-reset: tour; }
+  .tour li {
+    counter-increment: tour; position: relative; padding: 14px 16px 14px 52px;
+    border: 1px solid var(--line); border-radius: 12px; background: var(--ink-1);
+    font-size: 13.5px; color: var(--dim); margin: 0;
+  }
+  .tour li::before {
+    content: counter(tour, decimal-leading-zero); position: absolute; left: 14px; top: 13px;
+    font-variant-numeric: tabular-nums; font-weight: 800; font-size: 13px; color: var(--accent);
+  }
+  .tour li strong { display: block; color: var(--text); margin-bottom: 2px; }
+
+  .chapter { border-top: 1px solid var(--line); padding-top: 22px; }
+  .kicker {
+    display: inline-block; margin: 0 0 10px; padding: 3px 9px; border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+  .chapter h1 { margin-bottom: 14px; }
+
+  .try {
+    margin: 20px 0; padding: 14px 16px 14px 44px; position: relative;
+    border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line));
+    border-radius: 10px; background: var(--ink-1);
+  }
+  .try::before {
+    content: '›'; position: absolute; left: 15px; top: 10px; font-size: 22px; line-height: 1;
+    color: var(--accent); font-weight: 800;
+  }
+  .try h3 { margin: 0 0 4px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+  .try p { margin: 0; font-size: 14.5px; }
+
+  blockquote.pull {
+    margin: 26px 0; padding: 4px 0 4px 20px; border-left: 3px solid var(--accent);
+    font-size: clamp(18px, 3vw, 22px); line-height: 1.35; letter-spacing: -0.01em; color: var(--text);
+  }
+  blockquote.pull span { display: block; margin-top: 6px; font-size: 13px; letter-spacing: 0; color: var(--mute); }
+
+  .keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin: 4px 0 20px; padding: 0; list-style: none; }
+  .keys li { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 13px; color: var(--dim); }
+  .keys kbd, .refgrid kbd {
+    display: inline-grid; place-items: center; min-width: 26px; height: 26px; padding: 0 7px;
+    border-radius: 7px; border: 1px solid var(--line); background: var(--ink-2);
+    font: 700 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text);
+  }
+  .refgrid { width: 100%; border-collapse: collapse; margin: 8px 0 26px; font-size: 13.5px; }
+  .refgrid th, .refgrid td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  .refgrid th { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--mute); font-weight: 800; }
+  .refgrid td { color: var(--dim); }
+  .refgrid td:first-child { color: var(--text); font-weight: 600; white-space: nowrap; }
+
+  .progress { position: fixed; inset: 0 auto auto 0; height: 2px; width: 0; background: var(--accent); z-index: 20; }
+
   @media (max-width: 860px) {
     .wrap { grid-template-columns: 1fr; gap: 0; padding-top: 16px; }
-    details.toc { position: static; max-height: none; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+    details.toc { position: static; max-height: none; margin-bottom: 20px; padding-bottom: 0; border-bottom: 0; }
+    /* The list is folded on a phone, so the rule only belongs under it when open. */
+    details.toc[open] { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
     nav.toc ol { columns: 2; column-gap: 16px; }
   }
+
+  /* A two-column table cannot fit a phone, so the rows become blocks. */
+  @media (max-width: 640px) {
+    .refgrid, .refgrid tbody, .refgrid tr, .refgrid td { display: block; width: 100%; }
+    .refgrid thead { display: none; }
+    .refgrid tr { padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .refgrid td { border: 0; padding: 0; }
+    .refgrid td:first-child { font-weight: 700; margin-bottom: 3px; white-space: normal; }
+  }
   @media (max-width: 520px) {
+    .hero { padding: 26px 20px 22px; border-radius: 14px; }
+    .tour li { padding-left: 46px; }
     nav.toc ol { columns: 1; }
     header.top { padding: 10px 14px; gap: 8px; }
     header.top a.btn, header.top button.btn { font-size: 12px; padding: 6px 10px; }
@@ -115,10 +222,12 @@
   <a class="btn primary" href="./">Open Pentix</a>
 </header>
 
+<div class="progress" id="progress" aria-hidden="true"></div>
+
 <div class="wrap">
   <details class="toc" open>
     <summary>Contents</summary>
-    <nav aria-label="Contents">
+    <nav class="toc" aria-label="Contents">
       <ol>
 <li><a href="#how-to-use-this-guide"><span class="num">01</span>How to use this guide</a></li>
 <li><a href="#getting-in"><span class="num">02</span>Getting in</a></li>
@@ -142,11 +251,33 @@
     </nav>
   </details>
   <main>
+    <section class="hero">
+      <p class="eyebrow">The manual</p>
+      <h1>Draw a mark<br />with <em>two thumbs</em>.</h1>
+      <p class="promise">Pentix is a vector studio built for a phone held in two hands — a pen, a pencil, a shape builder and a pathfinder, all within reach of either thumb. This is the whole of it, in the order you will meet it.</p>
+      <ul class="stats">
+        <li>18 chapters</li>
+        <li>15 real screens</li>
+        <li>Works offline</li>
+      </ul>
+      <ul class="tiles">
+        <li><a href="#drawing-with-the-pen"><span class="step">Start here</span><span class="what">Draw something</span><span class="why">The pen, the pencil and the brush, one page.</span></a></li>
+        <li><a href="#the-shape-builder"><span class="step">The one to learn</span><span class="what">The shape builder</span><span class="why">Brush the parts you want; Pentix rebuilds the outline.</span></a></li>
+        <li><a href="#export"><span class="step">Finish</span><span class="what">Get a file out</span><span class="why">SVG for editing, PNG for sending, one colour for mono.</span></a></li>
+      </ul>
+    </section>
     <p class="lead">Everything Pentix does, in order. This page and its images are stored on your device the first time you read it, so it opens without a connection.</p>
 <section class="chapter" id="how-to-use-this-guide">
 <p class="kicker">Before you start</p>
 <h1>How to use this guide</h1>
 <p>Pentix is a vector design studio built for a phone held in two hands: a pen, a pencil, a shape builder and a pathfinder, all reachable by either thumb. This guide walks through every tool in the order you will meet them, with the real screens of the app beside the explanation.</p>
+<blockquote class="pull">Four moves, and you have made a mark.<span>Everything else in this guide is a refinement of these.</span></blockquote>
+<ol class="tour">
+  <li><strong>Set the board</strong>600 × 600 px is the square a mark gets delivered at. Start blank.</li>
+  <li><strong>Draw</strong>Pen for corners and curves, pencil for freehand. One shape is enough to begin.</li>
+  <li><strong>Combine</strong>Overlapping shapes go through the shape builder. Brush, then commit.</li>
+  <li><strong>Export</strong>SVG to keep editing, PNG to hand over. Check it in preview mode first.</li>
+</ol>
 <figure class="pair"><div><img src="manual/01-welcome.webp" alt="" loading="lazy" /></div><div><img src="manual/06-build.webp" alt="" loading="lazy" /></div><figcaption>Left: starting a document. Right: the shape builder turning two shapes into one.</figcaption></figure>
 <ul>
 <li><strong>Read it in order the first time.</strong> Chapters follow the real workflow: set up a board, draw, combine, colour, save, export.</li>
@@ -229,6 +360,7 @@
 <section class="chapter" id="the-shape-builder">
 <p class="kicker">Chapter 6</p>
 <h1>The shape builder</h1>
+<blockquote class="pull">This is the heart of Pentix.<span>If you learn one thing here, learn this.</span></blockquote>
 <p>This is the heart of Pentix. Two or more overlapping shapes on a layer are split into regions — the parts belonging to only one shape, and the parts they share. You brush the regions you want, and Pentix rebuilds the artwork as one clean outline.</p>
 <figure><img src="manual/06-build.webp" alt="Regions are outlined and hatched once you brush one. The floating pill switches between Merge, Erase and Build; the strip below repeats the controls." loading="lazy" /><figcaption>Regions are outlined and hatched once you brush one. The floating pill switches between Merge, Erase and Build; the strip below repeats the controls.</figcaption></figure>
 <h2>The three moves</h2>
@@ -247,6 +379,7 @@
 </ul>
 <figure><img src="manual/07-merge.webp" alt="After committing: one object, one outline, one fill. Nothing is doubled and no crescent is left behind." loading="lazy" /><figcaption>After committing: one object, one outline, one fill. Nothing is doubled and no crescent is left behind.</figcaption></figure>
 <h2>A worked example</h2>
+<div class="try"><h3>Try it in thirty seconds</h3><p>Circle, then a square across its right side. Open the shape builder, brush both regions, commit with Merge. Undo and brush only the shared region instead — you get the lens.</p></div>
 <p>Draw a circle, then a square overlapping its right side. Open the shape builder, brush the circle’s own region and the shared region, and commit with Merge. You now have a circle-and-square silhouette as a single path. Switch to Erase, tap the square’s free corner, and that corner is cut away cleanly.</p>
 </section>
 <section class="chapter" id="pathfinder">
@@ -295,6 +428,7 @@
 <ul>
 <li><strong>Editing.</strong> Double-tap a label with the select tool, or tap it once with the type tool.</li>
 <li><strong>To curves.</strong> Converts the glyphs into editable paths. Do this before an operation that needs geometry, such as the shape builder or a pathfinder boolean.</li>
+<li><strong>Warp.</strong> More → Warp bends a label without turning it into geometry: pick Arch, Wave, Bulge, Fisheye, Twist or Free, then Apply warp. It stays real type, so you can retype it, restyle it, move it, rotate it and scale it afterwards — the bend goes with it. To curves is only for when you want the letters as paths you can pull around by their nodes.</li>
 <li><strong>Fonts.</strong> The menu’s Fonts section loads your own typefaces and keeps them on the device between sessions.</li>
 </ul>
 </section>
@@ -354,6 +488,27 @@
 <li><strong>Hold space.</strong> Pans while held, then returns you to the tool you were on.</li>
 </ul>
 <h2>On a keyboard</h2>
+<ul class="keys">
+  <li><kbd>V</kbd> select</li>
+  <li><kbd>A</kbd> direct selection</li>
+  <li><kbd>P</kbd> pen</li>
+  <li><kbd>N</kbd> pencil</li>
+  <li><kbd>B</kbd> brush</li>
+  <li><kbd>M</kbd> shape builder</li>
+  <li><kbd>U</kbd> shapes</li>
+  <li><kbd>T</kbd> text</li>
+  <li><kbd>H</kbd> pan tool</li>
+  <li><kbd>space</kbd> hold to pan</li>
+  <li><kbd>⌘Z</kbd> undo</li>
+  <li><kbd>⇧⌘Z</kbd> redo</li>
+  <li><kbd>⌘D</kbd> duplicate</li>
+  <li><kbd>⌘S</kbd> save</li>
+  <li><kbd>⌘C</kbd> / <kbd>⌘V</kbd> copy, paste</li>
+  <li><kbd>⌫</kbd> delete</li>
+  <li><kbd>esc</kbd> cancel, or leave preview</li>
+  <li><kbd>alt</kbd> + <kbd>↑</kbd> restack the selection</li>
+</ul>
+<aside class="callout"><h3>Good to know</h3><p>Hold SHIFT while you rotate to snap the angle to 15° steps, and while you drag a shape to keep it square or circular.</p></aside>
 </section>
 <section class="chapter" id="getting-clean-results">
 <p class="kicker">Chapter 16</p>
@@ -380,7 +535,25 @@
 <p class="kicker">Chapter 17</p>
 <h1>Reference card</h1>
 <p>The whole app on one page. Keep it open while you work.</p>
-</section>
+<table class="refgrid">
+  <thead><tr><th>To do this</th><th>Reach for</th></tr></thead>
+  <tbody>
+    <tr><td>Draw a precise corner or curve</td><td>Pen — tap for a corner, drag for a curve, tap the first node to close</td></tr>
+    <tr><td>Draw a loose shape quickly</td><td>Pencil — smoothness in the strip changes how closely it follows your finger</td></tr>
+    <tr><td>Place a square, circle, star, polygon</td><td>Shapes on the dock; SHIFT while dragging keeps it even</td></tr>
+    <tr><td>Join two shapes into one outline</td><td>Build — brush the regions, then commit with Merge</td></tr>
+    <tr><td>Cut a shape out of another</td><td>Build in Erase mode, or Pathfinder → Minus</td></tr>
+    <tr><td>Combine a whole selection</td><td>Select both, then More → Unite / Minus / Intersect / Exclude</td></tr>
+    <tr><td>Edit the nodes of anything</td><td>Double-tap it with Select, or hold CTRL</td></tr>
+    <tr><td>Make text editable geometry</td><td>Select the label → To curves</td></tr>
+    <tr><td>Bend a label</td><td>Select it → More → Warp, pick a style, Apply warp. It stays real type</td></tr>
+    <tr><td>Tidy a hand-drawn path</td><td>Select it → More → Simplify</td></tr>
+    <tr><td>Recolour something</td><td>Fill and stroke swatches in the strip; Save this colour keeps it</td></tr>
+    <tr><td>Hide the app and just look</td><td>Eye in the top bar — preview mode</td></tr>
+    <tr><td>Keep a copy off the device</td><td>Menu → Backup &amp; restore</td></tr>
+    <tr><td>Hand the mark to someone</td><td>Share — SVG to edit, PNG to send</td></tr>
+  </tbody>
+</table>
 
   </main>
 </div>

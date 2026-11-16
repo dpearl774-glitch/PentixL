@@ -10,7 +10,11 @@ import {
   textMatrixFor,
   textWorldBox,
 } from './textGeometry';
-import { WarpBox, textWarpBox, textWarpKind, textWarpPoint ,
+import {
+  WarpBox,
+  textWarpBox,
+  textWarpKind,
+  textWarpPoint,
   textWarpLocalMatrix,
 } from './warpMath';
 
@@ -34,6 +38,12 @@ export interface TextGlyphPlacement {
   /** Unwarped baseline position, where the glyph's own transform originates */
   anchorX: number;
   anchorY: number;
+  /** Room the letter takes along the baseline, in the label's own units */
+  advance: number;
+  /** Ink reach above the baseline, for measuring the bent label */
+  ascent: number;
+  /** Ink reach below the baseline */
+  descent: number;
   /** Glyph space (0, 0 = the letter's own anchor) to artboard space */
   matrix: TextGlyphMatrix;
   /** The same matrix as a ready-to-use SVG transform */
@@ -182,63 +192,68 @@ export function warpTextPlacements(path: VectorPath): TextGlyphPlacement[] | nul
   if (!path.text || !path.warp || path.textPath) return null;
   const spec = path.warp;
   if (!spec.amount && !(spec.sway ?? 0)) return null;
-  const box = textWorldBox(path);
-  if (!box) return null;
 
   const local = textMatrixFor(path);
   const origin = path.points[0] ?? { x: 0, y: 0 };
   const lineHeight = textLineHeight(path.fontSize);
   const kind = textWarpKind(spec);
   const warped = { ...spec, kind };
-  const width = Math.max(1, textWorldBox(path)?.width ?? 1);
+  const fontSize = Math.max(1, path.fontSize || 48);
+  const metrics = measureTextMetrics(path);
+  /**
+   * Every glyph is laid out in the label's own coordinates — x along the
+   * baseline, y down from it — and the label's matrix is applied last.
+   *
+   * The envelope used to be measured in artboard space, so a rotated label was
+   * re-bent along an axis-aligned box while its letters turned with the label.
+   * The two disagreed by up to a letter and a half, which is why rotating a
+   * warped label scattered it. Warping first and rotating afterwards keeps the
+   * bend glued to the type through rotate, scale and flip alike.
+   */
+  const toArtboard = multiply(translation(origin.x, origin.y), local);
+  const width = Math.max(1, metrics.width);
   const placements: TextGlyphPlacement[] = [];
 
   textLines(path.text).forEach((line, row) => {
     if (!line) return;
     const offsets = measureLineOffsets(line, path);
-    const baseline = applyTextMatrix(local, { x: 0, y: row * lineHeight });
-    const start = { x: baseline.x + origin.x, y: baseline.y + origin.y };
+    const baselineY = row * lineHeight;
     // A bend pivots on the ends of its box. A whole letter of margin each side
     // keeps the first and last letters off the steepest part of the curve, so
     // they turn and lift with the word instead of peeling away from it.
-    const pad = Math.max(0, (offsets[1] ?? path.fontSize ?? 0) - (offsets[0] ?? 0));
-    const field = textWarpBox(box, warped, start.y, pad);
+    const pad = Math.max(0, (offsets[1] ?? fontSize) - (offsets[0] ?? 0));
+    const lineWidth = Math.max(1, (offsets[offsets.length - 1] ?? 0) + fontSize * 0.6);
+    const localBox: WarpBox = {
+      minX: 0,
+      minY: baselineY - metrics.ascent,
+      width: lineWidth,
+      height: Math.max(1, metrics.ascent + metrics.descent),
+    };
+    const field = textWarpBox(localBox, warped, baselineY, pad);
     // One glyph at a time on a circle: the string's own length decides where
     // the letters land along the circumference.
-    const lineWidth = Math.max(
-      1,
-      (offsets[offsets.length - 1] ?? 0) + (path.fontSize ?? 48) * 0.6
-    );
     const circle =
-      kind === 'arch' || kind === 'arc' ? bendCircle(lineWidth, warped, kind, start.x, start.y) : null;
+      kind === 'arch' || kind === 'arc' ? bendCircle(lineWidth, warped, kind, 0, baselineY) : null;
 
     for (let index = 0; index < line.length; index += 1) {
       const char = line[index];
       if (!char.trim()) continue;
       const offset = offsets[index] ?? 0;
-      // Glyph space → its place on the straight line → the label's matrix → artboard.
-      const toArtboard = multiply(
-        translation(origin.x, origin.y),
-        multiply(local, translation(offset, row * lineHeight))
-      );
-      const anchor = applyTextMatrix(local, { x: offset, y: row * lineHeight });
-      const anchorX = anchor.x + origin.x;
-      const anchorY = anchor.y + origin.y;
-
-      // Map the letter's own point through the envelope. The old code stepped
-      // along the bent baseline by arc length, and because a bend is longer than
-      // a straight line that stretched the gaps between letters — the reason
-      // every style except arch and arc read as broken spacing.
-      const advance = (offsets[index + 1] ?? offset + (path.fontSize ?? 48) * 0.6) - offset;
+      const advance = (offsets[index + 1] ?? offset + fontSize * 0.6) - offset;
+      const anchorPointLocal = {
+        x: toArtboard[0] * offset + toArtboard[2] * baselineY + toArtboard[4],
+        y: toArtboard[1] * offset + toArtboard[3] * baselineY + toArtboard[5],
+      };
+      const anchorX = offset;
+      const anchorY = baselineY;
+      const along = offset + advance / 2 - (offsets[0] ?? 0);
       // A bend turns each letter about the middle of its own footprint. Turning
       // them about their left baseline point swings the ink sideways, which is
       // what tore the end letters away from the rest.
-      const middle = applyTextMatrix(local, { x: offset + advance / 2, y: row * lineHeight });
-      const pivotX = circle ? middle.x + origin.x : anchorX;
-      const pivotY = circle ? middle.y + origin.y : anchorY;
+      const pivotX = circle ? offset + advance / 2 : anchorX;
+      const pivotY = anchorY;
       const placed = circle
         ? (() => {
-            const along = offset + advance / 2 - (offsets[0] ?? 0);
             const theta = (along - lineWidth / 2) / circle.radius;
             return {
               x: circle.centreX + circle.radius * Math.sin(theta),
@@ -255,34 +270,54 @@ export function warpTextPlacements(path: VectorPath): TextGlyphPlacement[] | nul
           : null;
       // On a circle the tangent is simply the angle the glyph sits at.
       const circleAngle = circle
-        ? circle.dir * ((offset + advance / 2 - (offsets[0] ?? 0) - lineWidth / 2) / circle.radius)
+        ? circle.dir * ((along - lineWidth / 2) / circle.radius)
         : null;
       const angle = twistTurn ?? circleAngle ?? Math.atan2(frame.b, frame.a);
       // Letters must shrink with the gaps they are being squeezed into, or a
       // tightening style overlaps them. A uniform scale does that without the
       // shear that used to fold glyphs into each other.
-      const along = Math.hypot(frame.a, frame.b) || 1;
+      const stretch = Math.hypot(frame.a, frame.b) || 1;
       const across = Math.abs(frame.d) || 1;
       // A bend is a rigid turn: the letters keep their size along the curve.
       // Only the squeezing styles change it, or an arch would shrink whichever
       // letter happened to land nearest the pivot.
       const uniform =
-        circle ? 1 : Math.max(0.7, Math.min(1.45, Math.sqrt(along * across)));
+        circle ? 1 : Math.max(0.7, Math.min(1.45, Math.sqrt(stretch * across)));
       // Perspective has no top or bottom to taper on a single line, so each
       // letter leans instead: a light italic shear that reads as depth without
       // fanning the word apart the way a positional fan did.
       const lean =
         kind === 'perspective' ? Math.max(-0.45, Math.min(0.45, (spec.amount ?? 0) / 220)) : 0;
       const shaped = multiply(lean ? skewX(lean) : rotation(angle), glyphScale(uniform));
-      const warp = multiply(translation(placed.x, placed.y), multiply(shaped, translation(-pivotX, -pivotY)));
-      const matrix = multiply(warp, toArtboard);
+      // Glyph space → the letter's own place on the line → its bent place, turned
+      // about that place → the label's own matrix → artboard. The label matrix
+      // goes on last so the bend turns with the type.
+      const bent = multiply(
+        translation(placed.x, placed.y),
+        multiply(shaped, translation(-pivotX, -pivotY))
+      );
+      const matrix = multiply(
+        toArtboard,
+        multiply(bent, translation(offset, baselineY))
+      );
+
+      // Where the letter's baseline point lands on the artboard. The glyph's
+      // own origin sits behind that point when the letter is turned, so it is
+      // measured from the bent place rather than read off the matrix.
+      const anchorPoint = {
+        x: toArtboard[0] * placed.x + toArtboard[2] * placed.y + toArtboard[4],
+        y: toArtboard[1] * placed.x + toArtboard[3] * placed.y + toArtboard[5],
+      };
 
       placements.push({
         char,
-        x: placed.x,
-        y: placed.y,
-        anchorX,
-        anchorY,
+        x: anchorPoint.x,
+        y: anchorPoint.y,
+        anchorX: anchorPointLocal.x,
+        anchorY: anchorPointLocal.y,
+        advance,
+        ascent: metrics.ascent,
+        descent: metrics.descent,
         matrix,
         transform: matrixCss(matrix),
       });
@@ -310,21 +345,34 @@ export function warpTextGlyphs(path: VectorPath): WarpGlyph[] | null {
 export function textWarpBounds(path: VectorPath): TextWorldBox | null {
   const placements = warpTextPlacements(path);
   if (!placements) return textWorldBox(path);
-  const size = Math.max(1, path.fontSize || 48);
+  // Measure the letters that are actually drawn: each one's metric box carried
+  // through its own matrix. The old box was the straight label nudged by fixed
+  // fractions of the font size, so it sat above an arch, lagged behind a
+  // rotation and jumped whenever the label was scaled.
+  const corners = (glyph: TextGlyphPlacement) => {
+    const [a, b, c, d, e, f] = glyph.matrix;
+    return [
+      [0, -glyph.ascent],
+      [glyph.advance, -glyph.ascent],
+      [glyph.advance, glyph.descent],
+      [0, glyph.descent],
+    ].map(([x, y]) => ({ x: a * x + c * y + e, y: b * x + d * y + f }));
+  };
+
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
   for (const glyph of placements) {
-    minX = Math.min(minX, glyph.x);
-    minY = Math.min(minY, glyph.y);
-    maxX = Math.max(maxX, glyph.x);
-    maxY = Math.max(maxY, glyph.y);
+    for (const point of corners(glyph)) {
+      if (point.x < minX) minX = point.x;
+      if (point.x > maxX) maxX = point.x;
+      if (point.y < minY) minY = point.y;
+      if (point.y > maxY) maxY = point.y;
+    }
   }
-  minX -= size * 0.6;
-  maxX += size * 0.8;
-  minY -= size * 1.1;
-  maxY += size * 0.5;
+  if (!Number.isFinite(minX)) return textWorldBox(path);
+
   const width = Math.max(2, maxX - minX);
   const height = Math.max(2, maxY - minY);
   return {

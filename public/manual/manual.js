@@ -28,6 +28,28 @@
       if (wide.addEventListener) wide.addEventListener('change', syncToc);
     }
 
+    // A hairline of progress so a long chapter never feels like no progress.
+    var bar = document.getElementById('progress');
+    if (bar) {
+      var paint = function () {
+        var doc = document.documentElement;
+        var travel = (doc.scrollHeight || 0) - window.innerHeight;
+        var done = travel > 0 ? (window.scrollY || doc.scrollTop || 0) / travel : 0;
+        bar.style.width = Math.max(0, Math.min(1, done)) * 100 + '%';
+      };
+      paint();
+      window.addEventListener('scroll', paint, { passive: true });
+      window.addEventListener('resize', paint);
+    }
+
+    // The cover links land mid-page; keep the chapter heading clear of the bar.
+    document.querySelectorAll('a[href^="#"]').forEach(function (link) {
+      link.addEventListener('click', function () {
+        var target = document.querySelector(link.getAttribute('href'));
+        if (target) setTimeout(function () { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 0);
+      });
+    });
+
     var button = document.getElementById('theme');
     if (button) button.addEventListener('click', function () {
       apply(root.dataset.theme === 'light' ? 'dark' : 'light');

@@ -65,6 +65,7 @@ import { generateProjectThumbnailSvg } from './src/utils/thumbnailGenerator';
 import {
   computePathsBoundingBox,
   copyPathsWithNewIds,
+  rotatePaths,
   scalePaths,
   translatePaths,
 } from './src/utils/transform';
@@ -2843,9 +2844,50 @@ check(
   })
 );
 check('a label without a warp renders as plain text', warpTextGlyphs({ ...warpedLabel, warp: undefined }) === null);
+// The frame has to follow the bent letters, not a straight box grown by
+// fractions of the font size: it must hold every letter and spill past the
+// straight box in the direction the bend actually goes.
 check(
-  'warped bounds reach past the straight box',
-  (textWarpBounds(warpedLabel)?.minY ?? 0) < (textWorldBox(warpedLabel)?.minY ?? 0)
+  'warped bounds follow the bent letters',
+  (() => {
+    const box = textWarpBounds(warpedLabel);
+    const straight = textWorldBox(warpedLabel);
+    if (!box || !straight) return false;
+    const holdsEveryLetter = warpPlacements.every(
+      (glyph) =>
+        glyph.x >= box.minX - 0.01 &&
+        glyph.x <= box.maxX + 0.01 &&
+        glyph.y >= box.minY - 0.01 &&
+        glyph.y <= box.maxY + 0.01
+    );
+    const spills = box.maxY > straight.maxY + 1 || box.minY < straight.minY - 1;
+    return holdsEveryLetter && spills;
+  })(),
+  JSON.stringify(textWarpBounds(warpedLabel))
+);
+
+// A warped label is one object, so rotating it must turn the whole bent word.
+// The bend used to be measured in artboard space while the letters turned with
+// the label, and the two disagreed by up to a letter and a half.
+const warpCentre = { x: 120, y: 320 };
+const warpAngle = Math.PI / 6;
+const rotatedWarp = warpTextPlacements(
+  rotatePaths([warpedLabel], warpCentre, warpAngle)[0]
+) ?? [];
+const rotateAbout = (p: { x: number; y: number }) => ({
+  x: warpCentre.x + (p.x - warpCentre.x) * Math.cos(warpAngle) - (p.y - warpCentre.y) * Math.sin(warpAngle),
+  y: warpCentre.y + (p.x - warpCentre.x) * Math.sin(warpAngle) + (p.y - warpCentre.y) * Math.cos(warpAngle),
+});
+const placementDrift = warpPlacements.reduce((worst, glyph, index) => {
+  const moved = rotatedWarp[index];
+  if (!moved) return Infinity;
+  const want = rotateAbout({ x: glyph.x, y: glyph.y });
+  return Math.max(worst, Math.hypot(moved.x - want.x, moved.y - want.y));
+}, 0);
+check(
+  'rotating a warped label turns the whole word',
+  rotatedWarp.length === warpPlacements.length && placementDrift < 0.5,
+  `drift=${placementDrift.toFixed(2)}`
 );
 
 const spanOf = (placements: { x: number }[]) =>
