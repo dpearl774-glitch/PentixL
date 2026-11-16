@@ -72,6 +72,7 @@ import {
   copyPathsWithNewIds,
   flipPaths,
   translatePaths,
+  warpTextOutlinePaths,
 } from './utils/transform';
 import { sanitizeClipReferences, withClipSources } from './utils/clipping';
 import { applyShapeWarp, clearShapeWarp, WarpSpec, warpPathsInBox } from './utils/warp';
@@ -2015,6 +2016,31 @@ export default function App() {
       // A label on a path, or wrapped in a shape, already knows its layout;
       // baking it as a straight line would drop that geometry.
       const laidOut = outlineLayoutText(textPath, (id) => allPaths.find((p) => p.id === id) ?? null);
+      if (!laidOut) {
+        // A warped label is drawn one glyph at a time, so its outline has to be
+        // carried by those very matrices — bending the finished straight word
+        // again put the bend somewhere between the two warps.
+        const warped = warpTextOutlinePaths(textPath, (char) =>
+          // Glyph space: no origin, no matrix, no tracking — the letter's own
+          // placement matrix is what puts it where it belongs.
+          expandTextToVectorPaths(char, {
+            originX: 0,
+            originY: 0,
+            fontSize: textPath.fontSize || 64,
+            fontFamily: textPath.fontFamily || 'Plus Jakarta Sans, sans-serif',
+            fontWeight: textPath.fontWeight || 'bold',
+            letterSpacing: 0,
+            fillColor: textPath.fill || '#4c8dff',
+            strokeColor: textPath.stroke !== 'none' ? textPath.stroke : 'none',
+            strokeWidth: textPath.strokeWidth || 0,
+            matrix: [1, 0, 0, 1, 0, 0],
+          })
+        );
+        if (warped) {
+          generated.push(...warped);
+          continue;
+        }
+      }
       const outlines = laidOut ?? expandTextToVectorPaths(textPath.text!, {
           originX: origin.x,
           originY: origin.y,
@@ -2027,9 +2053,7 @@ export default function App() {
           strokeWidth: textPath.strokeWidth || 0,
           matrix: textPath.textMatrix,
         });
-      // Curves are the one place a live warp has to become real geometry.
-      const box = textWorldBox(textPath);
-      generated.push(...(textPath.warp && box ? warpPathsInBox(outlines, box, textPath.warp) : outlines));
+      generated.push(...outlines);
     }
     if (!generated.length) {
       notify('That text could not be converted');

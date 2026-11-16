@@ -68,6 +68,7 @@ import {
   rotatePaths,
   scalePaths,
   translatePaths,
+  warpTextOutlinePaths,
 } from './src/utils/transform';
 import { alignPaths, distributePaths } from './src/utils/align';
 import {
@@ -2884,6 +2885,47 @@ const placementDrift = warpPlacements.reduce((worst, glyph, index) => {
   const want = rotateAbout({ x: glyph.x, y: glyph.y });
   return Math.max(worst, Math.hypot(moved.x - want.x, moved.y - want.y));
 }, 0);
+// "To curves" on a warped label has to arrive where the letters were drawn.
+// Bending the finished straight word with the shape warp field a second time
+// put the outline between the two warps, so the type appeared to slide.
+const squareGlyph: VectorPath = {
+  ...warpedLabel,
+  id: 'glyph',
+  name: 'glyph',
+  text: undefined,
+  warp: undefined,
+  points: [
+    { id: 'g0', type: 'corner', x: 0, y: 0 },
+    { id: 'g1', type: 'corner', x: 36, y: 0 },
+    { id: 'g2', type: 'corner', x: 36, y: -48 },
+    { id: 'g3', type: 'corner', x: 0, y: -48 },
+  ],
+  closed: true,
+};
+const warpedOutlines = warpTextOutlinePaths(warpedLabel, () => [squareGlyph]) ?? [];
+const centroidOf = (path: VectorPath) => ({
+  x: path.points.reduce((sum, p) => sum + p.x, 0) / Math.max(1, path.points.length),
+  y: path.points.reduce((sum, p) => sum + p.y, 0) / Math.max(1, path.points.length),
+});
+const outlineDrift = warpPlacements.reduce((worst, placement, index) => {
+  const drawn = warpedOutlines[index];
+  if (!drawn) return Infinity;
+  const [a, b, c, d, e, f] = placement.matrix;
+  const local = centroidOf(squareGlyph);
+  const want = { x: a * local.x + c * local.y + e, y: b * local.x + d * local.y + f };
+  const got = centroidOf(drawn);
+  return Math.max(worst, Math.hypot(got.x - want.x, got.y - want.y));
+}, 0);
+check(
+  'outlining a warped label keeps every letter where it was drawn',
+  warpedOutlines.length === warpPlacements.length && outlineDrift < 0.5,
+  `paths=${warpedOutlines.length} drift=${outlineDrift.toFixed(2)}`
+);
+check(
+  'a straight label has no warp outlines to make',
+  warpTextOutlinePaths({ ...warpedLabel, warp: undefined }, () => [squareGlyph]) === null
+);
+
 check(
   'rotating a warped label turns the whole word',
   rotatedWarp.length === warpPlacements.length && placementDrift < 0.5,

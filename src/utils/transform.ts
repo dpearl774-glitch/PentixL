@@ -6,7 +6,7 @@ import {
   scaleTextMatrix,
   textWorldBox,
 } from './textGeometry';
-import { textWarpBounds } from './textWarp';
+import { textWarpBounds, warpTextPlacements } from './textWarp';
 
 export interface BoundingBox {
   minX: number;
@@ -149,6 +149,80 @@ export function computePathsBoundingBox(paths: VectorPath[]): BoundingBox | null
     centerX: minX + width / 2,
     centerY: minY + height / 2,
   };
+}
+
+/**
+ * Carries paths through an affine matrix. Warped type is drawn one glyph at a
+ * time, each through its own matrix; making the outline real means applying
+ * that same matrix instead of re-bending the finished word with a second,
+ * different warp field.
+ */
+export function mapPathsThroughMatrix(
+  paths: VectorPath[],
+  matrix: readonly number[]
+): VectorPath[] {
+  const [a, b, c, d, e, f] = matrix;
+  const map = (pt: AnchorPoint): AnchorPoint => ({
+    ...pt,
+    x: a * pt.x + c * pt.y + e,
+    y: b * pt.x + d * pt.y + f,
+    handleIn: pt.handleIn
+      ? {
+          x: a * pt.handleIn.x + c * pt.handleIn.y + e,
+          y: b * pt.handleIn.x + d * pt.handleIn.y + f,
+        }
+      : undefined,
+    handleOut: pt.handleOut
+      ? {
+          x: a * pt.handleOut.x + c * pt.handleOut.y + e,
+          y: b * pt.handleOut.x + d * pt.handleOut.y + f,
+        }
+      : undefined,
+  });
+
+  return paths.map((path) => ({
+    ...path,
+    points: path.points.map(map),
+    ...(path.holes ? { holes: path.holes.map((hole) => hole.map(map)) } : {}),
+    // The outline is geometry now, so it must not remember a pre-transform
+    // source: the next warp or corner edit would move it back where it started.
+    cornerSource: undefined,
+    warpSource: undefined,
+    text: undefined,
+    textMatrix: undefined,
+    textPath: undefined,
+  }));
+}
+
+/**
+ * Turns a warped label's letters into real outlines, each carried by the very
+ * matrix the screen drew it with.
+ *
+ * Bending the finished straight word a second time with the shape warp field
+ * put the outline somewhere between the two warps, so "To curves" moved the
+ * type. `outlineFor` supplies one glyph's outline in its own glyph space; this
+ * puts every letter where it was drawn, turned the way it was turned.
+ */
+export function warpTextOutlinePaths(
+  path: VectorPath,
+  outlineFor: (char: string) => VectorPath[]
+): VectorPath[] | null {
+  const placements = warpTextPlacements(path);
+  if (!placements) return null;
+  const glyphs = new Map<string, VectorPath[]>();
+  const outlines: VectorPath[] = [];
+  placements.forEach((placement, index) => {
+    let base = glyphs.get(placement.char);
+    if (!base) {
+      base = outlineFor(placement.char);
+      glyphs.set(placement.char, base);
+    }
+    if (!base.length) return;
+    // Fresh identities per letter: a repeated letter hands back the same path.
+    const own = copyPathsWithNewIds(base, 0, 0, `${path.id}-g${index}`);
+    outlines.push(...mapPathsThroughMatrix(own, placement.matrix));
+  });
+  return outlines.length ? outlines : null;
 }
 
 /**
