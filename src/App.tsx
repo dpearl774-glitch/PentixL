@@ -1364,10 +1364,54 @@ export default function App() {
     notify('Clipping mask released');
   }, [applyLayers, notify, selectedPaths, selection.selectedPathIds]);
 
+  /**
+   * Replaces paths, optionally keeping the replacements together as a group.
+   *
+   * Outlining type used to drop one loose object per letter into the layer, so
+   * the Objects panel showed W, a, r, p, e, d — and the dot of an i — as six
+   * things to select and recolour one by one. A converted label is still one
+   * word to the person drawing it, so it arrives as a group: one row to colour,
+   * move or delete, and it still opens up for the letter that needs a nudge.
+   */
   const replacePaths = useCallback(
-    (removeIds: string[], newPaths: VectorPath[]) => {
+    (removeIds: string[], newPaths: VectorPath[], groupName?: string) => {
       const targetLayerId = resolveWritableLayerId();
       if (!targetLayerId) return;
+      if (groupName && newPaths.length > 1) {
+        applyLayers((prev) => {
+          const stripped = prev.map((layer) => ({
+            ...layer,
+            paths: layer.paths.filter((path) => !removeIds.includes(path.id)),
+          }));
+          // The group takes the stacking slot of the frontmost path it replaces,
+          // so outlining never changes what covers what.
+          let insertAt = stripped.length - 1;
+          for (let index = prev.length - 1; index >= 0; index -= 1) {
+            if (prev[index].paths.some((path) => removeIds.includes(path.id))) {
+              insertAt = index;
+              break;
+            }
+          }
+          const group: Layer = {
+            id: `group-${Date.now()}`,
+            name: groupName,
+            visible: true,
+            locked: false,
+            opacity: 1,
+            paths: newPaths,
+            isGroup: true,
+          };
+          const next = [...stripped];
+          next.splice(Math.max(0, Math.min(insertAt, next.length)), 0, group);
+          return next;
+        });
+        setSelection({
+          selectedPathIds: newPaths.map((p) => p.id),
+          selectedAnchorIndex: null,
+          selectedHandleType: null,
+        });
+        return;
+      }
       applyLayers((prev) =>
         prev.map((l) => {
           const preserved = l.paths.filter((p) => !removeIds.includes(p.id));
@@ -2059,7 +2103,15 @@ export default function App() {
       notify('That text could not be converted');
       return;
     }
-    replacePaths(removeIds, generated);
+    // One word stays one thing in the Objects panel: the letters arrive grouped,
+    // so the whole label can be coloured at once and the i-dot is not its own
+    // row to hunt down.
+    const labelName = texts.length === 1 ? texts[0].text?.trim() ?? '' : '';
+    const groupName =
+      labelName.length > 0
+        ? `“${labelName.length > 22 ? `${labelName.slice(0, 21)}…` : labelName}”`
+        : `Outlines (${texts.length})`;
+    replacePaths(removeIds, generated, groupName);
     const traced = texts.filter(
       (path) =>
         textOutlineSource({
