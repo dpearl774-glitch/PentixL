@@ -1974,27 +1974,34 @@ export default function App() {
 
   const saveTextStyle = useCallback(
     (data: TextSheetData, name: string) => {
+      // The panel's gradient covers both cases: a new label wearing a saved
+      // gradient, and an existing one that already had it.
+      const gradient = data.fillGradient ?? textEditPath?.fillGradient;
       const style: SavedTextStyle = {
         id: `style-${Date.now()}`,
-        name,
+        name: gradient ? `${name} · gradient` : name,
         fontFamily: data.fontFamily,
         fontSize: data.fontSize,
         letterSpacing: data.letterSpacing,
         lineHeight: data.lineHeight,
         textAlign: data.textAlign,
         fill: data.fillColor,
-        ...(textEditPath?.fillGradient ? { fillGradient: textEditPath.fillGradient } : {}),
+        ...(gradient ? { fillGradient: gradient } : {}),
       };
+      const styleName = style.name;
       // The same type twice is one style, not two chips with the same name.
+      // Paint counts: a gradient is a different style from the flat colour
+      // underneath it, even when the font and size match.
       const same = (other: SavedTextStyle) =>
         other.fontFamily === style.fontFamily &&
         other.fontSize === style.fontSize &&
         other.letterSpacing === style.letterSpacing &&
         other.lineHeight === style.lineHeight &&
         other.textAlign === style.textAlign &&
-        other.fill === style.fill;
+        other.fill === style.fill &&
+        JSON.stringify(other.fillGradient ?? null) === JSON.stringify(style.fillGradient ?? null);
       setSavedTextStyles((prev) => [style, ...prev.filter((s) => !same(s))].slice(0, 12));
-      notify(`Style “${name}” saved`);
+      notify(`Style “${styleName}” saved`);
     },
     [notify, textEditPath]
   );
@@ -2009,16 +2016,13 @@ export default function App() {
         lineHeight: style.lineHeight,
         textAlign: style.textAlign,
         fill: style.fill,
-        ...(style.fillGradient ? { fillGradient: style.fillGradient } : {}),
+        // Always written: a flat style on a gradient label has to clear the old
+        // gradient, or the fill it is carrying cannot be seen.
+        fillGradient: style.fillGradient,
       });
-      setSelectedFontFamily(style.fontFamily);
     },
     [patchSelection]
   );
-
-  const deleteTextStyle = useCallback((id: string) => {
-    setSavedTextStyles((prev) => prev.filter((style) => style.id !== id));
-  }, []);
 
   const saveText = useCallback(
     (data: TextSheetData) => {
@@ -2043,6 +2047,7 @@ export default function App() {
                     lineHeight: data.lineHeight,
                     textAlign: data.textAlign,
                     fill: data.fillColor,
+                    fillGradient: data.fillGradient,
                     name: `Text “${data.text.slice(0, 14)}”`,
                   }
                 : p
@@ -2104,6 +2109,7 @@ export default function App() {
         letterSpacing: data.letterSpacing,
         lineHeight: data.lineHeight,
         textAlign: data.textAlign,
+        fillGradient: data.fillGradient,
         ...(host && hostStart
           ? { textPath: { pathId: host.id, offset: 0 }, textMatrix: [1, 0, 0, 1, 0, 0] as [number, number, number, number, number, number] }
           : {}),
@@ -5082,6 +5088,7 @@ export default function App() {
         initialLineHeight={textEditPath?.lineHeight ?? 1.2}
         initialTextAlign={textEditPath?.textAlign ?? 'left'}
         initialFillColor={textEditPath?.fill ?? fillColor}
+        initialFillGradient={textEditPath?.fillGradient}
         customFonts={customFonts}
         recentFonts={recentFonts}
         editingPathId={textEditPath?.id ?? null}
@@ -5095,7 +5102,9 @@ export default function App() {
         savedStyles={savedTextStyles}
         onSaveStyle={saveTextStyle}
         onApplyStyle={applyTextStyle}
-        onDeleteStyle={deleteTextStyle}
+        onDeleteStyle={(id) =>
+          setSavedTextStyles((prev) => prev.filter((style) => style.id !== id))
+        }
       />
 
       <TraceSheet

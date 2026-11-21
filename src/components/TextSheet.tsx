@@ -1,7 +1,7 @@
 import { RangeInput } from './ui/primitives';
 import React, { useEffect, useState } from 'react';
 import { AlignCenter, AlignLeft, AlignRight, Check, Plus, Type as TypeIcon, X } from 'lucide-react';
-import type { SavedTextStyle } from '../types/vector';
+import type { GradientDef, SavedTextStyle } from '../types/vector';
 import { Button, Chip, NumberField, SectionLabel, Sheet } from './ui/primitives';
 
 export const SYSTEM_FONTS = [
@@ -23,6 +23,8 @@ export interface TextSheetData {
   lineHeight: number;
   textAlign: TextAlign;
   fillColor: string;
+  /** A gradient paint rides along with a style, so a new label gets it too */
+  fillGradient?: GradientDef;
   editingPathId: string | null;
 }
 
@@ -36,6 +38,7 @@ interface TextSheetProps {
   initialLineHeight: number;
   initialTextAlign: TextAlign;
   initialFillColor: string;
+  initialFillGradient?: GradientDef;
   customFonts: string[];
   /** Most recently used first, so a big library stays out of the way */
   recentFonts: string[];
@@ -64,6 +67,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
   initialLineHeight,
   initialTextAlign,
   initialFillColor,
+  initialFillGradient,
   customFonts,
   recentFonts,
   editingPathId,
@@ -81,6 +85,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
   const [lineHeight, setLineHeight] = useState(initialLineHeight);
   const [textAlign, setTextAlign] = useState<TextAlign>(initialTextAlign);
   const [fillColor, setFillColor] = useState(initialFillColor);
+  const [fillGradient, setFillGradient] = useState<GradientDef | undefined>(initialFillGradient);
   const [query, setQuery] = useState('');
 
   useEffect(() => {
@@ -92,6 +97,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     setLineHeight(initialLineHeight);
     setTextAlign(initialTextAlign);
     setFillColor(initialFillColor);
+    setFillGradient(initialFillGradient);
     setQuery('');
   }, [
     open,
@@ -102,6 +108,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     initialLineHeight,
     initialTextAlign,
     initialFillColor,
+    initialFillGradient,
   ]);
 
   const allFonts = React.useMemo(() => {
@@ -159,6 +166,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     lineHeight,
     textAlign,
     fillColor,
+    fillGradient,
     editingPathId,
   });
 
@@ -200,6 +208,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     setLineHeight(style.lineHeight);
     setTextAlign(style.textAlign);
     setFillColor(style.fill);
+    setFillGradient(style.fillGradient);
     onApplyStyle?.(style);
   };
 
