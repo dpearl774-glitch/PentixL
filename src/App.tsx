@@ -46,6 +46,7 @@ import {
   Point,
   PressureConfig,
   ReferenceImage,
+  SavedTextStyle,
   SelectionState,
   ShapeKind,
   StrokeCap,
@@ -456,6 +457,10 @@ export default function App() {
   );
   /** Gradients saved from the colour panel — a reusable paint library */
   const [savedGradients, setSavedGradients] = useState<GradientDef[]>(userPrefs.savedGradients);
+  /** Label styles saved from the text panel — type and paint, not words */
+  const [savedTextStyles, setSavedTextStyles] = useState<SavedTextStyle[]>(
+    userPrefs.savedTextStyles
+  );
   /** Gradient stop the colour panel is editing (shared with the eyedropper) */
   const [activeStopIndex, setActiveStopIndex] = useState(0);
   /** Eyedropper armed — the next canvas tap samples colour into this target */
@@ -584,6 +589,7 @@ export default function App() {
       recentColors,
       recentFonts,
       savedGradients,
+      savedTextStyles,
     }),
     [
       gridVisible,
@@ -619,6 +625,7 @@ export default function App() {
       recentColors,
       recentFonts,
       savedGradients,
+      savedTextStyles,
     ]
   );
   const prefsTimer = useRef<number | null>(null);
@@ -1964,6 +1971,54 @@ export default function App() {
     () => (textEditId ? allPaths.find((p) => p.id === textEditId) ?? null : null),
     [allPaths, textEditId]
   );
+
+  const saveTextStyle = useCallback(
+    (data: TextSheetData, name: string) => {
+      const style: SavedTextStyle = {
+        id: `style-${Date.now()}`,
+        name,
+        fontFamily: data.fontFamily,
+        fontSize: data.fontSize,
+        letterSpacing: data.letterSpacing,
+        lineHeight: data.lineHeight,
+        textAlign: data.textAlign,
+        fill: data.fillColor,
+        ...(textEditPath?.fillGradient ? { fillGradient: textEditPath.fillGradient } : {}),
+      };
+      // The same type twice is one style, not two chips with the same name.
+      const same = (other: SavedTextStyle) =>
+        other.fontFamily === style.fontFamily &&
+        other.fontSize === style.fontSize &&
+        other.letterSpacing === style.letterSpacing &&
+        other.lineHeight === style.lineHeight &&
+        other.textAlign === style.textAlign &&
+        other.fill === style.fill;
+      setSavedTextStyles((prev) => [style, ...prev.filter((s) => !same(s))].slice(0, 12));
+      notify(`Style “${name}” saved`);
+    },
+    [notify, textEditPath]
+  );
+
+  const applyTextStyle = useCallback(
+    (style: SavedTextStyle) => {
+      // Style only: the label keeps its words, its place and its editability.
+      patchSelection({
+        fontFamily: style.fontFamily,
+        fontSize: style.fontSize,
+        letterSpacing: style.letterSpacing,
+        lineHeight: style.lineHeight,
+        textAlign: style.textAlign,
+        fill: style.fill,
+        ...(style.fillGradient ? { fillGradient: style.fillGradient } : {}),
+      });
+      setSelectedFontFamily(style.fontFamily);
+    },
+    [patchSelection]
+  );
+
+  const deleteTextStyle = useCallback((id: string) => {
+    setSavedTextStyles((prev) => prev.filter((style) => style.id !== id));
+  }, []);
 
   const saveText = useCallback(
     (data: TextSheetData) => {
@@ -5037,6 +5092,10 @@ export default function App() {
           saveText(data);
           setSheet('color');
         }}
+        savedStyles={savedTextStyles}
+        onSaveStyle={saveTextStyle}
+        onApplyStyle={applyTextStyle}
+        onDeleteStyle={deleteTextStyle}
       />
 
       <TraceSheet

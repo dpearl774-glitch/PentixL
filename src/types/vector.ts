@@ -39,6 +39,23 @@ export interface GradientDef {
   stops: GradientStop[];
 }
 
+/**
+ * Type and paint saved from a label, so another label can wear it in one tap.
+ * Only style lives here: the words and the position stay with the object. The
+ * label keeps being live type after a style is applied.
+ */
+export interface SavedTextStyle {
+  id: string;
+  name: string;
+  fontFamily: string;
+  fontSize: number;
+  letterSpacing: number;
+  lineHeight: number;
+  textAlign: 'left' | 'center' | 'right';
+  fill: string;
+  fillGradient?: GradientDef;
+}
+
 /** Ruler guide — an editing aid, never exported with artwork */
 export interface Guide {
   id: string;

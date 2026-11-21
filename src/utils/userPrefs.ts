@@ -2,6 +2,7 @@ import type {
   GradientDef,
   GradientStop,
   PencilSmoothing,
+  SavedTextStyle,
   PressureConfig,
   ShapeKind,
   StrokeCap,
@@ -60,6 +61,8 @@ export interface UserPrefs {
   recentFonts: string[];
   /** Gradients saved from the colour panel, newest first */
   savedGradients: GradientDef[];
+  /** Type and paint saved from labels, newest first */
+  savedTextStyles: SavedTextStyle[];
 }
 
 export const DEFAULT_PREFS: UserPrefs = {
@@ -106,6 +109,7 @@ export const DEFAULT_PREFS: UserPrefs = {
   recentColors: [],
   recentFonts: ['Plus Jakarta Sans, sans-serif'],
   savedGradients: [],
+  savedTextStyles: [],
 };
 
 const KEY = 'pentix.prefs.v1';
@@ -146,6 +150,27 @@ const sanitizeGradient = (value: unknown): GradientDef | null => {
     type: oneOf(value.type, ['linear', 'radial'] as const, 'linear'),
     angle: num(value.angle, 90, 0, 360),
     stops: cleanStops,
+  };
+};
+
+/** A saved label style survives only if its type settings are usable. */
+const sanitizeTextStyle = (value: unknown): SavedTextStyle | null => {
+  if (!isRecord(value)) return null;
+  const name = str(value.name, '');
+  const fontFamily = str(value.fontFamily, '');
+  if (!name || !fontFamily) return null;
+  const fill = str(value.fill, '#4c8dff', HEX);
+  const gradient = sanitizeGradient(value.fillGradient);
+  return {
+    id: str(value.id, `style-${Math.random().toString(36).slice(2, 8)}`),
+    name: name.slice(0, 40),
+    fontFamily,
+    fontSize: num(value.fontSize, 64, 6, 400),
+    letterSpacing: num(value.letterSpacing, 0, -20, 96),
+    lineHeight: num(value.lineHeight, 1.2, 0.5, 4),
+    textAlign: oneOf(value.textAlign, ['left', 'center', 'right'] as const, 'left'),
+    fill,
+    ...(gradient ? { fillGradient: gradient } : {}),
   };
 };
 
@@ -255,6 +280,12 @@ export function sanitizeUserPrefs(raw: unknown): UserPrefs {
           .filter((g): g is GradientDef => g !== null)
           .slice(0, 16)
       : d.savedGradients,
+    savedTextStyles: Array.isArray(p.savedTextStyles)
+      ? (p.savedTextStyles as unknown[])
+          .map(sanitizeTextStyle)
+          .filter((s): s is SavedTextStyle => s !== null)
+          .slice(0, 12)
+      : d.savedTextStyles,
   };
 }
 

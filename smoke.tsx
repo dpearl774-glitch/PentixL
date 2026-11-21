@@ -1771,6 +1771,45 @@ check(
     toolPanelHtml.includes('options')
 );
 
+const styledSheet = renderToStaticMarkup(
+  <TextSheet
+    open
+    onClose={noop}
+    initialText="PENTIX"
+    initialFontFamily="Impact, sans-serif"
+    initialFontSize={64}
+    initialLetterSpacing={2}
+    initialLineHeight={1.4}
+    initialTextAlign="center"
+    initialFillColor="#CDFF5C"
+    customFonts={[]}
+    recentFonts={[]}
+    editingPathId={null}
+    onSave={noop}
+    savedStyles={[
+      {
+        id: 'style-1',
+        name: 'Jakarta 96',
+        fontFamily: 'Plus Jakarta Sans, sans-serif',
+        fontSize: 96,
+        letterSpacing: 0,
+        lineHeight: 1.2,
+        textAlign: 'left',
+        fill: '#4C8DFF',
+      },
+    ]}
+    onSaveStyle={noop}
+    onApplyStyle={noop}
+    onDeleteStyle={noop}
+  />
+);
+check(
+  'saved styles apply in one tap',
+  styledSheet.includes('aria-label="Apply style Jakarta 96"') &&
+    styledSheet.includes('aria-label="Delete style Jakarta 96"') &&
+    styledSheet.includes('aria-label="Save this style"')
+);
+
 check(
   'text panel owns size, tracking, line height and align',
   textSheetHtml.includes('aria-label="Font size in pixels"') &&

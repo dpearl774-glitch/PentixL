@@ -1,6 +1,7 @@
 import { RangeInput } from './ui/primitives';
 import React, { useEffect, useState } from 'react';
-import { AlignCenter, AlignLeft, AlignRight, Check, Type as TypeIcon } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, Check, Plus, Type as TypeIcon, X } from 'lucide-react';
+import type { SavedTextStyle } from '../types/vector';
 import { Button, Chip, NumberField, SectionLabel, Sheet } from './ui/primitives';
 
 export const SYSTEM_FONTS = [
@@ -42,6 +43,12 @@ interface TextSheetProps {
   onSave: (data: TextSheetData) => void;
   /** Keep what is in the panel, then hand the label to the paint sheet */
   onOpenFill?: (data: TextSheetData) => void;
+  /** Type and paint saved from earlier labels, newest first */
+  savedStyles?: SavedTextStyle[];
+  onSaveStyle?: (data: TextSheetData, name: string) => void;
+  /** Applied live, so the artboard changes as the chip is pressed */
+  onApplyStyle?: (style: SavedTextStyle) => void;
+  onDeleteStyle?: (id: string) => void;
 }
 
 const SIZES = [24, 36, 48, 64, 84, 110];
@@ -62,6 +69,10 @@ export const TextSheet: React.FC<TextSheetProps> = ({
   editingPathId,
   onSave,
   onOpenFill,
+  savedStyles = [],
+  onSaveStyle,
+  onApplyStyle,
+  onDeleteStyle,
 }) => {
   const [text, setText] = useState(initialText);
   const [fontFamily, setFontFamily] = useState(initialFontFamily);
@@ -177,6 +188,20 @@ export const TextSheet: React.FC<TextSheetProps> = ({
   // Lines are only shifted against each other, so a single line has nothing to
   // align; the control says so rather than pretending to move the label.
   const lineCount = text.split(/\r?\n/).length;
+
+  const fontLabel = (family: string) =>
+    allFonts.find((f) => f.value === family)?.label ?? family.split(',')[0];
+
+  /** A style is type plus paint: the words stay where they are */
+  const applyStyle = (style: SavedTextStyle) => {
+    setFontFamily(style.fontFamily);
+    setFontSize(style.fontSize);
+    setLetterSpacing(style.letterSpacing);
+    setLineHeight(style.lineHeight);
+    setTextAlign(style.textAlign);
+    setFillColor(style.fill);
+    onApplyStyle?.(style);
+  };
 
   return (
     <Sheet
@@ -384,6 +409,62 @@ export const TextSheet: React.FC<TextSheetProps> = ({
           )}
           <TypeIcon size={14} className="text-mute" />
         </section>
+
+        {onSaveStyle && (
+          <section className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <SectionLabel>My styles</SectionLabel>
+              <button
+                type="button"
+                disabled={!text.trim()}
+                aria-label="Save this style"
+                onClick={() =>
+                  onSaveStyle(data(), `${fontLabel(fontFamily)} ${Math.round(fontSize)}`)
+                }
+                className="press flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] font-semibold text-dim hover:text-text disabled:opacity-40"
+              >
+                <Plus size={12} /> Save style
+              </button>
+            </div>
+            {savedStyles.length === 0 ? (
+              <p className="text-[11px] leading-snug text-mute">
+                Save this label’s type and fill, then put them on another label in one tap.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {savedStyles.map((style) => (
+                  <span
+                    key={style.id}
+                    className="flex items-center overflow-hidden rounded-lg border border-line bg-ink-0"
+                  >
+                    <button
+                      type="button"
+                      aria-label={`Apply style ${style.name}`}
+                      onClick={() => applyStyle(style)}
+                      className="press flex items-center gap-1.5 py-1 pl-2 pr-1.5 text-[11.5px] text-text"
+                    >
+                      <span
+                        className="text-[13px] font-bold"
+                        style={{ fontFamily: style.fontFamily, color: style.fill }}
+                      >
+                        Aa
+                      </span>
+                      {style.name}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete style ${style.name}`}
+                      onClick={() => onDeleteStyle?.(style.id)}
+                      className="press grid h-full w-6 place-items-center text-mute hover:text-danger"
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Preview: the same line height and alignment the artboard will use */}
         <div className="grid min-h-[86px] place-items-center overflow-hidden rounded-lg border border-line bg-ink-0 px-3 py-4">
