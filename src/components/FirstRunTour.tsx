@@ -17,7 +17,7 @@ interface TourStep {
  * logo is actually made. The anchors are attributes rather than selectors into
  * component internals, so moving a panel only means moving the attribute.
  */
-export const FIRST_RUN_STEPS: TourStep[] = [
+const STEPS: TourStep[] = [
   {
     anchor: 'panel',
     title: 'Draw something',
@@ -35,28 +35,35 @@ export const FIRST_RUN_STEPS: TourStep[] = [
   },
 ];
 
-function measure(anchor: string, fallback: string): DOMRect | null {
+/** The ring sits six pixels proud of the control it points at. */
+const RING = 6;
+const GAP = 10;
+
+function anchorRect(anchor: string): DOMRect | null {
   const target =
-    document.querySelector(`[data-tour="${anchor}"]`) ??
-    document.querySelector(`[data-tour="${fallback}"]`);
+    document.querySelector(`[data-tour="${anchor}"]`) ?? document.querySelector('[data-tour="strip"]');
   return target ? target.getBoundingClientRect() : null;
 }
 
 export const FirstRunTour: React.FC<{
-  open: boolean;
-  step: number;
+  /** Null keeps the tour off the screen entirely */
+  step: number | null;
   onStep: (step: number) => void;
   onFinish: () => void;
-}> = ({ open, step, onStep, onFinish }) => {
+}> = ({ step, onStep, onFinish }) => {
   const [rect, setRect] = React.useState<DOMRect | null>(null);
-  const current = FIRST_RUN_STEPS[Math.min(step, FIRST_RUN_STEPS.length - 1)];
-  const last = step >= FIRST_RUN_STEPS.length - 1;
+  const [cardHeight, setCardHeight] = React.useState(0);
+  const cardRef = React.useRef<HTMLDivElement>(null);
+  const open = step !== null;
+  const index = Math.min(step ?? 0, STEPS.length - 1);
+  const current = STEPS[index];
+  const last = index === STEPS.length - 1;
 
   React.useEffect(() => {
     if (!open) return;
-    const update = () => setRect(measure(current.anchor, 'strip'));
+    const update = () => setRect(anchorRect(current.anchor));
     update();
-    // The panel is already laid out, but the fit-to-screen pass can settle a
+    // The panel is laid out already, but the fit-to-screen pass can settle a
     // frame later on a cold start.
     const timer = window.setTimeout(update, 150);
     window.addEventListener('resize', update);
@@ -69,66 +76,97 @@ export const FirstRunTour: React.FC<{
   }, [open, current.anchor]);
 
   React.useEffect(() => {
+    const height = cardRef.current?.getBoundingClientRect().height ?? 0;
+    if (height) setCardHeight(height);
+  }, [index, rect, open]);
+
+  // Escape only: Enter would double-fire with the focused button and skip a step.
+  React.useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onFinish();
-      if (event.key === 'Enter') onStep(last ? FIRST_RUN_STEPS.length : step + 1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, step, last, onStep, onFinish]);
+  }, [open, onFinish]);
 
   if (!open) return null;
 
-  const viewportHeight = typeof window === 'undefined' ? 800 : window.innerHeight;
-  const above = rect ? rect.top > viewportHeight * 0.55 : false;
-  const ring = rect
+  const viewport = typeof window === 'undefined' ? 800 : window.innerHeight;
+  const viewportWidth = typeof window === 'undefined' ? 900 : window.innerWidth;
+
+  /**
+   * The card goes on the roomier side of its target, and is capped to the space
+   * there — so it never lands on top of the control it is pointing at, however
+   * short the screen is. Measuring the card first is what makes that possible.
+   */
+  const place = (): { style: React.CSSProperties; maxHeight?: number } => {
+    const style: React.CSSProperties = { left: 12, right: 12 };
+    if (!rect) return { style: { ...style, bottom: 96 } };
+    const above = rect.top - RING - GAP;
+    const below = viewport - rect.bottom - RING - GAP;
+    const fitsAbove = above >= cardHeight;
+    const fitsBelow = below >= cardHeight;
+    const useAbove = fitsAbove && (above >= below || !fitsBelow);
+    if (useAbove) {
+      return {
+        style: { ...style, bottom: Math.max(12, viewport - rect.top + RING + GAP) },
+        maxHeight: Math.max(140, above),
+      };
+    }
+    return {
+      style: {
+        ...style,
+        top: Math.max(12, Math.min(viewport - (cardHeight || 170) - 12, rect.bottom + RING + GAP)),
+      },
+      maxHeight: Math.max(140, below),
+    };
+  };
+  const { style: cardStyle, maxHeight } = place();
+
+  // A ring that ran off the edge would hide its own border on a phone whose
+  // strip is wider than the screen.
+  const ringBox = rect
     ? {
-        left: rect.left - 6,
-        top: rect.top - 6,
-        width: rect.width + 12,
-        height: rect.height + 12,
+        left: Math.max(0, rect.left - RING),
+        top: Math.max(0, rect.top - RING),
+        width:
+          Math.min(viewportWidth, rect.right + RING) - Math.max(0, rect.left - RING),
+        height:
+          Math.min(viewport, rect.bottom + RING) - Math.max(0, rect.top - RING),
       }
     : null;
-  const cardStyle: React.CSSProperties = rect
-    ? above
-      ? { bottom: Math.max(12, viewportHeight - rect.top + 14), left: 12, right: 12 }
-      : { top: Math.min(viewportHeight - 200, rect.bottom + 14), left: 12, right: 12 }
-    : { bottom: 96, left: 12, right: 12 };
 
   const advance = () => {
     haptic(6);
     if (last) onFinish();
-    else onStep(step + 1);
+    else onStep(index + 1);
   };
 
   return (
-    <div
-      className="fixed inset-0 z-[70]"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Walkthrough"
-    >
+    <div className="fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-label="Walkthrough">
       {/* Catches taps so the app underneath cannot be driven mid-tour. */}
-      <div className="absolute inset-0" onPointerDown={(event) => event.stopPropagation()} />
-      {ring && (
+      <div className="absolute inset-0" />
+      {ringBox ? (
         <div
           aria-hidden="true"
           data-tour-ring="true"
           className="pointer-events-none absolute rounded-lg border-2 border-accent/80"
-          style={{ ...ring, boxShadow: '0 0 0 9999px rgba(4, 6, 10, 0.72)' }}
+          style={{ ...ringBox, boxShadow: '0 0 0 9999px rgba(4, 6, 10, 0.72)' }}
         />
+      ) : (
+        <div className="absolute inset-0 bg-ink-0/70" />
       )}
-      {!ring && <div className="absolute inset-0 bg-ink-0/70" />}
 
       <div
-        className="absolute mx-auto flex max-w-[380px] flex-col gap-2 rounded-xl border border-line bg-ink-2 p-3 shadow-2xl"
-        style={cardStyle}
+        ref={cardRef}
+        className="absolute mx-auto flex max-w-[380px] flex-col gap-2 overflow-y-auto rounded-xl border border-line bg-ink-2 p-3 shadow-2xl"
+        style={{ ...cardStyle, maxHeight, opacity: cardHeight ? 1 : 0 }}
       >
         <div className="flex items-center gap-2">
           <Sparkles size={14} className="shrink-0 text-accent" />
           <span className="font-sans text-[9px] font-bold uppercase tracking-[0.1em] text-accent">
-            Step {step + 1} of {FIRST_RUN_STEPS.length}
+            Step {index + 1} of {STEPS.length}
           </span>
           <span className="flex-1" />
           <button
@@ -145,11 +183,11 @@ export const FirstRunTour: React.FC<{
         <p className="text-[12px] leading-snug text-dim">{current.body}</p>
 
         <div className="mt-0.5 flex items-center gap-1.5">
-          {FIRST_RUN_STEPS.map((s, index) => (
+          {STEPS.map((tourStep, dot) => (
             <span
-              key={s.anchor}
+              key={tourStep.anchor}
               className={`h-1.5 rounded-full transition-all ${
-                index === step ? 'w-4 bg-accent' : 'w-1.5 bg-line-strong'
+                dot === index ? 'w-4 bg-accent' : 'w-1.5 bg-line-strong'
               }`}
             />
           ))}

@@ -5129,20 +5129,17 @@ export default function App() {
         onFitArtwork={fitArtworkToArtboard}
       />
 
-      {tourPending && sheet === null && (
-        <FirstRunTour
-          open={tourStep !== null}
-          step={tourStep ?? 0}
-          onStep={setTourStep}
-          onFinish={() => {
-            // Offered once is enough: a tour that comes back is a tour people
-            // learn to dismiss without reading.
-            localStorage.setItem(FIRST_RUN_TOUR_KEY, 'true');
-            setTourPending(false);
-            setTourStep(null);
-          }}
-        />
-      )}
+      <FirstRunTour
+        step={tourStep}
+        onStep={setTourStep}
+        onFinish={() => {
+          // Offered once is enough: a tour that comes back is a tour people
+          // learn to dismiss without reading.
+          localStorage.setItem(FIRST_RUN_TOUR_KEY, 'true');
+          setTourPending(false);
+          setTourStep(null);
+        }}
+      />
 
       <StartSheet
         open={sheet === 'start'}

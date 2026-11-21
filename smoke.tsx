@@ -1746,12 +1746,8 @@ const toolPanelHtml = renderToStaticMarkup(
     <span>options</span>
   </ToolPanel>
 );
-const tourStepOne = renderToStaticMarkup(
-  <FirstRunTour open step={0} onStep={noop} onFinish={noop} />
-);
-const tourLastStep = renderToStaticMarkup(
-  <FirstRunTour open step={2} onStep={noop} onFinish={noop} />
-);
+const tourStepOne = renderToStaticMarkup(<FirstRunTour step={0} onStep={noop} onFinish={noop} />);
+const tourLastStep = renderToStaticMarkup(<FirstRunTour step={2} onStep={noop} onFinish={noop} />);
 check(
   'first run walks draw, combine, export',
   tourStepOne.includes('Step 1 of 3') &&
@@ -1762,9 +1758,10 @@ check(
     tourLastStep.includes('Take it with you') &&
     tourLastStep.includes('Finish walkthrough')
 );
-check('first run tour closes when it is not open', renderToStaticMarkup(
-  <FirstRunTour open={false} step={0} onStep={noop} onFinish={noop} />
-) === '');
+check(
+  'first run tour renders nothing without a step',
+  renderToStaticMarkup(<FirstRunTour step={null} onStep={noop} onFinish={noop} />) === ''
+);
 
 check(
   'tool panel is named, guided and closable',
