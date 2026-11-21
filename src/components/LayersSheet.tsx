@@ -23,6 +23,60 @@ import {
 import { Layer, VectorPath } from '../types/vector';
 import { IconButton, Panel, SectionLabel } from './ui/primitives';
 import { haptic } from '../theme';
+import { pathToPolygon, pathToSvgD } from '../utils/bezier';
+
+/**
+ * A row's own outline, drawn small. A colour chip says nothing about what the
+ * row is; this shows the object itself, so a row can be recognised before it is
+ * tapped. Labels have no outline to draw, so they get their own mark.
+ */
+const PathGlyph: React.FC<{ path: VectorPath }> = ({ path }) => {
+  const geometry = React.useMemo(() => {
+    if (path.text) return null;
+    const d = pathToSvgD(path);
+    const polygon = d ? pathToPolygon(path, 8) : [];
+    if (!d || !polygon.length) return null;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const [x, y] of polygon) {
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, maxY - minY);
+    const pad = Math.max(width, height) * 0.1;
+    return {
+      d,
+      viewBox: `${minX - pad} ${minY - pad} ${width + pad * 2} ${height + pad * 2}`,
+    };
+  }, [path]);
+
+  if (path.text) {
+    return (
+      <span className="grid h-4 w-4 shrink-0 place-items-center rounded bg-ink-3 text-[9px] font-bold text-dim">
+        T
+      </span>
+    );
+  }
+  if (!geometry) return <span className="h-4 w-4 shrink-0" />;
+  const paint = path.fill && path.fill !== 'none' ? path.fill : path.stroke;
+  return (
+    <svg viewBox={geometry.viewBox} aria-hidden="true" className="h-4 w-4 shrink-0">
+      <path
+        d={geometry.d}
+        fill={path.fill && path.fill !== 'none' ? paint : 'none'}
+        stroke={paint && paint !== 'none' ? paint : '#8b93a7'}
+        strokeWidth={1.25}
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+};
 
 interface LayersSheetProps {
   open: boolean;
@@ -589,7 +643,7 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
                             }}
                             className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left"
                           >
-                            <Chip path={path} small />
+                            <PathGlyph path={path} />
                             <span
                               className={`truncate text-[11.5px] ${
                                 selected

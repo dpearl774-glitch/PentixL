@@ -45,6 +45,7 @@ import { PencilSmoothing, ShapeKind, ToolType } from '../types/vector';
 import { BooleanOperation } from '../utils/shapeBuilder';
 import { AlignMode, DistributeAxis } from '../utils/align';
 import { Chip, IconButton, RangeInput } from './ui/primitives';
+import { ToolPanel, readClosedPanels, writeClosedPanels } from './ToolPanel';
 import { NumberField as EditableNumber } from './ui/primitives';
 
 /**
@@ -233,6 +234,58 @@ interface ToolOptionsProps {
   onFitReference?: () => void;
   onDeleteReference?: () => void;
 }
+
+/**
+ * One name per job. The panel title is the tool's, not the selection's, so the
+ * same tool always opens the same panel in the same place.
+ */
+const TOOL_PANELS: Record<ToolType, { name: string; hint: string; icon: React.ReactNode }> = {
+  select: {
+    name: 'Select',
+    hint: 'Tap an object to act on it · drag to marquee',
+    icon: <Move size={13} />,
+  },
+  'direct-select': {
+    name: 'Node edit',
+    hint: 'Tap a path, then a node to move it',
+    icon: <Spline size={13} />,
+  },
+  pen: {
+    name: 'Pen',
+    hint: 'Tap to place a point · drag to pull curves',
+    icon: <CornerDownRight size={13} />,
+  },
+  pencil: {
+    name: 'Pencil',
+    hint: 'Draw freehand · end on the start to close',
+    icon: <Spline size={13} />,
+  },
+  'pressure-brush': {
+    name: 'Pressure brush',
+    hint: 'Drag to paint · pressure changes the width',
+    icon: <Spline size={13} />,
+  },
+  shape: {
+    name: 'Shape',
+    hint: 'Pick a shape, then drag on the canvas',
+    icon: <Square size={13} />,
+  },
+  'shape-builder': {
+    name: 'Shape builder',
+    hint: 'Drag across regions · hold Alt to erase',
+    icon: <Combine size={13} />,
+  },
+  text: {
+    name: 'Type',
+    hint: 'Add a label, or tap one to edit it',
+    icon: <TypeIcon size={13} />,
+  },
+  hand: {
+    name: 'Pan',
+    hint: 'Drag to pan · pinch to zoom',
+    icon: <Hand size={13} />,
+  },
+};
 
 const QUICK_SHAPES: { kind: ShapeKind; label: string; icon: React.ReactNode }[] = [
   { kind: 'circle', label: 'Circle', icon: <Circle size={14} /> },
@@ -445,6 +498,25 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   onDeleteReference,
 }) => {
   const isDrawing = drawingPointCount > 0 && (tool === 'pen' || tool === 'pressure-brush');
+
+  /**
+   * The strip never re-arranges itself: every tool shows the same five slots,
+   * and its options live in a named panel that stays open until it is closed.
+   * The choice is remembered per panel, so a tool you have already arranged
+   * does not reopen a panel you dismissed every time you return to it.
+   */
+  const [closedPanels, setClosedPanels] = React.useState<string[]>(() => readClosedPanels());
+  const panel = reference
+    ? { name: 'Reference', hint: 'Drag to move · corners resize', icon: <Crop size={13} /> }
+    : TOOL_PANELS[tool];
+  const panelIsOpen = isDrawing || !closedPanels.includes(panel.name);
+  const togglePanel = () => {
+    const next = panelIsOpen
+      ? [...closedPanels, panel.name]
+      : closedPanels.filter((name) => name !== panel.name);
+    setClosedPanels(next);
+    writeClosedPanels(next);
+  };
   const [alignMenu, setAlignMenu] = React.useState(false);
   const [moreMenu, setMoreMenu] = React.useState(false);
   const [threeDMenu, setThreeDMenu] = React.useState(false);
@@ -860,7 +932,8 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
 
   return (
     <div className="relative z-20 shrink-0 border-t border-line bg-ink-1/95">
-      <div className="scroll-x mx-auto flex h-11 max-w-3xl items-center gap-1.5 px-2">
+      {panelIsOpen && (
+        <ToolPanel name={panel.name} hint={panel.hint} onClose={togglePanel}>
         {drawInsideName && (
           <>
             <Chip active icon={<Crop size={13} />} onClick={onExitDrawInside}>
@@ -966,14 +1039,6 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
               All 17
             </Chip>
             <Divider />
-            <Swatch color={fillColor} label="Fill colour" onClick={() => onOpenColor('fill')} />
-            <Swatch
-              color={strokeColor}
-              label="Stroke colour"
-              hollow
-              width={strokeWidth}
-              onClick={() => onOpenColor('stroke')}
-            />
             <span className="ml-1 hidden shrink-0 text-[11px] text-mute sm:block">
               Drag on canvas to size
             </span>
@@ -1026,7 +1091,6 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                 <Plus size={12} />
               </IconButton>
             </div>
-            <Swatch color={strokeColor} label="Stroke colour" hollow width={strokeWidth} onClick={() => onOpenColor('stroke')} />
             {(strokeColor === 'none' || strokeWidth === 0) && (
               <span className="shrink-0 whitespace-nowrap font-sans text-[9px] uppercase tracking-wider text-accent">
                 Guide preview · no stroke
@@ -1073,7 +1137,6 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
             <span className="shrink-0 font-sans text-[9px] uppercase tracking-wider text-mute">
               Stroke
             </span>
-            <Swatch color={strokeColor} label="Stroke colour" hollow width={strokeWidth} onClick={() => onOpenColor('stroke')} />
           </>
         )}
 
@@ -1082,6 +1145,61 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
           <span className="text-[11px] text-mute">Tap a path to edit its nodes</span>
         )}
 
+        {/* ---------------- Text tool, nothing selected ---------------- */}
+        {!isDrawing && tool === 'text' && selectedCount === 0 && (
+          <>
+            {/* Same two swatches as Select, so switching between the two tools
+                no longer clears the strip and moves everything around. */}
+            <Divider />
+            <Chip icon={<TypeIcon size={13} />} onClick={onOpenText}>
+              Add text
+            </Chip>
+            <span className="text-[11px] text-mute">or tap the canvas</span>
+          </>
+        )}
+
+        {/* ---------------- Idle select: quick tools ---------------- */}
+        {!isDrawing && tool === 'select' && selectedCount === 0 && (
+          <>
+            <Chip icon={<Square size={13} />} onClick={() => onQuickShape('rectangle')}>
+              Square
+            </Chip>
+            <Chip icon={<Circle size={13} />} onClick={() => onQuickShape('circle')}>
+              Circle
+            </Chip>
+            <Chip icon={<Star size={13} />} onClick={() => onQuickShape('star')}>
+              Star
+            </Chip>
+            <Chip icon={<TypeIcon size={13} />} onClick={onOpenText}>
+              Text
+            </Chip>
+            <Divider />
+            <span className="ml-auto hidden shrink-0 pr-1 text-[11px] text-mute sm:block">
+              Drag on canvas to draw
+            </span>
+          </>
+        )}
+        </ToolPanel>
+      )}
+      <div className="scroll-x mx-auto flex h-11 max-w-3xl items-center gap-1.5 px-2">
+        <Chip
+          active={panelIsOpen}
+          icon={panel.icon}
+          aria-label={`${panel.name} options`}
+          onClick={togglePanel}
+        >
+          {panel.name}
+        </Chip>
+        <Divider />
+        <Swatch color={fillColor} label="Fill colour" onClick={() => onOpenColor('fill')} />
+        <Swatch
+          color={strokeColor}
+          label="Stroke colour"
+          hollow
+          width={strokeWidth}
+          onClick={() => onOpenColor('stroke')}
+        />
+        <Divider />
         {/* ---------------- Object selected ---------------- */}
         {!isDrawing && !reference && selectedCount > 0 && tool !== 'shape' && (
           <>
@@ -1092,14 +1210,6 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
             {tool === 'direct-select' ? (
               /* Node editing: keep the strip about nodes, not transforms */
               <>
-                <Swatch color={fillColor} label="Fill colour" onClick={() => onOpenColor('fill')} />
-                <Swatch
-                  color={strokeColor}
-                  label="Stroke colour"
-                  hollow
-                  width={strokeWidth}
-                  onClick={() => onOpenColor('stroke')}
-                />
                 <Divider />
                 <Chip
                   icon={<Spline size={13} />}
@@ -1136,8 +1246,6 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
               </>
             ) : (
               <>
-                <Swatch color={fillColor} label="Fill colour" onClick={() => onOpenColor('fill')} />
-                <Swatch color={strokeColor} label="Stroke colour" hollow width={strokeWidth} onClick={() => onOpenColor('stroke')} />
                 <Divider />
                 <IconButton label="Duplicate" size="sm" onClick={onDuplicate}>
                   <Copy size={14} />
@@ -1247,49 +1355,8 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
           </>
         )}
 
-        {/* ---------------- Text tool, nothing selected ---------------- */}
-        {!isDrawing && tool === 'text' && selectedCount === 0 && (
-          <>
-            {/* Same two swatches as Select, so switching between the two tools
-                no longer clears the strip and moves everything around. */}
-            <Swatch color={fillColor} label="Fill colour" onClick={() => onOpenColor('fill')} />
-            <Swatch
-              color={strokeColor}
-              label="Stroke colour"
-              hollow
-              width={strokeWidth}
-              onClick={() => onOpenColor('stroke')}
-            />
-            <Divider />
-            <Chip icon={<TypeIcon size={13} />} onClick={onOpenText}>
-              Add text
-            </Chip>
-            <span className="text-[11px] text-mute">or tap the canvas</span>
-          </>
-        )}
-
-        {/* ---------------- Idle select: quick tools ---------------- */}
-        {!isDrawing && tool === 'select' && selectedCount === 0 && (
-          <>
-            <Chip icon={<Square size={13} />} onClick={() => onQuickShape('rectangle')}>
-              Square
-            </Chip>
-            <Chip icon={<Circle size={13} />} onClick={() => onQuickShape('circle')}>
-              Circle
-            </Chip>
-            <Chip icon={<Star size={13} />} onClick={() => onQuickShape('star')}>
-              Star
-            </Chip>
-            <Chip icon={<TypeIcon size={13} />} onClick={onOpenText}>
-              Text
-            </Chip>
-            <Divider />
-            <Swatch color={fillColor} label="Fill colour" onClick={() => onOpenColor('fill')} />
-            <Swatch color={strokeColor} label="Stroke colour" hollow width={strokeWidth} onClick={() => onOpenColor('stroke')} />
-            <span className="ml-auto hidden shrink-0 pr-1 text-[11px] text-mute sm:block">
-              Drag on canvas to draw
-            </span>
-          </>
+        {selectedCount === 0 && !isDrawing && (
+          <span className="min-w-0 truncate text-[11px] text-mute">{panel.hint}</span>
         )}
       </div>
 

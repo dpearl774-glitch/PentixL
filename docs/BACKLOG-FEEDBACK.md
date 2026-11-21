@@ -24,7 +24,7 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 | **FB-06** | Cannot select more than one row in the Objects panel | M | DONE | Tapping selects, a second tap with Shift (or a row checkbox) extends; delete, colour, hide and reorder act on all selected rows |
 | **FB-07** | Grouping exists but is not discoverable | S | DONE | A Group action sits in the Objects panel and in More when two or more objects are selected |
 | **FB-08** | No merge for selected objects | S | DONE | Two selected objects can be merged into one path without leaving the panel (uses the existing pathfinder Unite) |
-| **FB-09** | Panel shows no origin of an object — hard to tell what the row is | S | OPEN | Object rows show a thumbnail or shape type, so a row is identifiable before tapping it |
+| **FB-09** | Panel shows no origin of an object — hard to tell what the row is | S | DONE | Object rows show a thumbnail or shape type, so a row is identifiable before tapping it |
 
 ## Transform & precision
 
@@ -45,7 +45,7 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 
 | Badge | Item | Size | Status | Done when |
 |---|---|---|---|---|
-| **FB-15** | A beginner cannot predict where a tool’s options will appear | L | OPEN | Each tool opens a named panel that persists until closed; the strip no longer re-arranges itself per tool |
+| **FB-15** | A beginner cannot predict where a tool’s options will appear | L | DONE | Each tool opens a named panel that persists until closed; the strip no longer re-arranges itself per tool |
 | **FB-16** | First-run gives no guided first mark | M | OPEN | A three-step “draw, combine, export” walkthrough that can be skipped and never returns |
 | **FB-17** | Manual exists but is not where a beginner looks | S | **DONE** `a613ab6` | Manual opens on a cover with a four-step tour, and the in-app sheet links to it |
 
@@ -60,7 +60,7 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 | Badge | Item | Size | Status | Done when |
 |---|---|---|---|---|
 | **FB-21** | A selection bar that never moves: Align · Group · Merge · More · Delete | S | DONE | Those five actions are always in the same place for any selection; panels open around them |
-| **FB-22** | Named panels per job that stay put (Text, Fill, Gradient, Effects) | L | OPEN | Opening one does not re-arrange the others, and it remembers where it was left |
+| **FB-22** | Named panels per job that stay put (Text, Fill, Gradient, Effects) | L | DONE | Opening one does not re-arrange the others, and it remembers where it was left |
 | **FB-23** | Style part of a word without converting it (PixelLab's range colours) | L | OPEN | Selecting letters in the text editor can tint or refont just those letters while the label stays type |
 | **FB-24** | Saved text/gradient styles (“My Styles”) | M | OPEN | A styled label can be saved and applied to another label in one tap, staying editable |
 | **FB-25** | Locked and hidden objects let taps pass through | S | DONE | A tap over a locked object reaches the object beneath it, as PixelLab does on iOS |
@@ -75,10 +75,10 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 
 ## Counts
 
-- DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode), FB-10, FB-11 (Transform panel), FB-21, FB-25 (fixed bar, locks), FB-13, FB-14 (wide gradient ramp), FB-03, FB-04 (text panel with typed numbers)
-- OPEN, small: FB-09
+- DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode), FB-10, FB-11 (Transform panel), FB-21, FB-25 (fixed bar, locks), FB-13, FB-14 (wide gradient ramp), FB-03, FB-04 (text panel with typed numbers), FB-09 (row shape previews), FB-15, FB-22 (named tool panels)
+- OPEN, small: none
 - OPEN, medium: FB-05, FB-16, FB-18, FB-24
-- OPEN, large: FB-15, FB-22, FB-23
+- OPEN, large: FB-23
 - PARKED: FB-19, FB-20
 
 ## Order I would work them
@@ -87,4 +87,5 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 2. ~~**FB-10**/**FB-11** exact numbers~~ — done: a Transform panel gives X, Y, W, H and a typed turn, from the same frame the handles drag.
 3. ~~**FB-03**/**FB-04** one text panel — stops the strip moving under the thumb while typing~~ — done: one sheet owns typeface, size, tracking, leading, align and fill, with typed numbers for the three.
 4. ~~**FB-13**/**FB-14** gradient behind a wide ramp with live preview~~ — done: a 52 px ramp with draggable stops, tap to add, drag down to remove.
-5. **FB-15**/**FB-16** beginner path, once the panels above exist to be predictable about.
+5. ~~**FB-15**/**FB-22** named panels that stay put~~ — done: every tool opens a titled panel above a strip whose five slots never change.
+6. **FB-16** now that the panels are predictable: a first-run walkthrough can point at fixed places.

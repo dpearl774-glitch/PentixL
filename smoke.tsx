@@ -12,6 +12,7 @@ import { ReferencesSheet } from './src/components/ReferencesSheet';
 import { nestSubpaths, parsePathDataToSubpaths, parseTransform } from './src/utils/svgImport';
 import { ToolOptions } from './src/components/ToolOptions';
 import { TextSheet } from './src/components/TextSheet';
+import { ToolPanel } from './src/components/ToolPanel';
 import { TopBar } from './src/components/TopBar';
 import { FontsSheet } from './src/components/FontsSheet';
 import { fitBezierPath } from './src/utils/curveFit';
@@ -1739,6 +1740,19 @@ const textSheetHtml = renderToStaticMarkup(
   />
 );
 check('font search field present', textSheetHtml.includes('aria-label="Search fonts"'));
+const toolPanelHtml = renderToStaticMarkup(
+  <ToolPanel name="Pen" hint="Tap to place a point" onClose={noop}>
+    <span>options</span>
+  </ToolPanel>
+);
+check(
+  'tool panel is named, guided and closable',
+  toolPanelHtml.includes('Pen') &&
+    toolPanelHtml.includes('Tap to place a point') &&
+    toolPanelHtml.includes('aria-label="Close Pen panel"') &&
+    toolPanelHtml.includes('options')
+);
+
 check(
   'text panel owns size, tracking, line height and align',
   textSheetHtml.includes('aria-label="Font size in pixels"') &&
