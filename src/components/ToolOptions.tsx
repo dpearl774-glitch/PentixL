@@ -35,6 +35,9 @@ import {
   AlignHorizontalSpaceAround,
   AlignVerticalSpaceAround,
   Pipette,
+  Move,
+  RotateCcw,
+  RotateCw,
 } from 'lucide-react';
 import { PencilSmoothing, ShapeKind, ToolType } from '../types/vector';
 import { BooleanOperation } from '../utils/shapeBuilder';
@@ -154,6 +157,12 @@ interface ToolOptionsProps {
   canExpandStroke?: boolean;
   onExitPan: () => void;
   onAlign: (mode: AlignMode) => void;
+  /** The selection's frame in artboard units, for exact X/Y/W/H fields */
+  transformBox?: { x: number; y: number; width: number; height: number } | null;
+  onTransformPosition?: (axis: 'x' | 'y', value: number) => void;
+  onTransformSize?: (axis: 'w' | 'h', value: number) => void;
+  /** Turns the selection by an exact number of degrees */
+  onTurnSelection?: (degrees: number) => void;
   onDistribute: (axis: DistributeAxis) => void;
   /** Cuts the selection into a rows × cols grid of separate closed shapes */
   onSplitGrid: (rows: number, cols: number, gap: number) => void;
@@ -252,11 +261,14 @@ function EditableNumber({
     );
   }
   return (
-    <input
-      autoFocus
-      type="number"
-      inputMode="decimal"
-      value={draft}
+          <input
+        autoFocus
+        type="number"
+        inputMode="decimal"
+        value={draft}
+        // Opening the field selects the old value, so typing replaces it
+        // instead of appending to it (159 + "100" became 159100).
+        onFocus={(event) => event.currentTarget.select()}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={commit}
       onKeyDown={(event) => {
@@ -430,6 +442,10 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   canExpandStroke,
   onExitPan,
   onAlign,
+  transformBox,
+  onTransformPosition,
+  onTransformSize,
+  onTurnSelection,
   onDistribute,
   onSplitGrid,
   onOffsetPath,
@@ -474,6 +490,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   const [alignMenu, setAlignMenu] = React.useState(false);
   const [moreMenu, setMoreMenu] = React.useState(false);
   const [threeDMenu, setThreeDMenu] = React.useState(false);
+  const [transformMenu, setTransformMenu] = React.useState(false);
   const [gridRows, setGridRows] = React.useState(2);
   const [gridCols, setGridCols] = React.useState(2);
   // A visible seam: cells cut flush share a fill and read as one object.
@@ -1170,6 +1187,21 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                 <IconButton label="Paste objects" size="sm" onClick={onPaste} disabled={!canPaste}>
                   <ClipboardPaste size={14} />
                 </IconButton>
+                {transformBox && onTransformPosition && onTransformSize && (
+                  <Chip
+                    active={transformMenu}
+                    icon={<Move size={13} />}
+                    aria-label="Transform: exact position, size and angle"
+                    onClick={() => {
+                      setAlignMenu(false);
+                      setMoreMenu(false);
+                      setThreeDMenu(false);
+                      setTransformMenu((v) => !v);
+                    }}
+                  >
+                    Transform
+                  </Chip>
+                )}
                 <Chip
                   active={alignMenu}
                   icon={<AlignHorizontalJustifyStart size={13} />}
@@ -1187,6 +1219,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                   onClick={() => {
                     setAlignMenu(false);
                     setThreeDMenu(false);
+                    setTransformMenu(false);
                     setMoreMenu((v) => !v);
                   }}
                 >
@@ -1209,6 +1242,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                   onClick={() => {
                     setAlignMenu(false);
                     setMoreMenu(false);
+                    setTransformMenu(false);
                     setThreeDMenu((v) => !v);
                   }}
                 >
@@ -1287,7 +1321,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
 
       {/* Panels live outside the scrolling strip — inside it their tops were
           clipped, which made Align and More look dead. */}
-      {(alignMenu || moreMenu || threeDMenu) && (
+      {(alignMenu || moreMenu || threeDMenu || transformMenu) && (
         <div
           className="fixed inset-0 z-30"
           aria-hidden="true"
@@ -2442,6 +2476,88 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {transformMenu && transformBox && onTransformPosition && onTransformSize && (
+        <div className="absolute bottom-[calc(100%+6px)] left-2 z-40 w-[228px] rounded-lg border border-line bg-ink-2 p-2 shadow-2xl">
+          <div className="flex items-center justify-between px-0.5">
+            <span className="flex items-center gap-1 font-sans text-[9px] uppercase tracking-[0.08em] text-mute">
+              <Move size={11} /> Transform
+            </span>
+            <span className="font-mono text-[9px] text-mute">px</span>
+          </div>
+          {/* Typed values sit beside the handles, so a badge can be placed at an
+              exact X rather than near one. */}
+          <div className="mt-1.5 grid grid-cols-2 gap-1">
+            {(
+              [
+                ['x', 'X', Math.round(transformBox.x), -4000, 4000],
+                ['y', 'Y', Math.round(transformBox.y), -4000, 4000],
+                ['w', 'W', Math.round(transformBox.width), 1, 4000],
+                ['h', 'H', Math.round(transformBox.height), 1, 4000],
+              ] as ['x' | 'y' | 'w' | 'h', string, number, number, number][]
+            ).map(([key, label, value, min, max]) => (
+              <label
+                key={key}
+                className="flex h-8 items-center gap-1 rounded-md bg-ink-3 px-1.5"
+              >
+                <span className="w-3 shrink-0 font-mono text-[9px] font-bold text-mute">
+                  {label}
+                </span>
+                <span className="flex-1 text-right">
+                  <EditableNumber
+                    value={value}
+                    min={min}
+                    max={max}
+                    label={`${label === 'X' || label === 'Y' ? 'Position' : 'Size'} ${label}`}
+                    onChange={(next) =>
+                      key === 'x' || key === 'y'
+                        ? onTransformPosition(key, next)
+                        : onTransformSize(key, next)
+                    }
+                  />
+                </span>
+              </label>
+            ))}
+          </div>
+          {onTurnSelection && (
+            <div className="mt-1 flex items-center gap-1 rounded-md bg-ink-3 px-1 py-1">
+              <button
+                type="button"
+                aria-label="Turn left 90 degrees"
+                onClick={() => onTurnSelection(-90)}
+                className="press grid h-6 w-6 place-items-center rounded text-dim hover:text-accent"
+              >
+                <RotateCcw size={12} />
+              </button>
+              <span className="text-[9px] font-semibold uppercase tracking-[0.06em] text-mute">
+                Turn
+              </span>
+              <span className="flex-1" />
+              <EditableNumber
+                value={0}
+                min={-360}
+                max={360}
+                label="Turn by degrees"
+                onChange={(next) => {
+                  if (next !== 0) onTurnSelection(next);
+                }}
+              />
+              <span className="font-mono text-[10px] text-mute">°</span>
+              <button
+                type="button"
+                aria-label="Turn right 90 degrees"
+                onClick={() => onTurnSelection(90)}
+                className="press grid h-6 w-6 place-items-center rounded text-dim hover:text-accent"
+              >
+                <RotateCw size={12} />
+              </button>
+            </div>
+          )}
+          <p className="mt-1 px-0.5 text-[9px] leading-snug text-mute">
+            X and Y are the frame's top-left corner. Turn applies the angle you type.
+          </p>
         </div>
       )}
 

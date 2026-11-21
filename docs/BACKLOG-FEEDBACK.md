@@ -30,8 +30,8 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 
 | Badge | Item | Size | Status | Done when |
 |---|---|---|---|---|
-| **FB-10** | No way to type an exact rotation angle | S | OPEN | A number field sets rotation in degrees about the selection centre; Shift-snap on the handle stays |
-| **FB-11** | No exact position/size entry | S | OPEN | X, Y, W, H fields in the strip for any selection, with the same values the nudge pad uses |
+| **FB-10** | No way to type an exact rotation angle | S | DONE | A number field sets rotation in degrees about the selection centre; Shift-snap on the handle stays |
+| **FB-11** | No exact position/size entry | S | DONE | X, Y, W, H fields in the strip for any selection, with the same values the nudge pad uses |
 | **FB-12** | Transform frame drifted from warped text | S | **DONE** `a613ab6` | Frame hugs the bent letters through rotate and scale |
 
 ## Colour
@@ -75,8 +75,8 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 
 ## Counts
 
-- DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode)
-- OPEN, small: FB-04, FB-09, FB-10, FB-11, FB-21, FB-25
+- DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode), FB-10, FB-11 (Transform panel)
+- OPEN, small: FB-04, FB-09, FB-21, FB-25
 - OPEN, medium: FB-03, FB-05, FB-14, FB-16, FB-18, FB-24
 - OPEN, large: FB-13, FB-15, FB-22, FB-23
 - PARKED: FB-19, FB-20
@@ -84,7 +84,7 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 ## Order I would work them
 
 1. ~~**FB-06** panel multi-select, then **FB-07**/**FB-08**~~ — done: a Select mode ticks rows, and Group / Merge / Delete act on the ticks.
-2. **FB-10**/**FB-11** exact numbers — small, and they answer “predictability”.
+2. ~~**FB-10**/**FB-11** exact numbers~~ — done: a Transform panel gives X, Y, W, H and a typed turn, from the same frame the handles drag.
 3. **FB-03**/**FB-04** one text panel — stops the strip moving under the thumb while typing.
 4. **FB-13**/**FB-14** gradient behind a wide ramp with live preview.
 5. **FB-15**/**FB-16** beginner path, once the panels above exist to be predictable about.

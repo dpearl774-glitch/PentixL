@@ -71,6 +71,8 @@ import {
   computePathsBoundingBox,
   copyPathsWithNewIds,
   flipPaths,
+  rotatePaths,
+  scalePaths,
   translatePaths,
   warpTextOutlinePaths,
 } from './utils/transform';
@@ -2390,6 +2392,87 @@ export default function App() {
   }, [applyLayers, notify, selection.selectedPathIds]);
 
   /**
+   * Exact geometry for the selection. Dragging a handle is for feel; these
+   * fields are for finish, and they act on whole objects even when a single
+   * anchor happens to be selected.
+   */
+  const transformBox = useMemo(() => {
+    const box = computePathsBoundingBox(selectedPaths);
+    return box
+      ? { x: box.minX, y: box.minY, width: box.width, height: box.height }
+      : null;
+  }, [selectedPaths]);
+
+  const moveSelectionTo = useCallback(
+    (axis: 'x' | 'y', value: number) => {
+      const box = computePathsBoundingBox(selectedPaths);
+      if (!box) return;
+      const dx = axis === 'x' ? value - box.minX : 0;
+      const dy = axis === 'y' ? value - box.minY : 0;
+      if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) return;
+      const ids = new Set(selection.selectedPathIds);
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((path) =>
+            ids.has(path.id) ? translatePaths([path], dx, dy)[0] : path
+          ),
+        }))
+      );
+      haptic(8);
+    },
+    [applyLayers, selectedPaths, selection.selectedPathIds]
+  );
+
+  const resizeSelectionTo = useCallback(
+    (axis: 'w' | 'h', value: number) => {
+      const box = computePathsBoundingBox(selectedPaths);
+      if (!box || value <= 0) return;
+      const factor =
+        axis === 'w'
+          ? value / Math.max(0.01, box.width)
+          : value / Math.max(0.01, box.height);
+      if (!Number.isFinite(factor) || Math.abs(factor - 1) < 0.001) return;
+      // Scaling from the top-left keeps a typed X and Y meaning what they say.
+      const origin = { x: box.minX, y: box.minY };
+      const sx = axis === 'w' ? factor : 1;
+      const sy = axis === 'h' ? factor : 1;
+      const ids = new Set(selection.selectedPathIds);
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((path) =>
+            ids.has(path.id) ? scalePaths([path], origin, sx, sy)[0] : path
+          ),
+        }))
+      );
+      haptic(8);
+    },
+    [applyLayers, selectedPaths, selection.selectedPathIds]
+  );
+
+  const turnSelectionBy = useCallback(
+    (degrees: number) => {
+      if (!degrees) return;
+      const box = computePathsBoundingBox(selectedPaths);
+      if (!box) return;
+      const center = { x: box.minX + box.width / 2, y: box.minY + box.height / 2 };
+      const radians = (degrees * Math.PI) / 180;
+      const ids = new Set(selection.selectedPathIds);
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((path) =>
+            ids.has(path.id) ? rotatePaths([path], center, radians)[0] : path
+          ),
+        }))
+      );
+      haptic(8);
+    },
+    [applyLayers, selectedPaths, selection.selectedPathIds]
+  );
+
+  /**
    * Panel Merge: one editable object from the ticked set. Overlapping shapes
    * unite into a single path; shapes that do not touch still merge into one
    * group row, so the panel shows one object either way — and nothing is
@@ -4409,6 +4492,10 @@ export default function App() {
         onExtrudePerspective={setExtrudePerspective}
         onExtrudeShadow={setExtrudeShadow}
         onAlign={alignSelection}
+        transformBox={transformBox}
+        onTransformPosition={moveSelectionTo}
+        onTransformSize={resizeSelectionTo}
+        onTurnSelection={turnSelectionBy}
         onDistribute={distributeSelection}
         onSplitGrid={splitSelectionIntoGrid}
         onOffsetPath={offsetSelection}
