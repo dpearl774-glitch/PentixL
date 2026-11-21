@@ -2451,6 +2451,32 @@ export default function App() {
     [applyLayers, selectedPaths, selection.selectedPathIds]
   );
 
+  /** The angle the selection has been turned to, read back from the objects. */
+  const selectionRotation = selectedPaths[0]?.rotation ?? 0;
+
+  const setSelectionRotation = useCallback(
+    (degrees: number) => {
+      const box = computePathsBoundingBox(selectedPaths);
+      if (!box) return;
+      const current = selectedPaths[0]?.rotation ?? 0;
+      const delta = degrees - current;
+      if (Math.abs(delta) < 0.01) return;
+      const center = { x: box.minX + box.width / 2, y: box.minY + box.height / 2 };
+      const radians = (delta * Math.PI) / 180;
+      const ids = new Set(selection.selectedPathIds);
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((path) =>
+            ids.has(path.id) ? rotatePaths([path], center, radians)[0] : path
+          ),
+        }))
+      );
+      haptic(8);
+    },
+    [applyLayers, selectedPaths, selection.selectedPathIds]
+  );
+
   const turnSelectionBy = useCallback(
     (degrees: number) => {
       if (!degrees) return;
@@ -4496,6 +4522,8 @@ export default function App() {
         onTransformPosition={moveSelectionTo}
         onTransformSize={resizeSelectionTo}
         onTurnSelection={turnSelectionBy}
+        selectionRotation={selectionRotation}
+        onSetRotation={setSelectionRotation}
         onDistribute={distributeSelection}
         onSplitGrid={splitSelectionIntoGrid}
         onOffsetPath={offsetSelection}

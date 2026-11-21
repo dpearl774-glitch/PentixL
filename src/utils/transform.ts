@@ -342,7 +342,20 @@ export function rotatePaths(
     ...(path.text
       ? { textMatrix: rotateTextMatrix(path.textMatrix, angleRad) }
       : {}),
+    ...(angleRad !== 0
+      ? { rotation: normalizeDegrees((path.rotation ?? 0) + (angleRad * 180) / Math.PI) }
+      : {}),
   }));
+}
+
+/**
+ * A turn in -180..180 degrees, so a full circle reads as 0 rather than 360 and
+ * a quarter turn reads as -90 from either direction.
+ */
+export function normalizeDegrees(deg: number): number {
+  const wrapped = ((deg % 360) + 360) % 360;
+  const signed = wrapped > 180 ? wrapped - 360 : wrapped;
+  return Math.round(signed * 100) / 100;
 }
 
 /**

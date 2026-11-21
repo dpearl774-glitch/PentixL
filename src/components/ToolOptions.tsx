@@ -163,6 +163,10 @@ interface ToolOptionsProps {
   onTransformSize?: (axis: 'w' | 'h', value: number) => void;
   /** Turns the selection by an exact number of degrees */
   onTurnSelection?: (degrees: number) => void;
+  /** The angle the selection is currently turned to, in degrees */
+  selectionRotation?: number;
+  /** Turns the selection to an angle, so 0 restores its original orientation */
+  onSetRotation?: (degrees: number) => void;
   onDistribute: (axis: DistributeAxis) => void;
   /** Cuts the selection into a rows × cols grid of separate closed shapes */
   onSplitGrid: (rows: number, cols: number, gap: number) => void;
@@ -446,6 +450,8 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   onTransformPosition,
   onTransformSize,
   onTurnSelection,
+  selectionRotation = 0,
+  onSetRotation,
   onDistribute,
   onSplitGrid,
   onOffsetPath,
@@ -2532,17 +2538,15 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                 <RotateCcw size={12} />
               </button>
               <span className="text-[9px] font-semibold uppercase tracking-[0.06em] text-mute">
-                Turn
+                Angle
               </span>
               <span className="flex-1" />
               <EditableNumber
-                value={0}
-                min={-360}
-                max={360}
-                label="Turn by degrees"
-                onChange={(next) => {
-                  if (next !== 0) onTurnSelection(next);
-                }}
+                value={Math.round(selectionRotation)}
+                min={-180}
+                max={180}
+                label="Angle in degrees"
+                onChange={(next) => (onSetRotation ? onSetRotation(next) : onTurnSelection(next))}
               />
               <span className="font-mono text-[10px] text-mute">°</span>
               <button
@@ -2556,7 +2560,8 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
             </div>
           )}
           <p className="mt-1 px-0.5 text-[9px] leading-snug text-mute">
-            X and Y are the frame's top-left corner. Turn applies the angle you type.
+            X and Y are the frame's top-left corner. The angle reads back from the
+            object, and 0 puts it back upright.
           </p>
         </div>
       )}

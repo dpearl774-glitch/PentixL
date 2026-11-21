@@ -3470,5 +3470,25 @@ check(
     .join(' ')
 );
 
+// The typed angle is only honest if every turn is recorded on the object, so a
+// quarter turn reads back as -90 and turning back to 0 restores the geometry.
+const spinSquare = plainSquare('spin', 0, 0);
+const spun = rotatePaths([spinSquare], { x: 100, y: 100 }, Math.PI / 2)[0];
+const spunBack = rotatePaths([spun], { x: 100, y: 100 }, -Math.PI / 2)[0];
+check(
+  'a quarter turn is recorded and reads back as 90',
+  spun.rotation === 90,
+  `rotation ${spun.rotation}`
+);
+check(
+  'turning back to 0 restores the original geometry',
+  spunBack.rotation === 0 &&
+    spunBack.points.every((pt, i) =>
+      Math.abs(pt.x - spinSquare.points[i].x) < 0.001 &&
+      Math.abs(pt.y - spinSquare.points[i].y) < 0.001
+    ),
+  `rotation ${spunBack.rotation}, corner ${spunBack.points[0].x.toFixed(3)},${spunBack.points[0].y.toFixed(3)}`
+);
+
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
 if (failures > 0) process.exit(1);

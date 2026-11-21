@@ -218,6 +218,12 @@ export interface VectorPath {
   /** Extra space between letters, in artboard pixels */
   letterSpacing?: number;
   /**
+   * Degrees of turn applied to this object, measured from the orientation it
+   * was drawn in. Geometry stays baked; this is the record that lets a typed
+   * angle be read back, and 0 return the object to where it started.
+   */
+  rotation?: number;
+  /**
    * Local-to-world affine transform for live text: [a, b, c, d, e, f].
    * The baseline stays in the first point; this keeps scale, rotation and
    * flips on the glyph box without rasterising or moving the anchor.
