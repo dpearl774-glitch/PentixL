@@ -235,6 +235,26 @@ interface ToolOptionsProps {
   onDeleteReference?: () => void;
 }
 
+
+/**
+ * The two arrow buttons that change a stroke's width. Pen and pencil both need
+ * it, and it used to be pasted into each block.
+ */
+const StrokeStepper: React.FC<{ width: number; onChange: (width: number) => void }> = ({
+  width,
+  onChange,
+}) => (
+  <div className="ml-auto flex shrink-0 items-center gap-1 rounded-lg border border-line bg-ink-0 px-1">
+    <IconButton label="Thinner stroke" size="sm" onClick={() => onChange(Math.max(0.5, width - 1))}>
+      <Minus size={12} />
+    </IconButton>
+    <span className="w-6 text-center font-mono text-[11px] font-bold text-dim">{width}</span>
+    <IconButton label="Thicker stroke" size="sm" onClick={() => onChange(width + 1)}>
+      <Plus size={12} />
+    </IconButton>
+  </div>
+);
+
 /**
  * One name per job. The panel title is the tool's, not the selection's, so the
  * same tool always opens the same panel in the same place.
@@ -509,14 +529,170 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   const panel = reference
     ? { name: 'Reference', hint: 'Drag to move · corners resize', icon: <Crop size={13} /> }
     : TOOL_PANELS[tool];
-  const panelIsOpen = isDrawing || !closedPanels.includes(panel.name);
+
+  /**
+   * The panel body as a list of blocks. A list rather than a run of
+   * `{condition && …}` lets the panel ask whether it has anything to show: a
+   * Select panel with an object picked used to render as an empty card.
+   */
+  const panelBlocks = [
+    drawInsideName && (
+      <Chip key="inside" active icon={<Crop size={13} />} onClick={onExitDrawInside}>
+        Inside {drawInsideName.length > 12 ? `${drawInsideName.slice(0, 12)}…` : drawInsideName}
+      </Chip>
+    ),
+    reference && (
+      <React.Fragment key="reference">
+        <span className="max-w-[92px] shrink-0 truncate text-[11px] font-semibold text-text">
+          {reference.name}
+        </span>
+        <span className="shrink-0 font-sans text-[9px] uppercase tracking-wider text-mute">
+          Opacity
+        </span>
+        <RangeInput
+          type="range"
+          min={0.05}
+          max={1}
+          step={0.05}
+          value={reference.opacity}
+          onChange={(e) => onReferenceOpacity?.(parseFloat(e.target.value))}
+          aria-label="Reference opacity"
+          className="w-20 shrink-0"
+        />
+        <span className="w-7 shrink-0 text-right font-mono text-[10px] font-bold text-dim">
+          {Math.round(reference.opacity * 100)}%
+        </span>
+        <Chip
+          active={reference.locked}
+          icon={reference.locked ? <Lock size={13} /> : <LockOpen size={13} />}
+          onClick={onToggleReferenceLock}
+        >
+          {reference.locked ? 'Locked' : 'Unlocked'}
+        </Chip>
+        <Chip icon={<Maximize2 size={13} />} onClick={onFitReference}>
+          Fit
+        </Chip>
+        <IconButton label="Remove reference" size="sm" tone="danger" onClick={onDeleteReference}>
+          <Trash2 size={14} />
+        </IconButton>
+      </React.Fragment>
+    ),
+    isDrawing && (
+      <React.Fragment key="drawing">
+        <span className="rounded-full bg-accent/15 px-2 py-1 font-sans text-[10px] font-bold uppercase tracking-wider text-accent">
+          {drawingPointCount} {drawingPointCount === 1 ? 'node' : 'nodes'}
+        </span>
+        <Chip icon={<Check size={13} />} onClick={onFinishPath}>
+          Done
+        </Chip>
+        {tool === 'pen' && drawingPointCount >= 2 && <Chip onClick={onClosePath}>Close</Chip>}
+        <Chip icon={<X size={13} />} onClick={onCancelPath}>
+          Cancel
+        </Chip>
+      </React.Fragment>
+    ),
+    !isDrawing && tool === 'shape-builder' && (
+      <React.Fragment key="shape-builder">
+        <Chip active={sbMode === 'merge'} onClick={() => onChangeSbMode('merge')}>
+          Merge
+        </Chip>
+        <Chip active={sbMode === 'erase'} onClick={() => onChangeSbMode('erase')}>
+          Erase
+        </Chip>
+      </React.Fragment>
+    ),
+    !isDrawing && tool === 'shape' && (
+      <React.Fragment key="shape">
+        {QUICK_SHAPES.map((s) => (
+          <Chip
+            key={s.kind}
+            active={shapeKind === s.kind}
+            icon={s.icon}
+            onClick={() => onPickShape(s.kind)}
+          >
+            {s.label}
+          </Chip>
+        ))}
+        <Chip icon={<Plus size={13} />} onClick={onOpenShapes}>
+          All 17
+        </Chip>
+      </React.Fragment>
+    ),
+    !isDrawing && (tool === 'pen' || tool === 'pressure-brush') && (
+      <React.Fragment key="pen">
+        <Chip icon={<SlidersHorizontal size={13} />} onClick={onOpenPressure}>
+          Pressure
+        </Chip>
+        {tool === 'pen' && hasSelectedNode && (
+          <>
+            <Divider />
+            <Chip icon={<Spline size={13} />} onClick={onToggleNodeType}>
+              Node type
+            </Chip>
+            <Chip icon={<Trash2 size={13} />} onClick={onDeleteNode}>
+              Delete node
+            </Chip>
+            <Chip icon={<CornerDownRight size={13} />} onClick={onClosePath}>
+              Toggle close
+            </Chip>
+          </>
+        )}
+        <StrokeStepper width={strokeWidth} onChange={onChangeStrokeWidth} />
+        {(strokeColor === 'none' || strokeWidth === 0) && (
+          <span className="shrink-0 whitespace-nowrap font-sans text-[9px] uppercase tracking-wider text-accent">
+            Guide preview · no stroke
+          </span>
+        )}
+      </React.Fragment>
+    ),
+    tool === 'pencil' && (
+      <React.Fragment key="pencil">
+        {(['tight', 'smooth', 'loose'] as const).map((level) => (
+          <Chip
+            key={level}
+            active={pencilSmoothing === level}
+            onClick={() => onChangePencilSmoothing(level)}
+          >
+            {level === 'tight' ? 'Tight' : level === 'smooth' ? 'Smooth' : 'Loose'}
+          </Chip>
+        ))}
+        <StrokeStepper width={strokeWidth} onChange={onChangeStrokeWidth} />
+      </React.Fragment>
+    ),
+    !isDrawing && tool === 'text' && selectedCount === 0 && (
+      <Chip key="text" icon={<TypeIcon size={13} />} onClick={onOpenText}>
+        Add text
+      </Chip>
+    ),
+    !isDrawing && tool === 'select' && selectedCount === 0 && (
+      <React.Fragment key="select">
+        <Chip icon={<Square size={13} />} onClick={() => onQuickShape('rectangle')}>
+          Square
+        </Chip>
+        <Chip icon={<Circle size={13} />} onClick={() => onQuickShape('circle')}>
+          Circle
+        </Chip>
+        <Chip icon={<Star size={13} />} onClick={() => onQuickShape('star')}>
+          Star
+        </Chip>
+        <Chip icon={<TypeIcon size={13} />} onClick={onOpenText}>
+          Text
+        </Chip>
+      </React.Fragment>
+    ),
+  ].filter((block): block is React.ReactElement => Boolean(block));
+
+  const hasPanelContent = panelBlocks.length > 0;
+  const panelIsOpen = hasPanelContent && (isDrawing || !closedPanels.includes(panel.name));
   const togglePanel = () => {
+    if (!hasPanelContent) return;
     const next = panelIsOpen
       ? [...closedPanels, panel.name]
       : closedPanels.filter((name) => name !== panel.name);
     setClosedPanels(next);
     writeClosedPanels(next);
   };
+
   const [alignMenu, setAlignMenu] = React.useState(false);
   const [moreMenu, setMoreMenu] = React.useState(false);
   const [threeDMenu, setThreeDMenu] = React.useState(false);
@@ -934,256 +1110,13 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
     <div className="relative z-20 shrink-0 border-t border-line bg-ink-1/95">
       {panelIsOpen && (
         <ToolPanel name={panel.name} hint={panel.hint} onClose={togglePanel}>
-        {drawInsideName && (
-          <>
-            <Chip active icon={<Crop size={13} />} onClick={onExitDrawInside}>
-              Inside {drawInsideName.length > 12 ? `${drawInsideName.slice(0, 12)}…` : drawInsideName}
-            </Chip>
-            <Divider />
-          </>
-        )}
-        {/* ---------------- Reference image picked on canvas ---------------- */}
-        {reference && (
-          <>
-            <span className="shrink-0 rounded bg-line-strong px-2 py-1 font-sans text-[9px] font-bold uppercase tracking-wide text-dim">
-              Reference
-            </span>
-            <span className="max-w-[92px] shrink-0 truncate text-[11px] font-semibold text-text">
-              {reference.name}
-            </span>
-            <Divider />
-            <span className="shrink-0 font-sans text-[9px] uppercase tracking-wider text-mute">Opacity</span>
-            <RangeInput
-              type="range"
-              min={0.05}
-              max={1}
-              step={0.05}
-              value={reference.opacity}
-              onChange={(e) => onReferenceOpacity?.(parseFloat(e.target.value))}
-              aria-label="Reference opacity"
-              className="w-20 shrink-0"
-            />
-            <span className="w-7 shrink-0 text-right font-mono text-[10px] font-bold text-dim">
-              {Math.round(reference.opacity * 100)}%
-            </span>
-            <Chip
-              active={reference.locked}
-              icon={reference.locked ? <Lock size={13} /> : <LockOpen size={13} />}
-              onClick={onToggleReferenceLock}
-            >
-              {reference.locked ? 'Locked' : 'Unlocked'}
-            </Chip>
-            <Chip icon={<Maximize2 size={13} />} onClick={onFitReference}>
-              Fit
-            </Chip>
-            <IconButton label="Remove reference" size="sm" tone="danger" onClick={onDeleteReference}>
-              <Trash2 size={14} />
-            </IconButton>
-            <span className="ml-1 hidden shrink-0 text-[11px] text-mute sm:block">
-              {reference.locked ? 'Unlock to move and resize' : 'Drag to move · corners resize'}
-            </span>
-          </>
-        )}
-
-        {/* ---------------- Drawing a path ---------------- */}
-        {isDrawing && (
-          <>
-            <span className="rounded-full bg-accent/15 px-2 py-1 font-sans text-[10px] font-bold uppercase tracking-wider text-accent">
-              {drawingPointCount} {drawingPointCount === 1 ? 'node' : 'nodes'}
-            </span>
-            <Chip icon={<Check size={13} />} onClick={onFinishPath}>
-              Done
-            </Chip>
-            {tool === 'pen' && drawingPointCount >= 2 && (
-              <Chip onClick={onClosePath}>Close</Chip>
-            )}
-            <Chip icon={<X size={13} />} onClick={onCancelPath}>
-              Cancel
-            </Chip>
-            <span className="ml-1 hidden shrink-0 text-[11px] text-mute sm:block">
-              {tool === 'pen' ? 'Tap to place · drag to curve' : 'Drag to paint with pressure'}
-            </span>
-          </>
-        )}
-
-        {/* ---------------- Shape builder ---------------- */}
-        {!isDrawing && tool === 'shape-builder' && (
-          <>
-            <Chip active={sbMode === 'merge'} onClick={() => onChangeSbMode('merge')}>
-              Merge
-            </Chip>
-            <Chip active={sbMode === 'erase'} onClick={() => onChangeSbMode('erase')}>
-              Erase
-            </Chip>
-            <Divider />
-            <span className="shrink-0 whitespace-nowrap text-[11px] text-mute">
-              Drag across regions · hold Alt to erase
-            </span>
-          </>
-        )}
-
-        {/* ---------------- Shapes ---------------- */}
-        {!isDrawing && tool === 'shape' && (
-          <>
-            {QUICK_SHAPES.map((s) => (
-              <Chip
-                key={s.kind}
-                active={shapeKind === s.kind}
-                icon={s.icon}
-                onClick={() => onPickShape(s.kind)}
-              >
-                {s.label}
-              </Chip>
-            ))}
-            <Chip icon={<Plus size={13} />} onClick={onOpenShapes}>
-              All 17
-            </Chip>
-            <Divider />
-            <span className="ml-1 hidden shrink-0 text-[11px] text-mute sm:block">
-              Drag on canvas to size
-            </span>
-          </>
-        )}
-
-        {/* ---------------- Pen not drawing / brush ---------------- */}
-        {!isDrawing && (tool === 'pen' || tool === 'pressure-brush') && (
-          <>
-            <span className="shrink-0 text-[11px] text-mute">
-              {tool === 'pen' ? 'Tap to place, drag to pull curves' : 'Draw with pressure'}
-            </span>
-            <Divider />
-            <Chip
-              icon={<SlidersHorizontal size={13} />}
-              onClick={onOpenPressure}
-            >
-              Pressure
-            </Chip>
-            {tool === 'pen' && hasSelectedNode && (
-              <>
-                <Divider />
-                <Chip icon={<Spline size={13} />} onClick={onToggleNodeType}>
-                  Node type
-                </Chip>
-                <Chip icon={<Trash2 size={13} />} onClick={onDeleteNode}>
-                  Delete node
-                </Chip>
-                <Chip icon={<CornerDownRight size={13} />} onClick={onClosePath}>
-                  Toggle close
-                </Chip>
-              </>
-            )}
-            <div className="ml-auto flex shrink-0 items-center gap-1 rounded-lg border border-line bg-ink-0 px-1">
-              <IconButton
-                label="Thinner stroke"
-                size="sm"
-                onClick={() => onChangeStrokeWidth(Math.max(0.5, strokeWidth - 1))}
-              >
-                <Minus size={12} />
-              </IconButton>
-              <span className="w-6 text-center font-mono text-[11px] font-bold text-dim">
-                {strokeWidth}
-              </span>
-              <IconButton
-                label="Thicker stroke"
-                size="sm"
-                onClick={() => onChangeStrokeWidth(strokeWidth + 1)}
-              >
-                <Plus size={12} />
-              </IconButton>
-            </div>
-            {(strokeColor === 'none' || strokeWidth === 0) && (
-              <span className="shrink-0 whitespace-nowrap font-sans text-[9px] uppercase tracking-wider text-accent">
-                Guide preview · no stroke
-              </span>
-            )}
-          </>
-        )}
-
-        {/* ---------------- Pencil ---------------- */}
-        {tool === 'pencil' && (
-          <>
-            <span className="shrink-0 text-[11px] text-mute">
-              Draw freehand · end on the start to close · fills when closed
-            </span>
-            <Divider />
-            {(['tight', 'smooth', 'loose'] as const).map((level) => (
-              <Chip
-                key={level}
-                active={pencilSmoothing === level}
-                onClick={() => onChangePencilSmoothing(level)}
-              >
-                {level === 'tight' ? 'Tight' : level === 'smooth' ? 'Smooth' : 'Loose'}
-              </Chip>
-            ))}
-            <div className="ml-auto flex shrink-0 items-center gap-1 rounded-lg border border-line bg-ink-0 px-1">
-              <IconButton
-                label="Thinner stroke"
-                size="sm"
-                onClick={() => onChangeStrokeWidth(Math.max(0.5, strokeWidth - 1))}
-              >
-                <Minus size={12} />
-              </IconButton>
-              <span className="w-6 text-center font-mono text-[11px] font-bold text-dim">
-                {strokeWidth}
-              </span>
-              <IconButton
-                label="Thicker stroke"
-                size="sm"
-                onClick={() => onChangeStrokeWidth(strokeWidth + 1)}
-              >
-                <Plus size={12} />
-              </IconButton>
-            </div>
-            <span className="shrink-0 font-sans text-[9px] uppercase tracking-wider text-mute">
-              Stroke
-            </span>
-          </>
-        )}
-
-        {/* ---------------- Direct select, nothing picked yet ---------------- */}
-        {!isDrawing && tool === 'direct-select' && selectedCount === 0 && (
-          <span className="text-[11px] text-mute">Tap a path to edit its nodes</span>
-        )}
-
-        {/* ---------------- Text tool, nothing selected ---------------- */}
-        {!isDrawing && tool === 'text' && selectedCount === 0 && (
-          <>
-            {/* Same two swatches as Select, so switching between the two tools
-                no longer clears the strip and moves everything around. */}
-            <Divider />
-            <Chip icon={<TypeIcon size={13} />} onClick={onOpenText}>
-              Add text
-            </Chip>
-            <span className="text-[11px] text-mute">or tap the canvas</span>
-          </>
-        )}
-
-        {/* ---------------- Idle select: quick tools ---------------- */}
-        {!isDrawing && tool === 'select' && selectedCount === 0 && (
-          <>
-            <Chip icon={<Square size={13} />} onClick={() => onQuickShape('rectangle')}>
-              Square
-            </Chip>
-            <Chip icon={<Circle size={13} />} onClick={() => onQuickShape('circle')}>
-              Circle
-            </Chip>
-            <Chip icon={<Star size={13} />} onClick={() => onQuickShape('star')}>
-              Star
-            </Chip>
-            <Chip icon={<TypeIcon size={13} />} onClick={onOpenText}>
-              Text
-            </Chip>
-            <Divider />
-            <span className="ml-auto hidden shrink-0 pr-1 text-[11px] text-mute sm:block">
-              Drag on canvas to draw
-            </span>
-          </>
-        )}
+          {panelBlocks}
         </ToolPanel>
       )}
       <div className="scroll-x mx-auto flex h-11 max-w-3xl items-center gap-1.5 px-2">
         <Chip
           active={panelIsOpen}
+          disabled={!hasPanelContent}
           icon={panel.icon}
           aria-label={`${panel.name} options`}
           onClick={togglePanel}
