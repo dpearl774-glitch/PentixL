@@ -1,10 +1,10 @@
 import { RangeInput } from './ui/primitives';
 import React, { useEffect, useRef, useState } from 'react';
 import { Ban, Check, Info, Pipette, Plus, Trash2, RotateCcw } from 'lucide-react';
-import { GradientDef, StrokeCap, StrokeJoin, VectorPath } from '../types/vector';
+import { GradientDef, GradientStop, StrokeCap, StrokeJoin, VectorPath } from '../types/vector';
 import type { StoredSwatch } from '../utils/projectStorage';
 import { pathToSvgD } from '../utils/bezier';
-import { gradientCss, mixHex, sortedStops } from '../utils/gradients';
+import { clamp01, gradientCss, mixHex, sortedStops } from '../utils/gradients';
 import { Button, SectionLabel, Segmented, Sheet } from './ui/primitives';
 
 type ColorMode = 'fill' | 'stroke' | 'background';
@@ -153,6 +153,113 @@ const useDragValue = (
     ref.current = null;
   };
   return { onPointerDown: handle, onPointerMove: move, onPointerUp: end, onPointerCancel: end };
+};
+
+/**
+ * A wide gradient ramp. Tap the bar to add a stop, drag a handle sideways to
+ * move it, drag it down off the bar to drop it. Handles are thumb-sized and
+ * clamped between their neighbours, so a drag never re-sorts the row under the
+ * finger. Moves paint the canvas immediately through the parent's live update.
+ */
+const GradientRamp: React.FC<{
+  gradient: GradientDef;
+  stops: GradientStop[];
+  selected: number;
+  onSelect: (index: number) => void;
+  onChangeStops: (next: GradientStop[]) => void;
+  onAddAt: (offset: number) => void;
+}> = ({ gradient, stops, selected, onSelect, onChangeStops, onAddAt }) => {
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const [drag, setDrag] = useState<{ index: number; dy: number } | null>(null);
+  const dropping = drag !== null && drag.dy > 46;
+
+  const offsetAt = (clientX: number) => {
+    const rect = barRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return 0;
+    return clamp01((clientX - rect.left) / rect.width);
+  };
+
+  const moveStop = (index: number, raw: number) => {
+    // Stay between the neighbours: crossing them would re-sort the stops and
+    // the finger would end up moving a different stop than it grabbed.
+    const lower = index > 0 ? stops[index - 1].offset + 0.005 : 0;
+    const upper = index < stops.length - 1 ? stops[index + 1].offset - 0.005 : 1;
+    const offset = Math.min(Math.max(raw, lower), Math.max(lower, upper));
+    onChangeStops(stops.map((stop, i) => (i === index ? { ...stop, offset } : stop)));
+  };
+
+  const dropStop = (index: number) => {
+    if (stops.length <= 2) return;
+    onChangeStops(stops.filter((_, i) => i !== index));
+    onSelect(Math.max(0, index - 1));
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div ref={barRef} className="relative">
+        <div
+          role="group"
+          aria-label="Gradient ramp"
+          className="h-[52px] touch-none rounded-lg border border-line"
+          style={{ backgroundImage: gradientCss(gradient) }}
+          onPointerDown={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            onAddAt((event.clientX - rect.left) / rect.width);
+          }}
+        />
+        <div className="relative mt-1 h-9">
+          {stops.map((stop, index) => {
+            const active = index === selected;
+            const beingDragged = drag?.index === index;
+            return (
+              <button
+                key={`${index}-${stop.color}`}
+                type="button"
+                aria-label={`Stop ${index + 1}, ${Math.round(stop.offset * 100)} percent`}
+                aria-pressed={active}
+                className={`absolute top-0 h-8 w-8 -translate-x-1/2 touch-none rounded-full border-2 shadow-lg ${
+                  active ? 'border-accent ring-2 ring-accent/40' : 'border-ink-0/90'
+                } ${beingDragged && dropping ? 'opacity-40' : ''}`}
+                style={{
+                  // Keep the whole handle on screen at the ends of the ramp.
+                  left: `clamp(16px, ${stop.offset * 100}%, calc(100% - 16px))`,
+                  backgroundColor: stop.color,
+                  opacity: beingDragged && dropping ? 0.4 : 0.35 + stop.opacity * 0.65,
+                }}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  onSelect(index);
+                  setDrag({ index, dy: 0 });
+                  try {
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+                onPointerMove={(event) => {
+                  if (drag?.index !== index) return;
+                  const rect = barRef.current?.getBoundingClientRect();
+                  const moved = event.clientY - ((rect?.top ?? 0) + 52 / 2);
+                  setDrag({ index, dy: Math.max(0, moved) });
+                  moveStop(index, offsetAt(event.clientX));
+                }}
+                onPointerUp={() => {
+                  if (drag?.index === index && dropping) dropStop(index);
+                  setDrag(null);
+                }}
+                onPointerCancel={() => setDrag(null)}
+              />
+            );
+          })}
+        </div>
+      </div>
+      <p className={`text-[10px] leading-snug ${dropping ? 'text-danger' : 'text-mute'}`}>
+        {dropping
+          ? 'Release to remove this stop'
+          : 'Tap the ramp to add a stop · drag a handle down to remove it'}
+      </p>
+    </div>
+  );
 };
 
 export const ColorSheet: React.FC<ColorSheetProps> = ({
@@ -531,37 +638,15 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
                   ]}
                 />
 
-                {/* Stop bar */}
-                <div className="flex flex-col gap-1.5">
-                  <div
-                    className="relative h-8 touch-none rounded-lg border border-line"
-                    style={{ backgroundImage: gradientCss(fillGradient) }}
-                    onPointerDown={(e) => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      addStopAt((e.clientX - rect.left) / rect.width);
-                    }}
-                  >
-                    {stops.map((st, i) => (
-                      <button
-                        key={`${st.offset}-${i}`}
-                        type="button"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setStopIndex(i);
-                        }}
-                        aria-label={`Stop ${i + 1}`}
-                        className={`absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 shadow ${
-                          i === stopIndex ? 'border-accent scale-110' : 'border-white/80'
-                        }`}
-                        style={{
-                          left: `${st.offset * 100}%`,
-                          backgroundColor: st.color,
-                          opacity: 0.35 + st.opacity * 0.65,
-                        }}
-                      />
-                    ))}
-                  </div>
+                {/* Wide ramp: tap adds a stop, drag moves one, drag down removes one */}
+                <GradientRamp
+                  gradient={fillGradient}
+                  stops={stops}
+                  selected={stopIndex}
+                  onSelect={setStopIndex}
+                  onAddAt={addStopAt}
+                  onChangeStops={(next) => onUpdateFillGradient({ ...fillGradient, stops: next })}
+                />
 
                   <div className="flex items-center gap-2">
                     <button
@@ -582,10 +667,9 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
                       <Trash2 size={13} />
                     </button>
                     <span className="min-w-0 flex-1 truncate text-[11px] text-mute">
-                      Tap the bar to add a stop
+                      Add at the middle, or remove the selected stop with the bin
                     </span>
                   </div>
-                </div>
 
                 {/* Stop position */}
                 <div className="flex items-center gap-2">
@@ -627,6 +711,26 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
                     <span className="w-9 text-right font-mono text-[11px] font-bold text-dim">
                       {Math.round(fillGradient.angle)}°
                     </span>
+                  </div>
+                )}
+                {fillGradient.type === 'linear' && (
+                  <div className="flex items-center gap-1 pl-14">
+                    {[0, 45, 90, 135, 180].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        aria-label={`Angle ${preset} degrees`}
+                        aria-pressed={Math.round(fillGradient.angle) % 180 === preset % 180}
+                        onClick={() => patchGradient({ angle: preset })}
+                        className={`press h-7 flex-1 rounded-lg text-[10px] font-bold ${
+                          Math.round(fillGradient.angle) % 180 === preset % 180
+                            ? 'bg-line-strong text-text'
+                            : 'bg-ink-3 text-dim'
+                        }`}
+                      >
+                        {preset}°
+                      </button>
+                    ))}
                   </div>
                 )}
 

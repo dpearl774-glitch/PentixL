@@ -38,8 +38,8 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 
 | Badge | Item | Size | Status | Done when |
 |---|---|---|---|---|
-| **FB-13** | Gradient editor is a thin line compared with PixelLab’s full panel | L | OPEN | Gradient opens a panel with a wide ramp, draggable stops, angle, type (linear/radial), and the canvas previews every drag (the `warpPreview` pattern) |
-| **FB-14** | Gradient stops cannot be added, moved or deleted with confidence | M | OPEN | Stop handles hit at thumb size, with add on tap, delete on drag-away |
+| **FB-13** | Gradient editor is a thin line compared with PixelLab’s full panel | L | DONE | Gradient opens a panel with a wide ramp, draggable stops, angle, type (linear/radial), and the canvas previews every drag (the `warpPreview` pattern) |
+| **FB-14** | Gradient stops cannot be added, moved or deleted with confidence | M | DONE | Stop handles hit at thumb size, with add on tap, delete on drag-away |
 
 ## Learning & predictability
 
@@ -75,10 +75,10 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 
 ## Counts
 
-- DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode), FB-10, FB-11 (Transform panel), FB-21, FB-25 (fixed bar, locks)
+- DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode), FB-10, FB-11 (Transform panel), FB-21, FB-25 (fixed bar, locks), FB-13, FB-14 (wide gradient ramp)
 - OPEN, small: FB-04, FB-09
-- OPEN, medium: FB-03, FB-05, FB-14, FB-16, FB-18, FB-24
-- OPEN, large: FB-13, FB-15, FB-22, FB-23
+- OPEN, medium: FB-03, FB-05, FB-16, FB-18, FB-24
+- OPEN, large: FB-15, FB-22, FB-23
 - PARKED: FB-19, FB-20
 
 ## Order I would work them
@@ -86,5 +86,5 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 1. ~~**FB-06** panel multi-select, then **FB-07**/**FB-08**~~ — done: a Select mode ticks rows, and Group / Merge / Delete act on the ticks.
 2. ~~**FB-10**/**FB-11** exact numbers~~ — done: a Transform panel gives X, Y, W, H and a typed turn, from the same frame the handles drag.
 3. **FB-03**/**FB-04** one text panel — stops the strip moving under the thumb while typing.
-4. **FB-13**/**FB-14** gradient behind a wide ramp with live preview.
+4. ~~**FB-13**/**FB-14** gradient behind a wide ramp with live preview~~ — done: a 52 px ramp with draggable stops, tap to add, drag down to remove.
 5. **FB-15**/**FB-16** beginner path, once the panels above exist to be predictable about.
