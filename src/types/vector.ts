@@ -218,6 +218,13 @@ export interface VectorPath {
   /** Extra space between letters, in artboard pixels */
   letterSpacing?: number;
   /**
+   * Distance between baselines as a multiple of the type size. 1.2 when unset,
+   * which is the line height every label has always used.
+   */
+  lineHeight?: number;
+  /** How the lines of a multi-line label line up with each other */
+  textAlign?: 'left' | 'center' | 'right';
+  /**
    * Degrees of turn applied to this object, measured from the orientation it
    * was drawn in. Geometry stays baked; this is the record that lets a typed
    * angle be read back, and 0 return the object to where it started.

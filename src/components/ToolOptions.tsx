@@ -45,6 +45,7 @@ import { PencilSmoothing, ShapeKind, ToolType } from '../types/vector';
 import { BooleanOperation } from '../utils/shapeBuilder';
 import { AlignMode, DistributeAxis } from '../utils/align';
 import { Chip, IconButton, RangeInput } from './ui/primitives';
+import { NumberField as EditableNumber } from './ui/primitives';
 
 /**
  * One-tap shadow colours. They are shortcuts, not the whole story: the picker
@@ -231,63 +232,6 @@ interface ToolOptionsProps {
   onToggleReferenceLock?: () => void;
   onFitReference?: () => void;
   onDeleteReference?: () => void;
-}
-
-/**
- * A number you can type. The steppers are for coarse nudges; badges need exact
- * values (radius 240, bend 36), so the value itself is a field — tap or
- * double-click it, type, Enter to commit.
- */
-function EditableNumber({
-  value,
-  onChange,
-  min = -400,
-  max = 4000,
-  label = 'Type a value',
-}: {
-  value: number;
-  onChange: (value: number) => void;
-  min?: number;
-  max?: number;
-  label?: string;
-}) {
-  const [draft, setDraft] = React.useState<string | null>(null);
-  const commit = () => {
-    if (draft === null) return;
-    const next = Number(draft);
-    setDraft(null);
-    if (Number.isFinite(next)) onChange(Math.max(min, Math.min(max, Math.round(next))));
-  };
-  if (draft === null) {
-    return (
-      <button
-        type="button"
-        aria-label={label}
-        onClick={() => setDraft(String(Math.round(value)))}
-        className="w-10 rounded-md text-center font-mono text-[10px] font-bold text-text"
-      >
-        {Math.round(value)}
-      </button>
-    );
-  }
-  return (
-          <input
-        autoFocus
-        type="number"
-        inputMode="decimal"
-        value={draft}
-        // Opening the field selects the old value, so typing replaces it
-        // instead of appending to it (159 + "100" became 159100).
-        onFocus={(event) => event.currentTarget.select()}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') commit();
-        if (event.key === 'Escape') setDraft(null);
-      }}
-      className="w-12 rounded-md bg-ink-3 px-1 text-center font-mono text-[10px] font-bold text-text"
-    />
-  );
 }
 
 const QUICK_SHAPES: { kind: ShapeKind; label: string; icon: React.ReactNode }[] = [

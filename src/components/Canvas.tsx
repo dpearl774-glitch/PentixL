@@ -42,7 +42,7 @@ import {
   BoundingBox,
   HandleType,
 } from '../utils/transform';
-import { textLineHeight, textLines, textMatrixCss } from '../utils/textGeometry';
+import { textLineHeight, textLines, textLineStarts, textMatrixCss } from '../utils/textGeometry';
 import { warpTextGlyphs } from '../utils/textWarp';
 import { preWarpGeometry, warpPathsInBox } from '../utils/warp';
 import type { WarpSpec } from '../types/vector';
@@ -3039,7 +3039,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                     const fontFamily = path.fontFamily || 'Impact, sans-serif';
                     const fontWeight = path.fontWeight || 'bold';
                     const lines = textLines(path.text);
-                    const lineHeight = textLineHeight(fontSize);
+                    const lineHeight = textLineHeight(fontSize, path.lineHeight);
+                    const lineStarts = textLineStarts(path);
                     const pt = path.points[0] || { x: 50, y: 50 };
                     // Keep the glyphs' own scale/rotation/flip in the same node
                     // as the label, so the visible text and its hitbox agree.
@@ -3190,7 +3191,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                               onPointerDown={handleTextPress}
                             >
                               {lines.map((line, index) => (
-                                <tspan key={index} x={path.textLineX?.[index] ?? 0} dy={index === 0 ? 0 : lineHeight}>
+                                <tspan key={index} x={lineStarts[index] ?? 0} dy={index === 0 ? 0 : lineHeight}>
                                   {line || ' '}
                                 </tspan>
                               ))}
@@ -3221,7 +3222,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                                 </textPath>
                               ) : (
                                 lines.map((line, index) => (
-                                  <tspan key={index} x={path.textLineX?.[index] ?? 0} dy={index === 0 ? 0 : lineHeight}>
+                                  <tspan key={index} x={lineStarts[index] ?? 0} dy={index === 0 ? 0 : lineHeight}>
                                     {line || ' '}
                                   </tspan>
                                 ))

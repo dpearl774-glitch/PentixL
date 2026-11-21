@@ -2,7 +2,7 @@ import { Layer, PressureConfig, VectorPath } from '../types/vector';
 import { saveBlob } from './fileSave';
 import type { SaveOutcome } from './fileSave';
 import { CANVAS } from '../theme';
-import { textLineHeight, textLines, textMatrixCss, textWorldBox } from './textGeometry';
+import { textLineHeight, textLines, textLineStarts, textMatrixCss, textWorldBox } from './textGeometry';
 import { warpTextGlyphs } from './textWarp';
 import { warpPathsInBox } from './warp';
 import { textPathDy, textPathSource } from './textPath';
@@ -297,11 +297,12 @@ export function generateSvgCode(
         ]
           .filter(Boolean)
           .join(' ');
-        const lineHeight = textLineHeight(path.fontSize);
+        const lineHeight = textLineHeight(path.fontSize, path.lineHeight);
+        const lineStarts = textLineStarts(path);
         const body = textLines(path.text)
           .map(
             (line, index) =>
-              `<tspan x="${path.textLineX?.[index] ?? 0}" dy="${index === 0 ? 0 : lineHeight.toFixed(2)}">${escapeXml(line || ' ')}</tspan>`
+              `<tspan x="${lineStarts[index] ?? 0}" dy="${index === 0 ? 0 : lineHeight.toFixed(2)}">${escapeXml(line || ' ')}</tspan>`
           )
           .join('');
         content += `    <text id="path-${path.id}" ${attrs}>${body}</text>\n`;

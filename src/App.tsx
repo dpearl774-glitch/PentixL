@@ -16,7 +16,7 @@ import { ProjectsSheet } from './components/ProjectsSheet';
 import { ExportSheet } from './components/ExportSheet';
 import { PressureSheet } from './components/PressureSheet';
 import { FontsSheet } from './components/FontsSheet';
-import { TextSheet } from './components/TextSheet';
+import { TextSheet, type TextSheetData } from './components/TextSheet';
 import { TraceSheet } from './components/TraceSheet';
 import { HelpSheet } from './components/HelpSheet';
 import { WhatsNewSheet } from './components/WhatsNewSheet';
@@ -85,6 +85,7 @@ import type { PatternSwatch, ShadowEffect } from './types/vector';
 import {
   measureTextMetrics,
   textBaselineForCenterY,
+  textLineStarts,
   textWorldBox,
 } from './utils/textGeometry';
 import { AlignMode, DistributeAxis, alignPaths, distributePaths } from './utils/align';
@@ -1953,14 +1954,7 @@ export default function App() {
   );
 
   const saveText = useCallback(
-    (data: {
-      text: string;
-      fontFamily: string;
-      fontSize: number;
-      letterSpacing: number;
-      fillColor: string;
-      editingPathId: string | null;
-    }) => {
+    (data: TextSheetData) => {
       setSelectedFontFamily(data.fontFamily);
       setRecentFonts((prev) =>
         prev[0] === data.fontFamily
@@ -1979,6 +1973,8 @@ export default function App() {
                     fontFamily: data.fontFamily,
                     fontSize: data.fontSize,
                     letterSpacing: data.letterSpacing,
+                    lineHeight: data.lineHeight,
+                    textAlign: data.textAlign,
                     fill: data.fillColor,
                     name: `Text “${data.text.slice(0, 14)}”`,
                   }
@@ -2002,6 +1998,7 @@ export default function App() {
         fontFamily: data.fontFamily,
         fontWeight,
         letterSpacing: data.letterSpacing,
+        lineHeight: data.lineHeight,
       });
       const textPath: VectorPath = {
         id: `text-${Date.now()}`,
@@ -2017,6 +2014,7 @@ export default function App() {
                 fontFamily: data.fontFamily,
                 fontWeight,
                 letterSpacing: data.letterSpacing,
+                lineHeight: data.lineHeight,
               },
               origin.y
             ),
@@ -2037,6 +2035,8 @@ export default function App() {
         fontFamily: data.fontFamily,
         fontWeight,
         letterSpacing: data.letterSpacing,
+        lineHeight: data.lineHeight,
+        textAlign: data.textAlign,
         ...(host && hostStart
           ? { textPath: { pathId: host.id, offset: 0 }, textMatrix: [1, 0, 0, 1, 0, 0] as [number, number, number, number, number, number] }
           : {}),
@@ -2115,6 +2115,8 @@ export default function App() {
             strokeColor: textPath.stroke !== 'none' ? textPath.stroke : 'none',
             strokeWidth: textPath.strokeWidth || 0,
             matrix: [1, 0, 0, 1, 0, 0],
+            lineHeight: textPath.lineHeight,
+            lineX: textLineStarts(textPath),
           })
         );
         if (warped) {
@@ -5009,11 +5011,19 @@ export default function App() {
         initialFontFamily={textEditPath?.fontFamily ?? selectedFontFamily}
         initialFontSize={textEditPath?.fontSize ?? 64}
         initialLetterSpacing={textEditPath?.letterSpacing ?? 0}
+        initialLineHeight={textEditPath?.lineHeight ?? 1.2}
+        initialTextAlign={textEditPath?.textAlign ?? 'left'}
         initialFillColor={textEditPath?.fill ?? fillColor}
         customFonts={customFonts}
         recentFonts={recentFonts}
         editingPathId={textEditPath?.id ?? null}
         onSave={saveText}
+        onOpenFill={(data) => {
+          // Keep what the panel holds, then hand the label to the paint sheet,
+          // where the fill can be a gradient as easily as a flat colour.
+          saveText(data);
+          setSheet('color');
+        }}
       />
 
       <TraceSheet

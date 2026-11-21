@@ -16,8 +16,10 @@ export function textLines(text?: string): string[] {
   return (text ?? '').split(/\r?\n/);
 }
 
-export function textLineHeight(fontSize?: number): number {
-  return Math.max(1, fontSize || 48) * 1.2;
+/** Baseline distance: 1.2 × the type size unless the label overrides it. */
+export function textLineHeight(fontSize?: number, multiplier?: number): number {
+  const factor = multiplier && multiplier > 0 ? multiplier : 1.2;
+  return Math.max(1, fontSize || 48) * factor;
 }
 
 export interface TextMetricsInput {
@@ -26,6 +28,8 @@ export interface TextMetricsInput {
   fontFamily?: string;
   fontWeight?: string;
   letterSpacing?: number;
+  /** Baseline distance as a multiple of the size; 1.2 when unset */
+  lineHeight?: number;
 }
 
 const FALLBACK_ASCENT = 0.8;
@@ -72,7 +76,7 @@ export function measureTextMetrics(input: TextMetricsInput): TextMetricsBox {
   if (cached) return cached;
 
   const lines = textLines(text);
-  const lineHeight = textLineHeight(size);
+  const lineHeight = textLineHeight(size, input.lineHeight);
   const extraLines = Math.max(0, lines.length - 1) * lineHeight;
   const fallbackWidth = Math.max(
     2,
@@ -120,6 +124,45 @@ export function measureTextMetrics(input: TextMetricsInput): TextMetricsBox {
 
   if (cacheable) metricsCache.set(key, result);
   return result;
+}
+
+/**
+ * Where each line starts, in the label's own space, so a stack of lines can be
+ * centred or right-aligned under one anchor. The last line of a left-aligned
+ * label (and any single-line label) stays exactly where it was.
+ */
+export function lineAlignOffsets(
+  lines: string[],
+  input: TextMetricsInput,
+  align: 'left' | 'center' | 'right' = 'left'
+): number[] {
+  if (align === 'left' || lines.length < 2) return lines.map(() => 0);
+  const widths = lines.map((line) => measureTextMetrics({ ...input, text: line }).width);
+  const widest = Math.max(...widths);
+  return widths.map((width) => (align === 'center' ? (widest - width) / 2 : widest - width));
+}
+
+/**
+ * Where each line of this label starts, alignment included. A wrapped label
+ * already stores its own per-line offsets, so those win over alignment.
+ */
+export function textLineStarts(path: VectorPath): number[] {
+  const lines = textLines(path.text);
+  if (path.textLineX?.length) {
+    const stored = path.textLineX;
+    return lines.map((_, index) => stored[index] ?? 0);
+  }
+  return lineAlignOffsets(
+    lines,
+    {
+      fontSize: path.fontSize,
+      fontFamily: path.fontFamily,
+      fontWeight: path.fontWeight,
+      letterSpacing: path.letterSpacing,
+      lineHeight: path.lineHeight,
+    },
+    path.textAlign
+  );
 }
 
 const advanceCache = new Map<string, number[]>();

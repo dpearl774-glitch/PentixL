@@ -27,6 +27,7 @@ export function outlineLayoutText(
     fontFamily: label.fontFamily,
     fontWeight: label.fontWeight,
     fillColor: label.fill,
+    lineHeight: label.lineHeight,
     strokeColor: label.stroke === 'none' ? 'none' : label.stroke,
     strokeWidth: label.strokeWidth || 0,
   };

@@ -13,8 +13,8 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 |---|---|---|---|---|
 | **FB-01** | Converted outlines arrived as one object per letter, including the dot of an `i` | S | **DONE** `39353ba` | “To curves” lands the letters in one named group; one colour applies to the whole word, the group still opens for a single letter |
 | **FB-02** | No way to re-colour part of a converted word without hunting rows | S | **DONE** with FB-01 | Selecting one letter inside the group tints only that letter |
-| **FB-03** | Text editing is split between canvas editing and a strip that changes under you | M | OPEN | Editing a label opens one panel that owns font, size, tracking, line height, align and fill, and stays put while you type |
-| **FB-04** | No exact size/tracking entry for type | S | OPEN | Type size and tracking accept typed numbers; the canvas follows live |
+| **FB-03** | Text editing is split between canvas editing and a strip that changes under you | M | DONE | Editing a label opens one panel that owns font, size, tracking, line height, align and fill, and stays put while you type |
+| **FB-04** | No exact size/tracking entry for type | S | DONE | Type size and tracking accept typed numbers; the canvas follows live |
 | **FB-05** | Converting to curves feels mandatory for effects | M | OPEN | Warp, outline and gradient all work on live text, so conversion is a choice, not a step |
 
 ## Objects & layers
@@ -75,9 +75,9 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 
 ## Counts
 
-- DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode), FB-10, FB-11 (Transform panel), FB-21, FB-25 (fixed bar, locks), FB-13, FB-14 (wide gradient ramp)
-- OPEN, small: FB-04, FB-09
-- OPEN, medium: FB-03, FB-05, FB-16, FB-18, FB-24
+- DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode), FB-10, FB-11 (Transform panel), FB-21, FB-25 (fixed bar, locks), FB-13, FB-14 (wide gradient ramp), FB-03, FB-04 (text panel with typed numbers)
+- OPEN, small: FB-09
+- OPEN, medium: FB-05, FB-16, FB-18, FB-24
 - OPEN, large: FB-15, FB-22, FB-23
 - PARKED: FB-19, FB-20
 
@@ -85,6 +85,6 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 
 1. ~~**FB-06** panel multi-select, then **FB-07**/**FB-08**~~ — done: a Select mode ticks rows, and Group / Merge / Delete act on the ticks.
 2. ~~**FB-10**/**FB-11** exact numbers~~ — done: a Transform panel gives X, Y, W, H and a typed turn, from the same frame the handles drag.
-3. **FB-03**/**FB-04** one text panel — stops the strip moving under the thumb while typing.
+3. ~~**FB-03**/**FB-04** one text panel — stops the strip moving under the thumb while typing~~ — done: one sheet owns typeface, size, tracking, leading, align and fill, with typed numbers for the three.
 4. ~~**FB-13**/**FB-14** gradient behind a wide ramp with live preview~~ — done: a 52 px ramp with draggable stops, tap to add, drag down to remove.
 5. **FB-15**/**FB-16** beginner path, once the panels above exist to be predictable about.

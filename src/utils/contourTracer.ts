@@ -663,6 +663,10 @@ export function expandTextToVectorPaths(
     originY?: number;
     /** Local-to-world transform stored on a live text object */
     matrix?: TextMatrix;
+    /** Baseline distance as a multiple of the size; 1.2 when unset */
+    lineHeight?: number;
+    /** Per-line left edges, so a stack keeps its alignment when baked */
+    lineX?: number[];
   } = {}
 ): VectorPath[] {
   if (!text || text.trim().length === 0) return [];
@@ -678,6 +682,8 @@ export function expandTextToVectorPaths(
     originX = 100,
     originY = 200,
     matrix,
+    lineHeight,
+    lineX,
   } = options;
 
   // Exact route first: the file knows its own outline, so use it as-is. This
@@ -695,6 +701,8 @@ export function expandTextToVectorPaths(
       originX,
       originY,
       matrix,
+      lineHeight,
+      lineX,
     });
     if (exact) {
       // A file with no heavy sibling is what the browser fakes bold from, and

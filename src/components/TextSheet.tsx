@@ -1,7 +1,7 @@
 import { RangeInput } from './ui/primitives';
 import React, { useEffect, useState } from 'react';
-import { Check, Type as TypeIcon } from 'lucide-react';
-import { Button, Chip, SectionLabel, Sheet } from './ui/primitives';
+import { AlignCenter, AlignLeft, AlignRight, Check, Type as TypeIcon } from 'lucide-react';
+import { Button, Chip, NumberField, SectionLabel, Sheet } from './ui/primitives';
 
 export const SYSTEM_FONTS = [
   { value: 'Plus Jakarta Sans, sans-serif', label: 'Jakarta' },
@@ -12,6 +12,19 @@ export const SYSTEM_FONTS = [
   { value: "'Courier New', monospace", label: 'Courier' },
 ];
 
+export type TextAlign = 'left' | 'center' | 'right';
+
+export interface TextSheetData {
+  text: string;
+  fontFamily: string;
+  fontSize: number;
+  letterSpacing: number;
+  lineHeight: number;
+  textAlign: TextAlign;
+  fillColor: string;
+  editingPathId: string | null;
+}
+
 interface TextSheetProps {
   open: boolean;
   onClose: () => void;
@@ -19,22 +32,20 @@ interface TextSheetProps {
   initialFontFamily: string;
   initialFontSize: number;
   initialLetterSpacing: number;
+  initialLineHeight: number;
+  initialTextAlign: TextAlign;
   initialFillColor: string;
   customFonts: string[];
   /** Most recently used first, so a big library stays out of the way */
   recentFonts: string[];
   editingPathId: string | null;
-  onSave: (data: {
-    text: string;
-    fontFamily: string;
-    fontSize: number;
-    letterSpacing: number;
-    fillColor: string;
-    editingPathId: string | null;
-  }) => void;
+  onSave: (data: TextSheetData) => void;
+  /** Keep what is in the panel, then hand the label to the paint sheet */
+  onOpenFill?: (data: TextSheetData) => void;
 }
 
 const SIZES = [24, 36, 48, 64, 84, 110];
+const LEADING = [1, 1.2, 1.4, 1.6, 1.8];
 
 export const TextSheet: React.FC<TextSheetProps> = ({
   open,
@@ -43,16 +54,21 @@ export const TextSheet: React.FC<TextSheetProps> = ({
   initialFontFamily,
   initialFontSize,
   initialLetterSpacing,
+  initialLineHeight,
+  initialTextAlign,
   initialFillColor,
   customFonts,
   recentFonts,
   editingPathId,
   onSave,
+  onOpenFill,
 }) => {
   const [text, setText] = useState(initialText);
   const [fontFamily, setFontFamily] = useState(initialFontFamily);
   const [fontSize, setFontSize] = useState(initialFontSize);
   const [letterSpacing, setLetterSpacing] = useState(initialLetterSpacing);
+  const [lineHeight, setLineHeight] = useState(initialLineHeight);
+  const [textAlign, setTextAlign] = useState<TextAlign>(initialTextAlign);
   const [fillColor, setFillColor] = useState(initialFillColor);
   const [query, setQuery] = useState('');
 
@@ -62,9 +78,20 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     setFontFamily(initialFontFamily);
     setFontSize(initialFontSize);
     setLetterSpacing(initialLetterSpacing);
+    setLineHeight(initialLineHeight);
+    setTextAlign(initialTextAlign);
     setFillColor(initialFillColor);
     setQuery('');
-  }, [open, initialText, initialFontFamily, initialFontSize, initialLetterSpacing, initialFillColor]);
+  }, [
+    open,
+    initialText,
+    initialFontFamily,
+    initialFontSize,
+    initialLetterSpacing,
+    initialLineHeight,
+    initialTextAlign,
+    initialFillColor,
+  ]);
 
   const allFonts = React.useMemo(() => {
     const system = SYSTEM_FONTS.map((f) => ({ value: f.value, label: f.label }));
@@ -113,9 +140,20 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     );
   };
 
+  const data = (): TextSheetData => ({
+    text: text.trim(),
+    fontFamily,
+    fontSize,
+    letterSpacing,
+    lineHeight,
+    textAlign,
+    fillColor,
+    editingPathId,
+  });
+
   const submit = () => {
     if (!text.trim()) return;
-    onSave({ text: text.trim(), fontFamily, fontSize, letterSpacing, fillColor, editingPathId });
+    onSave(data());
     onClose();
   };
 
@@ -129,10 +167,16 @@ export const TextSheet: React.FC<TextSheetProps> = ({
       fontFamily !== initialFontFamily ||
       fontSize !== initialFontSize ||
       letterSpacing !== initialLetterSpacing ||
+      lineHeight !== initialLineHeight ||
+      textAlign !== initialTextAlign ||
       fillColor !== initialFillColor;
     if (changed) submit();
     else onClose();
   };
+
+  // Lines are only shifted against each other, so a single line has nothing to
+  // align; the control says so rather than pretending to move the label.
+  const lineCount = text.split(/\r?\n/).length;
 
   return (
     <Sheet
@@ -186,7 +230,16 @@ export const TextSheet: React.FC<TextSheetProps> = ({
         <section className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <SectionLabel>Size</SectionLabel>
-            <span className="font-mono text-[11px] font-bold text-accent">{fontSize} px</span>
+            <span className="flex items-center gap-1">
+              <NumberField
+                value={fontSize}
+                onChange={setFontSize}
+                min={6}
+                max={400}
+                label="Font size in pixels"
+              />
+              <span className="font-mono text-[10px] text-mute">px</span>
+            </span>
           </div>
           <RangeInput
             type="range"
@@ -209,9 +262,15 @@ export const TextSheet: React.FC<TextSheetProps> = ({
         <section className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <SectionLabel>Letter spacing</SectionLabel>
-            <span className="font-mono text-[11px] font-bold text-accent">
-              {letterSpacing > 0 ? '+' : ''}
-              {letterSpacing} px
+            <span className="flex items-center gap-1">
+              <NumberField
+                value={letterSpacing}
+                onChange={setLetterSpacing}
+                min={-20}
+                max={96}
+                label="Letter spacing in pixels"
+              />
+              <span className="font-mono text-[10px] text-mute">px</span>
             </span>
           </div>
           <RangeInput
@@ -232,6 +291,73 @@ export const TextSheet: React.FC<TextSheetProps> = ({
           </div>
         </section>
 
+        <section className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <SectionLabel>Line height</SectionLabel>
+            <span className="flex items-center gap-1">
+              <NumberField
+                value={lineHeight}
+                onChange={setLineHeight}
+                min={0.5}
+                max={4}
+                decimals={2}
+                label="Line height multiplier"
+              />
+              <span className="font-mono text-[10px] text-mute">
+                × {Math.round(fontSize * lineHeight)} px
+              </span>
+            </span>
+          </div>
+          <RangeInput
+            type="range"
+            min={0.8}
+            max={2.4}
+            step={0.05}
+            value={lineHeight}
+            onChange={(e) => setLineHeight(Number(Number(e.target.value).toFixed(2)))}
+            aria-label="Line height"
+          />
+          <div className="flex items-center gap-1.5">
+            {LEADING.map((v) => (
+              <Chip key={v} active={Math.abs(lineHeight - v) < 0.001} onClick={() => setLineHeight(v)}>
+                <span className="font-mono text-[11px]">{v}</span>
+              </Chip>
+            ))}
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <SectionLabel>Align</SectionLabel>
+            {lineCount < 2 && <span className="font-mono text-[10px] text-mute">one line</span>}
+          </div>
+          <div className="flex items-center gap-1">
+            {(
+              [
+                { value: 'left' as const, icon: AlignLeft, label: 'Align lines left' },
+                { value: 'center' as const, icon: AlignCenter, label: 'Align lines centre' },
+                { value: 'right' as const, icon: AlignRight, label: 'Align lines right' },
+              ]
+            ).map(({ value, icon: Icon, label }) => (
+              <button
+                key={value}
+                type="button"
+                aria-label={label}
+                aria-pressed={textAlign === value}
+                disabled={lineCount < 2}
+                onClick={() => setTextAlign(value)}
+                className={`press grid h-8 flex-1 place-items-center rounded-md border ${
+                  textAlign === value
+                    ? 'border-accent/60 bg-ink-3 text-text'
+                    : 'border-line bg-ink-0 text-dim hover:text-text'
+                } ${lineCount < 2 ? 'opacity-40' : ''}`}
+              >
+                <Icon size={15} />
+              </button>
+            ))}
+          </div>
+        </section>
+
         <section className="flex items-center gap-3">
           <SectionLabel>Colour</SectionLabel>
           <label className="relative h-8 w-8 shrink-0 cursor-pointer overflow-hidden rounded-lg border border-line-strong">
@@ -246,18 +372,30 @@ export const TextSheet: React.FC<TextSheetProps> = ({
           </label>
           <span className="font-mono text-[11px] text-dim">{fillColor.toUpperCase()}</span>
           <span className="flex-1" />
+          {onOpenFill && (
+            <button
+              type="button"
+              onClick={() => onOpenFill(data())}
+              disabled={!text.trim()}
+              className="press rounded-md border border-line px-2 py-1.5 text-[11px] font-semibold text-dim hover:text-text disabled:opacity-40"
+            >
+              Gradient…
+            </button>
+          )}
           <TypeIcon size={14} className="text-mute" />
         </section>
 
-        {/* Preview */}
+        {/* Preview: the same line height and alignment the artboard will use */}
         <div className="grid min-h-[86px] place-items-center overflow-hidden rounded-lg border border-line bg-ink-0 px-3 py-4">
           <p
-            className="max-w-full break-words text-center font-bold leading-tight"
+            className="max-w-full break-words font-bold"
             style={{
               fontFamily,
               color: fillColor,
               fontSize: Math.min(fontSize, 44),
               letterSpacing: letterSpacing * (Math.min(fontSize, 44) / fontSize),
+              lineHeight,
+              textAlign,
             }}
           >
             {text.trim() || 'Brand name'}

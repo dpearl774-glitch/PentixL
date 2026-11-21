@@ -152,6 +152,8 @@ export interface FontOutlineOptions {
   originX?: number;
   originY?: number;
   matrix?: TextMatrix;
+  /** Baseline distance as a multiple of the size; 1.2 when unset. */
+  lineHeight?: number;
   /** Area type: each line starts at its own left edge, like SVG tspan x. */
   lineX?: number[];
 }
@@ -520,7 +522,7 @@ export function fontOutlinePaths(options: FontOutlineOptions): VectorPath[] | nu
   const strokeWidth = options.strokeWidth ?? 0;
   const originX = options.originX ?? 0;
   const originY = options.originY ?? 0;
-  const lineHeight = textLineHeight(fontSize);
+  const lineHeight = textLineHeight(fontSize, options.lineHeight);
 
   const toWorld = (point: Point): Point => {
     const mapped = options.matrix ? applyTextMatrix(options.matrix, point) : point;

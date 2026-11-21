@@ -1729,6 +1729,8 @@ const textSheetHtml = renderToStaticMarkup(
     initialFontFamily="Inter Tight"
     initialFontSize={64}
     initialLetterSpacing={0}
+    initialLineHeight={1.2}
+    initialTextAlign="left"
     initialFillColor="#CDFF5C"
     customFonts={manyFonts}
     recentFonts={['Space Grotesk', 'Impact, sans-serif']}
@@ -1737,6 +1739,13 @@ const textSheetHtml = renderToStaticMarkup(
   />
 );
 check('font search field present', textSheetHtml.includes('aria-label="Search fonts"'));
+check(
+  'text panel owns size, tracking, line height and align',
+  textSheetHtml.includes('aria-label="Font size in pixels"') &&
+    textSheetHtml.includes('aria-label="Letter spacing in pixels"') &&
+    textSheetHtml.includes('aria-label="Line height"') &&
+    textSheetHtml.includes('aria-label="Align lines centre"')
+);
 check(
   'recent fonts come before the full list',
   textSheetHtml.includes('>Recent<') &&

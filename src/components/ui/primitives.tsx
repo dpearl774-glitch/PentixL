@@ -165,6 +165,73 @@ export function Segmented<T extends string>({
 }
 
 /**
+ * A number you can type. Sliders are for feel; sizes, radii and line heights
+ * need exact values, so the value itself is a field — tap it, type, Enter.
+ * Opening the field selects the old value, so typing replaces it instead of
+ * appending to it (159 + "100" used to become 159100).
+ */
+export const NumberField: React.FC<{
+  value: number;
+  onChange: (value: number) => void;
+  min?: number;
+  max?: number;
+  label?: string;
+  /** Digits after the point; 0 rounds to whole units */
+  decimals?: number;
+  className?: string;
+  inputClassName?: string;
+}> = ({
+  value,
+  onChange,
+  min = -400,
+  max = 4000,
+  label = 'Type a value',
+  decimals = 0,
+  className = 'w-10',
+  inputClassName = 'w-12',
+}) => {
+  const [draft, setDraft] = React.useState<string | null>(null);
+  const display = decimals > 0 ? value.toFixed(decimals) : String(Math.round(value));
+  const commit = () => {
+    if (draft === null) return;
+    const next = Number(draft);
+    setDraft(null);
+    if (Number.isFinite(next)) {
+      const clamped = Math.max(min, Math.min(max, next));
+      onChange(decimals > 0 ? Number(clamped.toFixed(decimals)) : Math.round(clamped));
+    }
+  };
+  if (draft === null) {
+    return (
+      <button
+        type="button"
+        aria-label={label}
+        onClick={() => setDraft(display)}
+        className={`${className} rounded-md text-center font-mono text-[10px] font-bold text-text`}
+      >
+        {display}
+      </button>
+    );
+  }
+  return (
+    <input
+      autoFocus
+      type="number"
+      inputMode="decimal"
+      value={draft}
+      onFocus={(event) => event.currentTarget.select()}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') commit();
+        if (event.key === 'Escape') setDraft(null);
+      }}
+      className={`${inputClassName} rounded-md bg-ink-3 px-1 text-center font-mono text-[10px] font-bold text-text`}
+    />
+  );
+};
+
+/**
  * Range input with click/drag intent detection. The native control stays in
  * place for keyboard access and painting, but the overlay owns pointer
  * gestures: a tap sets a value, horizontal movement scrubs, and vertical

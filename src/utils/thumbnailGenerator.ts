@@ -3,7 +3,7 @@ import { pathToSvgD } from './bezier';
 import { isPatternPreviewPath } from './effects';
 import { gradientIdFor } from './svgExport';
 import { gradientMarkup } from './gradients';
-import { textLineHeight, textLines, textMatrixCss } from './textGeometry';
+import { textLineHeight, textLines, textLineStarts, textMatrixCss } from './textGeometry';
 import { warpTextGlyphs } from './textWarp';
 import {
   extrusionFaces,
@@ -94,11 +94,12 @@ export function generateProjectThumbnailSvg(
             )
             .join('');
         }
-        const lineHeight = textLineHeight(path.fontSize);
+        const lineHeight = textLineHeight(path.fontSize, path.lineHeight);
+        const lineStarts = textLineStarts(path);
         const body = textLines(path.text)
           .map(
             (line, index) =>
-              `<tspan x="${path.textLineX?.[index] ?? 0}" dy="${index === 0 ? 0 : lineHeight}">${escapeXml(line || ' ')}</tspan>`
+              `<tspan x="${lineStarts[index] ?? 0}" dy="${index === 0 ? 0 : lineHeight}">${escapeXml(line || ' ')}</tspan>`
           )
           .join('');
         return `<text x="0" y="0" transform="translate(${origin.x} ${origin.y}) ${textMatrixCss(path.textMatrix)}" fill="${escapeXml(textFill)}" fill-opacity="${(path.fillOpacity ?? 1) * layerOpacity}" font-family="${escapeXml(path.fontFamily || 'sans-serif')}" font-size="${path.fontSize || 64}" font-weight="${escapeXml(path.fontWeight || 'bold')}" letter-spacing="${path.letterSpacing ?? 0}"${clipAttr}>${body}</text>`;

@@ -195,7 +195,7 @@ export function warpTextPlacements(path: VectorPath): TextGlyphPlacement[] | nul
 
   const local = textMatrixFor(path);
   const origin = path.points[0] ?? { x: 0, y: 0 };
-  const lineHeight = textLineHeight(path.fontSize);
+  const lineHeight = textLineHeight(path.fontSize, path.lineHeight);
   const kind = textWarpKind(spec);
   const warped = { ...spec, kind };
   const fontSize = Math.max(1, path.fontSize || 48);
