@@ -354,6 +354,8 @@ const toolOptionsBase: React.ComponentProps<typeof ToolOptions> = {
   onDuplicate: noop,
   onDelete: noop,
   onFlip: noop,
+  onGroup: noop,
+  onMerge: noop,
   onBoolean: noop,
   onEditText: noop,
   onExpandText: noop,

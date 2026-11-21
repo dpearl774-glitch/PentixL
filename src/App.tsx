@@ -1583,6 +1583,15 @@ export default function App() {
     [applyLayers, commitHistory, notify, selectedPaths, selection.selectedPathIds]
   );
 
+  const lockedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const layer of layers) {
+      if (layer.locked) layer.paths.forEach((path) => ids.add(path.id));
+      else layer.paths.forEach((path) => { if (path.locked) ids.add(path.id); });
+    }
+    return ids;
+  }, [layers]);
+
   const nudge = useCallback(
     (dx: number, dy: number) => {
       if (!selection.selectedPathIds.length) return;
@@ -2410,7 +2419,9 @@ export default function App() {
       const dx = axis === 'x' ? value - box.minX : 0;
       const dy = axis === 'y' ? value - box.minY : 0;
       if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) return;
-      const ids = new Set(selection.selectedPathIds);
+      // Locked objects are skipped, so a typed value never moves frozen artwork.
+      const ids = new Set(selection.selectedPathIds.filter((id) => !lockedIds.has(id)));
+      if (ids.size === 0) return;
       applyLayers((prev) =>
         prev.map((layer) => ({
           ...layer,
@@ -2421,7 +2432,7 @@ export default function App() {
       );
       haptic(8);
     },
-    [applyLayers, selectedPaths, selection.selectedPathIds]
+    [applyLayers, lockedIds, selectedPaths, selection.selectedPathIds]
   );
 
   const resizeSelectionTo = useCallback(
@@ -2437,7 +2448,9 @@ export default function App() {
       const origin = { x: box.minX, y: box.minY };
       const sx = axis === 'w' ? factor : 1;
       const sy = axis === 'h' ? factor : 1;
-      const ids = new Set(selection.selectedPathIds);
+      // Locked objects are skipped, so a typed value never moves frozen artwork.
+      const ids = new Set(selection.selectedPathIds.filter((id) => !lockedIds.has(id)));
+      if (ids.size === 0) return;
       applyLayers((prev) =>
         prev.map((layer) => ({
           ...layer,
@@ -2448,7 +2461,7 @@ export default function App() {
       );
       haptic(8);
     },
-    [applyLayers, selectedPaths, selection.selectedPathIds]
+    [applyLayers, lockedIds, selectedPaths, selection.selectedPathIds]
   );
 
   /** The angle the selection has been turned to, read back from the objects. */
@@ -2463,7 +2476,9 @@ export default function App() {
       if (Math.abs(delta) < 0.01) return;
       const center = { x: box.minX + box.width / 2, y: box.minY + box.height / 2 };
       const radians = (delta * Math.PI) / 180;
-      const ids = new Set(selection.selectedPathIds);
+      // Locked objects are skipped, so a typed value never moves frozen artwork.
+      const ids = new Set(selection.selectedPathIds.filter((id) => !lockedIds.has(id)));
+      if (ids.size === 0) return;
       applyLayers((prev) =>
         prev.map((layer) => ({
           ...layer,
@@ -2474,7 +2489,7 @@ export default function App() {
       );
       haptic(8);
     },
-    [applyLayers, selectedPaths, selection.selectedPathIds]
+    [applyLayers, lockedIds, selectedPaths, selection.selectedPathIds]
   );
 
   const turnSelectionBy = useCallback(
@@ -2484,7 +2499,9 @@ export default function App() {
       if (!box) return;
       const center = { x: box.minX + box.width / 2, y: box.minY + box.height / 2 };
       const radians = (degrees * Math.PI) / 180;
-      const ids = new Set(selection.selectedPathIds);
+      // Locked objects are skipped, so a typed value never moves frozen artwork.
+      const ids = new Set(selection.selectedPathIds.filter((id) => !lockedIds.has(id)));
+      if (ids.size === 0) return;
       applyLayers((prev) =>
         prev.map((layer) => ({
           ...layer,
@@ -2495,7 +2512,7 @@ export default function App() {
       );
       haptic(8);
     },
-    [applyLayers, selectedPaths, selection.selectedPathIds]
+    [applyLayers, lockedIds, selectedPaths, selection.selectedPathIds]
   );
 
   /**
@@ -4450,6 +4467,8 @@ export default function App() {
         onDuplicate={duplicateSelection}
         onDelete={deleteSelection}
         onFlip={flipSelection}
+        onGroup={() => groupSelectedObjects()}
+        onMerge={() => mergePathsByIds(selection.selectedPathIds)}
         onBoolean={runBoolean}
         onEditText={() => openTextSheet({ path: editingTextPath })}
         onExpandText={expandSelectedText}

@@ -36,6 +36,8 @@ import {
   AlignVerticalSpaceAround,
   Pipette,
   Move,
+  Layers as LayersIcon,
+  Combine,
   RotateCcw,
   RotateCw,
 } from 'lucide-react';
@@ -81,6 +83,10 @@ interface ToolOptionsProps {
   onDuplicate: () => void;
   onDelete: () => void;
   onFlip: (dir: 'horizontal' | 'vertical') => void;
+  /** Group the selection into one object, as the Objects panel does */
+  onGroup: () => void;
+  /** Merge the selection into one editable path */
+  onMerge: () => void;
   onBoolean: (op: BooleanOperation) => void;
   onEditText: () => void;
   onExpandText: () => void;
@@ -384,6 +390,8 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   onDuplicate,
   onDelete,
   onFlip,
+  onGroup,
+  onMerge,
   onBoolean,
   onEditText,
   onExpandText,
@@ -1219,6 +1227,22 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                 >
                   Align
                 </Chip>
+                {/* Group and Merge sit here for every selection, greyed until two
+                    objects are picked, so their place never depends on what is selected. */}
+                <Chip
+                  icon={<LayersIcon size={13} />}
+                  onClick={onGroup}
+                  disabled={selectedCount < 2}
+                >
+                  Group
+                </Chip>
+                <Chip
+                  icon={<Combine size={13} />}
+                  onClick={onMerge}
+                  disabled={selectedCount < 2 || hasTextSelection}
+                >
+                  Merge
+                </Chip>
                 <Chip
                   active={moreMenu}
                   icon={<SlidersHorizontal size={13} />}
@@ -1231,6 +1255,9 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                 >
                   More
                 </Chip>
+                <IconButton label="Delete" size="sm" tone="danger" onClick={onDelete}>
+                  <Trash2 size={14} />
+                </IconButton>
                 {/* Named, because two bare mirror glyphs beside More read as
                     decoration nobody could identify. */}
                 <Chip icon={<FlipHorizontal size={13} />} onClick={() => onFlip('horizontal')}>
@@ -1254,9 +1281,6 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                 >
                   3D{extrudeDepth > 0 ? ` · ${Math.round(extrudeDepth)}` : ''}
                 </Chip>
-                <IconButton label="Delete" size="sm" tone="danger" onClick={onDelete}>
-                  <Trash2 size={14} />
-                </IconButton>
 
                 {hasTextSelection && (
                   <>
