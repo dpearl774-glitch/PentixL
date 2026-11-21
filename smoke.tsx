@@ -13,6 +13,7 @@ import { nestSubpaths, parsePathDataToSubpaths, parseTransform } from './src/uti
 import { ToolOptions } from './src/components/ToolOptions';
 import { TextSheet } from './src/components/TextSheet';
 import { ToolPanel } from './src/components/ToolPanel';
+import { FirstRunTour } from './src/components/FirstRunTour';
 import { TopBar } from './src/components/TopBar';
 import { FontsSheet } from './src/components/FontsSheet';
 import { fitBezierPath } from './src/utils/curveFit';
@@ -1745,6 +1746,26 @@ const toolPanelHtml = renderToStaticMarkup(
     <span>options</span>
   </ToolPanel>
 );
+const tourStepOne = renderToStaticMarkup(
+  <FirstRunTour open step={0} onStep={noop} onFinish={noop} />
+);
+const tourLastStep = renderToStaticMarkup(
+  <FirstRunTour open step={2} onStep={noop} onFinish={noop} />
+);
+check(
+  'first run walks draw, combine, export',
+  tourStepOne.includes('Step 1 of 3') &&
+    tourStepOne.includes('Draw something') &&
+    tourStepOne.includes('Skip the walkthrough') &&
+    tourStepOne.includes('Next step') &&
+    tourLastStep.includes('Step 3 of 3') &&
+    tourLastStep.includes('Take it with you') &&
+    tourLastStep.includes('Finish walkthrough')
+);
+check('first run tour closes when it is not open', renderToStaticMarkup(
+  <FirstRunTour open={false} step={0} onStep={noop} onFinish={noop} />
+) === '');
+
 check(
   'tool panel is named, guided and closable',
   toolPanelHtml.includes('Pen') &&

@@ -17,6 +17,7 @@ import { ExportSheet } from './components/ExportSheet';
 import { PressureSheet } from './components/PressureSheet';
 import { FontsSheet } from './components/FontsSheet';
 import { TextSheet, type TextSheetData } from './components/TextSheet';
+import { FirstRunTour, FIRST_RUN_TOUR_KEY } from './components/FirstRunTour';
 import { TraceSheet } from './components/TraceSheet';
 import { HelpSheet } from './components/HelpSheet';
 import { WhatsNewSheet } from './components/WhatsNewSheet';
@@ -707,6 +708,17 @@ export default function App() {
    * Sheets & transient UI
    * ------------------------------------------------------------------ */
   const [sheet, setSheet] = useState<SheetName | null>(null);
+  /** The first-run marks wait until the start sheet is out of the way */
+  const [tourPending, setTourPending] = useState(false);
+  const [tourStep, setTourStep] = useState<number | null>(null);
+
+  // Once the board is open and no sheet is in the way, the marks appear — and
+  // are recorded as seen, so a reload halfway through does not repeat them.
+  useEffect(() => {
+    if (!tourPending || sheet !== null || tourStep !== null) return;
+    localStorage.setItem(FIRST_RUN_TOUR_KEY, 'true');
+    setTourStep(0);
+  }, [tourPending, sheet, tourStep]);
   const closeSheet = useCallback(() => setSheet(null), []);
 
   // A new build is downloaded; it is the user's call when to take it, because
@@ -4129,6 +4141,7 @@ export default function App() {
       // The start sheet doubles as the manual's introduction: it appears on the
       // very first launch, and once more for anyone who already had Pentix
       // before the tutorial shipped.
+      if (!localStorage.getItem(FIRST_RUN_TOUR_KEY)) setTourPending(true);
       const firstLaunch = !localStorage.getItem('pentix.onboarded');
       const firstTimeSeeingManual = !localStorage.getItem('pentix.tutorialPrompted');
       if (firstLaunch || firstTimeSeeingManual) {
@@ -5115,6 +5128,21 @@ export default function App() {
         }}
         onFitArtwork={fitArtworkToArtboard}
       />
+
+      {tourPending && sheet === null && (
+        <FirstRunTour
+          open={tourStep !== null}
+          step={tourStep ?? 0}
+          onStep={setTourStep}
+          onFinish={() => {
+            // Offered once is enough: a tour that comes back is a tour people
+            // learn to dismiss without reading.
+            localStorage.setItem(FIRST_RUN_TOUR_KEY, 'true');
+            setTourPending(false);
+            setTourStep(null);
+          }}
+        />
+      )}
 
       <StartSheet
         open={sheet === 'start'}

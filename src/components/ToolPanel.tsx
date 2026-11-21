@@ -70,7 +70,10 @@ export const ToolPanel: React.FC<{
 
   return (
     <div className="mx-auto w-full max-w-3xl px-2 pt-1.5">
-      <div className="overflow-hidden rounded-xl border border-line bg-ink-2/95 shadow-xl">
+      <div
+        data-tour="panel"
+        className="overflow-hidden rounded-xl border border-line bg-ink-2/95 shadow-xl"
+      >
         <div className="flex items-center gap-2 border-b border-line/70 px-2 py-1">
           <span className="shrink-0 font-sans text-[9px] font-bold uppercase tracking-[0.1em] text-accent">
             {name}

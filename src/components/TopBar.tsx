@@ -136,6 +136,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         type="button"
         onClick={onOpenExport}
         aria-label="Export"
+        data-tour="export"
         title="Export"
         className="press ml-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent text-ink-0"
       >

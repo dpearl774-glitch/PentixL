@@ -1113,7 +1113,10 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
           {panelBlocks}
         </ToolPanel>
       )}
-      <div className="scroll-x mx-auto flex h-11 max-w-3xl items-center gap-1.5 px-2">
+      <div
+        data-tour="strip"
+        className="scroll-x mx-auto flex h-11 max-w-3xl items-center gap-1.5 px-2"
+      >
         <Chip
           active={panelIsOpen}
           disabled={!hasPanelContent}

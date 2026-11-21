@@ -46,7 +46,7 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 | Badge | Item | Size | Status | Done when |
 |---|---|---|---|---|
 | **FB-15** | A beginner cannot predict where a tool’s options will appear | L | DONE | Each tool opens a named panel that persists until closed; the strip no longer re-arranges itself per tool |
-| **FB-16** | First-run gives no guided first mark | M | OPEN | A three-step “draw, combine, export” walkthrough that can be skipped and never returns |
+| **FB-16** | First-run gives no guided first mark | M | DONE | A three-step “draw, combine, export” walkthrough that can be skipped and never returns |
 | **FB-17** | Manual exists but is not where a beginner looks | S | **DONE** `a613ab6` | Manual opens on a cover with a four-step tour, and the in-app sheet links to it |
 
 ## Efficiency
@@ -75,9 +75,9 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 
 ## Counts
 
-- DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode), FB-10, FB-11 (Transform panel), FB-21, FB-25 (fixed bar, locks), FB-13, FB-14 (wide gradient ramp), FB-03, FB-04 (text panel with typed numbers), FB-09 (row shape previews), FB-15, FB-22 (named tool panels)
+- DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode), FB-10, FB-11 (Transform panel), FB-21, FB-25 (fixed bar, locks), FB-13, FB-14 (wide gradient ramp), FB-03, FB-04 (text panel with typed numbers), FB-09 (row shape previews), FB-15, FB-22 (named tool panels), FB-16 (three-step first run)
 - OPEN, small: none
-- OPEN, medium: FB-05, FB-16, FB-18, FB-24
+- OPEN, medium: FB-05, FB-18, FB-24
 - OPEN, large: FB-23
 - PARKED: FB-19, FB-20
 
@@ -88,4 +88,4 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 3. ~~**FB-03**/**FB-04** one text panel — stops the strip moving under the thumb while typing~~ — done: one sheet owns typeface, size, tracking, leading, align and fill, with typed numbers for the three.
 4. ~~**FB-13**/**FB-14** gradient behind a wide ramp with live preview~~ — done: a 52 px ramp with draggable stops, tap to add, drag down to remove.
 5. ~~**FB-15**/**FB-22** named panels that stay put~~ — done: every tool opens a titled panel above a strip whose five slots never change.
-6. **FB-16** now that the panels are predictable: a first-run walkthrough can point at fixed places.
+6. ~~**FB-16** a first-run walkthrough pointing at fixed places~~ — done: Draw / Combine / Export marks over the panel, the strip and the export button, skippable and shown once.
