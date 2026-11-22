@@ -2162,6 +2162,11 @@ const helpHtml = renderToStaticMarkup(<HelpSheet open onClose={noop} />);
 check('help owns the long instructions', helpHtml.includes('Drag off a ruler') && helpHtml.includes('never export'));
 check('help covers grid, fonts and pressure', helpHtml.includes('line strength') && helpHtml.includes('Imported typefaces') && helpHtml.includes('Uniform is constant'));
 check('help lists the text editing gesture', helpHtml.includes('Double-tap a label'));
+check(
+  'help surfaces the speed numbers and their empty state',
+  helpHtml.includes('Speed on this device') &&
+    helpHtml.includes('Draw a shape, place a word or export once')
+);
 
 /* ------------------------------ Colour panel ------------------------------ */
 console.log('Colour panel');

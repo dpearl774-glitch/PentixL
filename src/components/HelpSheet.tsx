@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   PenTool,
   Pencil,
@@ -11,7 +11,9 @@ import {
   Layers,
   BookOpen,
   Download,
+  Gauge,
 } from 'lucide-react';
+import { medianMs, PerfSample, readSamples } from '../utils/perfTrace';
 import { SectionLabel, Sheet } from './ui/primitives';
 
 interface HelpSheetProps {
@@ -48,6 +50,51 @@ const Group: React.FC<{ icon: React.ReactNode; title: string; children: React.Re
   </section>
 );
 
+/**
+ * The tester's claim is a multiple, so the numbers behind it are shown where
+ * she already looks for answers instead of living in a developer's console.
+ */
+const SpeedSection: React.FC<{ open: boolean }> = ({ open }) => {
+  const [samples, setSamples] = useState<PerfSample[]>([]);
+
+  // Read on open, so the row is current without a subscription to every draw.
+  useEffect(() => {
+    if (open) setSamples(readSamples());
+  }, [open]);
+
+  const rows = [
+    ['One shape', 'shape'],
+    ['One word', 'word'],
+    ['One export', 'export'],
+  ] as const;
+  const format = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+  const timed = rows.some(([, task]) => samples.some((s) => s.task === task));
+
+  return (
+    <Group icon={<Gauge size={14} />} title="Speed on this device">
+      {timed ? (
+        rows.map(([label, task]) => {
+          const median = medianMs(samples, task);
+          const runs = samples.filter((s) => s.task === task).length;
+          return (
+            <Item key={task} term={label}>
+              {median === null ? 'Not timed yet' : `${format(median)} median of ${runs}`}
+            </Item>
+          );
+        })
+      ) : (
+        <Item term="Nothing timed yet">
+          Draw a shape, place a word or export once, and these fill in.
+        </Item>
+      )}
+      <p className="pt-1.5 text-[10.5px] leading-snug text-mute">
+        From pressing the tool to the thing landing, made on this device. Kept here, never
+        uploaded.
+      </p>
+    </Group>
+  );
+};
+
 export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
   <Sheet
     open={open}
@@ -66,6 +113,10 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
         <Item term={<Key>space</Key>}>Hold to pan, release to return to the tool you were on.</Item>
         <Item term="Top bar">Undo and redo sit beside the document name. Layers open as a see-through panel.</Item>
       </Group>
+
+      {/* Near the top: the numbers answer a question the tester asks about the
+          app as a whole, not a detail of one tool. */}
+      <SpeedSection open={open} />
 
       <Group icon={<Grid3x3 size={14} />} title="Grid & guides">
         <Item term="Grid">
