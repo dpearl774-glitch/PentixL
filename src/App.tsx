@@ -58,6 +58,7 @@ import { expandTextToVectorPaths } from './utils/contourTracer';
 import { ensureBundledFonts } from './utils/bundledFonts';
 import { outlineLayoutText } from './utils/textOutlineConversion';
 import { savedTextStyleFrom } from './utils/textStyles';
+import { clearTasks, finishTask, startTask } from './utils/perfTrace';
 import { LogoTemplate } from './data/templates';
 import {
   clearCornerRounding,
@@ -971,8 +972,11 @@ export default function App() {
           ),
         { commit: false }
       );
+      // The thing exists now, which is the end of the wait the timing measures.
+      if (path.text) finishTask('word');
+      else if (tool === 'shape') finishTask('shape');
     },
-    [applyLayers, drawInsideId, drawInsidePath, resolveWritableLayerId]
+    [applyLayers, drawInsideId, drawInsidePath, resolveWritableLayerId, tool]
   );
 
   const updatePath = useCallback(
@@ -1695,6 +1699,11 @@ export default function App() {
       } else if (activePathInProgress) {
         setActivePathInProgress(null);
       }
+      // Two tasks are timed from the moment their tool is picked: the wait is
+      // what the hand feels, not how long a handler ran.
+      clearTasks('shape', 'word');
+      if (next === 'text') startTask('word');
+      else if (next === 'shape') startTask('shape');
       setTool(next);
       // Picking a tool means drawing: whatever sheet was open gets out of the way.
       setSheet(null);
@@ -4405,7 +4414,10 @@ export default function App() {
           commitSettings({ gridVisible: !gridVisible });
           notify(gridVisible ? 'Grid hidden' : 'Grid shown');
         }}
-        onOpenExport={() => setSheet('export')}
+        onOpenExport={() => {
+          startTask('export');
+          setSheet('export');
+        }}
         onPreview={togglePreview}
       />
       )}

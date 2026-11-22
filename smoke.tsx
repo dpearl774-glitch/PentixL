@@ -15,6 +15,7 @@ import { TextSheet } from './src/components/TextSheet';
 import { ToolPanel } from './src/components/ToolPanel';
 import { FirstRunTour } from './src/components/FirstRunTour';
 import { savedTextStyleFrom } from './src/utils/textStyles';
+import { clearTasks, finishTask, medianMs, startTask } from './src/utils/perfTrace';
 import type { GradientDef } from './src/types/vector';
 import { sanitizeUserPrefs } from './src/utils/userPrefs';
 import { TopBar } from './src/components/TopBar';
@@ -1825,6 +1826,27 @@ check(
   'a stored style survives the preference sanitiser',
   sanitizeUserPrefs({ savedTextStyles: [withGradient] }).savedTextStyles[0]?.fillGradient?.type ===
     'radial'
+);
+
+/* Time-to-logo: three tasks, measured from the tool press to the object */
+startTask('word', 1000);
+const wordSample = finishTask('word', 1400);
+check('a timed task records the wait', wordSample?.task === 'word' && wordSample.ms === 400);
+check('a finish without a start records nothing', finishTask('shape', 2000) === null);
+startTask('shape', 1000);
+clearTasks('shape');
+check('switching tools drops a start that never became a shape', finishTask('shape', 1200) === null);
+check(
+  'a task is summarised by its median',
+  medianMs(
+    [
+      { task: 'export', ms: 900, at: 1 },
+      { task: 'export', ms: 300, at: 2 },
+      { task: 'export', ms: 600, at: 3 },
+      { task: 'word', ms: 5000, at: 4 },
+    ],
+    'export'
+  ) === 600
 );
 
 check(

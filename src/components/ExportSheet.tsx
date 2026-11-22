@@ -1,10 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Copy, Download, Check, FileCode2, Image as ImageIcon, Share2 } from 'lucide-react';
 import { Layer, PressureConfig, VectorPath } from '../types/vector';
 import { downloadSvg, exportToPng, generateSvgCode, renderPngBlob } from '../utils/svgExport';
 import { computeVisiblePathsBoundingBox } from '../utils/shapeBuilder';
 import { withClipSourcesForExport } from '../utils/clipping';
 import { includeExtrusionInBounds } from '../utils/extrusion';
+import { finishTask } from '../utils/perfTrace';
 import { Button, SectionLabel, Sheet } from './ui/primitives';
 
 interface ExportSheetProps {
@@ -129,8 +130,17 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
       monoColor,
       crop,
       pressureConfig,
+      // The sheet stays mounted while closed, so opening it is what rebuilds
+      // the markup — and what the export timing has to cover.
+      open,
     ]
   );
+
+  // The wait the tester feels ends when the file's markup exists, not when a
+  // transport finishes.
+  useEffect(() => {
+    if (open) finishTask('export');
+  }, [open, svg]);
 
   const previewSrc = useMemo(
     () => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,

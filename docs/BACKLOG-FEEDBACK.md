@@ -53,7 +53,7 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 
 | Badge | Item | Size | Status | Done when |
 |---|---|---|---|---|
-| **FB-18** | “A quarter of the time in PixelLab” — no measurement | M | OPEN | Time-to-logo instrumented on three fixed tasks (one shape, one word, one export) so speed claims are measured, not felt |
+| **FB-18** | “A quarter of the time in PixelLab” — no measurement | M | DOING | Time-to-logo instrumented on three fixed tasks (one shape, one word, one export) so speed claims are measured, not felt. Timed and storing samples; first run reads shape ~1.6 s, word ~1.1 s, export ~65 ms from `pentix.perf.v1`. Still open: a surface where the tester can read them |
 
 ## From the PixelLab study (`docs/UX-PIXELLAB.md`)
 
@@ -77,7 +77,7 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 
 - DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode), FB-10, FB-11 (Transform panel), FB-21, FB-25 (fixed bar, locks), FB-13, FB-14 (wide gradient ramp), FB-03, FB-04 (text panel with typed numbers), FB-09 (row shape previews), FB-15, FB-22 (named tool panels), FB-16 (three-step first run), FB-24 (saved label styles)
 - OPEN, small: none
-- OPEN, medium: FB-18
+- DOING, medium: FB-18 (instrumented; needs a readable surface)
 - OPEN, large: FB-23
 - PARKED: FB-19, FB-20
 
