@@ -39,6 +39,20 @@ export interface TextMetricsInput {
 
 const FALLBACK_ASCENT = 0.8;
 const FALLBACK_DESCENT = 0.2;
+
+/**
+ * Ink above and below the baseline. A face with no descenders reports a descent
+ * of 0, which is a real answer — padding it with a fallback made a box taller
+ * than a display face's, so a label shrank when set in a bigger typeface.
+ */
+function inkBox(measured: TextMetrics, size: number, ink: string): { ascent: number; descent: number } {
+  const ascent = measured.actualBoundingBoxAscent ?? 0;
+  const descent = measured.actualBoundingBoxDescent ?? 0;
+  if (ascent > 0 || descent > 0) return { ascent, descent };
+  // A run of spaces has no ink to add, so it must not pad the box either.
+  if (!ink.trim()) return { ascent: 0, descent: 0 };
+  return { ascent: size * FALLBACK_ASCENT, descent: size * FALLBACK_DESCENT };
+}
 const metricsCache = new Map<string, TextMetricsBox>();
 let measureContext: CanvasRenderingContext2D | null | undefined;
 
@@ -79,8 +93,10 @@ function rangedMetrics(lines: string[], input: TextMetricsInput): TextMetricsBox
   const ctx = context();
   let absolute = input.rangesOffset ?? 0;
   let width = 2;
-  let ascent = size * FALLBACK_ASCENT;
-  let descent = size * FALLBACK_DESCENT;
+  // The box has to clear the tallest face on the line, not the label's own:
+  // a range set in a face with a taller ascender would poke out of its frame.
+  let ascent = 0;
+  let descent = 0;
   for (const line of lines) {
     let lineWidth = 0;
     let runStart = 0;
@@ -90,14 +106,17 @@ function rangedMetrics(lines: string[], input: TextMetricsInput): TextMetricsBox
       lineWidth += charWidth(line[index], font, size, weight) + letterSpacing;
       const runEnds = index === line.length - 1 ||
         styleAt(input.ranges, absolute + index + 1).fontFamily !== style.fontFamily;
-      if (runEnds && ctx) {
-        try {
-          ctx.font = `${weight} ${size}px ${font}`;
-          const measured = ctx.measureText(line.slice(runStart, index + 1));
-          ascent = Math.max(ascent, measured.actualBoundingBoxAscent || size * FALLBACK_ASCENT);
-          descent = Math.max(descent, measured.actualBoundingBoxDescent || size * FALLBACK_DESCENT);
-        } catch {
-          // keep the estimate for this run
+      if (runEnds) {
+        if (ctx) {
+          try {
+            ctx.font = `${weight} ${size}px ${font}`;
+            const measured = ctx.measureText(line.slice(runStart, index + 1));
+            const box = inkBox(measured, size, line.slice(runStart, index + 1));
+            ascent = Math.max(ascent, box.ascent);
+            descent = Math.max(descent, box.descent);
+          } catch {
+            // keep the estimate for this run
+          }
         }
         runStart = index + 1;
       }
@@ -106,7 +125,11 @@ function rangedMetrics(lines: string[], input: TextMetricsInput): TextMetricsBox
     absolute += line.length + 1;
   }
   const extraLines = Math.max(0, lines.length - 1) * textLineHeight(size, input.lineHeight);
-  return { width, ascent, descent: descent + extraLines };
+  return {
+    width,
+    ascent: ascent || size * FALLBACK_ASCENT,
+    descent: (descent || size * FALLBACK_DESCENT) + extraLines,
+  };
 }
 
 export function measureTextMetrics(input: TextMetricsInput): TextMetricsBox {
@@ -157,14 +180,9 @@ export function measureTextMetrics(input: TextMetricsInput): TextMetricsBox {
           width,
           metrics.width + Math.max(0, line.length - 1) * letterSpacing
         );
-        ascent = Math.max(
-          ascent,
-          metrics.actualBoundingBoxAscent || size * FALLBACK_ASCENT
-        );
-        descent = Math.max(
-          descent,
-          metrics.actualBoundingBoxDescent || size * FALLBACK_DESCENT
-        );
+        const box = inkBox(metrics, size, line);
+        ascent = Math.max(ascent, box.ascent);
+        descent = Math.max(descent, box.descent);
       }
       result = {
         width: Math.max(2, width),
