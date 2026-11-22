@@ -1,5 +1,16 @@
 import type { TextRange, VectorPath } from '../types/vector';
 import { textLineStarts, textLines } from './textGeometry';
+import { charWidth, styleAt } from './textRangeStyle';
+
+export { styleAt } from './textRangeStyle';
+
+export function fillAt(ranges: TextRange[] | undefined, index: number): string | null {
+  return styleAt(ranges, index).fill;
+}
+
+export function fontAt(ranges: TextRange[] | undefined, index: number): string | null {
+  return styleAt(ranges, index).fontFamily;
+}
 
 /**
  * Part of a word, styled without converting it: a label keeps its string, and a
@@ -59,55 +70,6 @@ export function normalizeTextRanges(
     }
   }
   return merged;
-}
-
-/** The style a character carries: its range, or the label's own */
-export function styleAt(ranges: TextRange[] | undefined, index: number): RangeStyle {
-  if (ranges?.length) {
-    for (const range of ranges) {
-      if (index >= range.start && index < range.end) {
-        return { fill: range.fill ?? null, fontFamily: range.fontFamily ?? null };
-      }
-    }
-  }
-  return { fill: null, fontFamily: null };
-}
-
-export function fillAt(ranges: TextRange[] | undefined, index: number): string | null {
-  return styleAt(ranges, index).fill;
-}
-
-export function fontAt(ranges: TextRange[] | undefined, index: number): string | null {
-  return styleAt(ranges, index).fontFamily;
-}
-
-let measureCanvas: HTMLCanvasElement | null = null;
-const widthCache = new Map<string, number>();
-
-/**
- * Width of one character in the font that character is drawn in. Ranges can mix
- * typefaces on one line, so a run's start cannot be read off the label's own
- * font — each stretch advances by its own letters.
- */
-function charWidth(char: string, fontFamily: string, fontSize: number, weight: string) {
-  const key = `${weight}|${fontSize}|${fontFamily}|${char}`;
-  const cached = widthCache.get(key);
-  if (cached !== undefined) return cached;
-  let width = fontSize * 0.6;
-  if (typeof document !== 'undefined') {
-    try {
-      measureCanvas ??= document.createElement('canvas');
-      const ctx = measureCanvas.getContext('2d');
-      if (ctx) {
-        ctx.font = `${weight} ${fontSize}px ${fontFamily}`;
-        width = ctx.measureText(char).width;
-      }
-    } catch {
-      // Fall through to the estimate; a run still starts within a letter.
-    }
-  }
-  widthCache.set(key, width);
-  return width;
 }
 
 /** Each line cut into runs that share one style, with the x each run starts at. */

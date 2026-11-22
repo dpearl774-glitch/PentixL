@@ -2066,6 +2066,7 @@ export default function App() {
       const origin = hostStart ?? textOrigin ?? { x: aw / 2, y: ah / 2 };
       const fontSize = data.fontSize;
       const fontWeight = labelWeightFor(data.fontFamily);
+      // Centred on the ink it will actually draw, ranged typefaces included.
       const metrics = measureTextMetrics({
         text: data.text,
         fontSize,
@@ -2073,6 +2074,7 @@ export default function App() {
         fontWeight,
         letterSpacing: data.letterSpacing,
         lineHeight: data.lineHeight,
+        ranges: data.textRanges,
       });
       const textPath: VectorPath = {
         id: `text-${Date.now()}`,
@@ -2089,6 +2091,7 @@ export default function App() {
                 fontWeight,
                 letterSpacing: data.letterSpacing,
                 lineHeight: data.lineHeight,
+                ranges: data.textRanges,
               },
               origin.y
             ),

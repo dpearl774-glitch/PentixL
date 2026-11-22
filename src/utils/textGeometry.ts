@@ -1,4 +1,5 @@
-import { Point, VectorPath } from '../types/vector';
+import { Point, TextRange, VectorPath } from '../types/vector';
+import { charWidth, styleAt } from './textRangeStyle';
 
 /** Affine matrix [a, b, c, d, e, f], mapping local (x, y) to world space. */
 export type TextMatrix = [number, number, number, number, number, number];
@@ -30,6 +31,10 @@ export interface TextMetricsInput {
   letterSpacing?: number;
   /** Baseline distance as a multiple of the size; 1.2 when unset */
   lineHeight?: number;
+  /** Characters that carry their own typeface, so a mixed line is measured right */
+  ranges?: TextRange[];
+  /** Index of `text`'s first character inside `ranges` */
+  rangesOffset?: number;
 }
 
 const FALLBACK_ASCENT = 0.8;
@@ -61,13 +66,57 @@ if (typeof document !== 'undefined' && document.fonts?.ready) {
  * on its baseline, with letter-spacing applied between glyphs. Falls back to a
  * deterministic estimate where a canvas is unavailable (SSR, smoke tests).
  */
+/**
+ * Width, ascent and descent of a label whose lines may mix typefaces. Each
+ * character is measured in the font it is drawn in, so a refonted stretch
+ * moves the width — and therefore the frame and the centring — with it.
+ */
+function rangedMetrics(lines: string[], input: TextMetricsInput): TextMetricsBox {
+  const size = Math.max(1, input.fontSize || 48);
+  const letterSpacing = input.letterSpacing ?? 0;
+  const family = input.fontFamily || 'sans-serif';
+  const weight = input.fontWeight || 'bold';
+  const ctx = context();
+  let absolute = input.rangesOffset ?? 0;
+  let width = 2;
+  let ascent = size * FALLBACK_ASCENT;
+  let descent = size * FALLBACK_DESCENT;
+  for (const line of lines) {
+    let lineWidth = 0;
+    let runStart = 0;
+    for (let index = 0; index < line.length; index += 1) {
+      const style = styleAt(input.ranges, absolute + index);
+      const font = style.fontFamily ?? family;
+      lineWidth += charWidth(line[index], font, size, weight) + letterSpacing;
+      const runEnds = index === line.length - 1 ||
+        styleAt(input.ranges, absolute + index + 1).fontFamily !== style.fontFamily;
+      if (runEnds && ctx) {
+        try {
+          ctx.font = `${weight} ${size}px ${font}`;
+          const measured = ctx.measureText(line.slice(runStart, index + 1));
+          ascent = Math.max(ascent, measured.actualBoundingBoxAscent || size * FALLBACK_ASCENT);
+          descent = Math.max(descent, measured.actualBoundingBoxDescent || size * FALLBACK_DESCENT);
+        } catch {
+          // keep the estimate for this run
+        }
+        runStart = index + 1;
+      }
+    }
+    width = Math.max(width, Math.max(0, lineWidth - (line.length ? letterSpacing : 0)));
+    absolute += line.length + 1;
+  }
+  const extraLines = Math.max(0, lines.length - 1) * textLineHeight(size, input.lineHeight);
+  return { width, ascent, descent: descent + extraLines };
+}
+
 export function measureTextMetrics(input: TextMetricsInput): TextMetricsBox {
   const text = input.text ?? '';
   const size = Math.max(1, input.fontSize || 48);
   const letterSpacing = input.letterSpacing ?? 0;
   const family = input.fontFamily || 'sans-serif';
   const weight = input.fontWeight || 'bold';
-  const key = `${weight}|${size}|${family}|${letterSpacing}|${text}`;
+  const rangeKey = input.ranges?.length ? JSON.stringify(input.ranges) + (input.rangesOffset ?? 0) : '';
+  const key = `${weight}|${size}|${family}|${letterSpacing}|${text}|${rangeKey}`;
   // A font that is still loading can measure as a fallback face. Only cache
   // once the font set has settled, otherwise the box would stay stale.
   const cacheable = typeof document === 'undefined' || document.fonts?.status === 'loaded';
@@ -76,6 +125,11 @@ export function measureTextMetrics(input: TextMetricsInput): TextMetricsBox {
   if (cached) return cached;
 
   const lines = textLines(text);
+  if (input.ranges?.length) {
+    const ranged = rangedMetrics(lines, { ...input, fontSize: size, letterSpacing, fontFamily: family, fontWeight: weight });
+    if (cacheable) metricsCache.set(key, ranged);
+    return ranged;
+  }
   const lineHeight = textLineHeight(size, input.lineHeight);
   const extraLines = Math.max(0, lines.length - 1) * lineHeight;
   const fallbackWidth = Math.max(
@@ -137,7 +191,12 @@ export function lineAlignOffsets(
   align: 'left' | 'center' | 'right' = 'left'
 ): number[] {
   if (align === 'left' || lines.length < 2) return lines.map(() => 0);
-  const widths = lines.map((line) => measureTextMetrics({ ...input, text: line }).width);
+  let absolute = input.rangesOffset ?? 0;
+  const widths = lines.map((line) => {
+    const width = measureTextMetrics({ ...input, text: line, rangesOffset: absolute }).width;
+    absolute += line.length + 1;
+    return width;
+  });
   const widest = Math.max(...widths);
   return widths.map((width) => (align === 'center' ? (widest - width) / 2 : widest - width));
 }
@@ -160,6 +219,7 @@ export function textLineStarts(path: VectorPath): number[] {
       fontWeight: path.fontWeight,
       letterSpacing: path.letterSpacing,
       lineHeight: path.lineHeight,
+      ranges: path.textRanges,
     },
     path.textAlign
   );
@@ -301,7 +361,9 @@ export interface TextWorldBox {
 export function textWorldBox(path: VectorPath): TextWorldBox | null {
   if (!path.text) return null;
   const origin = path.points[0] ?? { x: 0, y: 0 };
-  const metrics = measureTextMetrics(path);
+  // The frame has to know about ranged typefaces, or a refonted stretch hangs
+  // outside its handles.
+  const metrics = measureTextMetrics({ ...path, ranges: path.textRanges });
   const matrix = textMatrixFor(path);
   const corners = [
     { x: 0, y: -metrics.ascent },
@@ -341,5 +403,7 @@ export function textWorldBox(path: VectorPath): TextWorldBox | null {
 /** Vertical offset that puts a label's ink box centre on `originY`. */
 export function textBaselineForCenterY(path: TextMetricsInput, originY: number): number {
   const metrics = measureTextMetrics(path);
+  // Ranges ride on the input when the caller has them; a label created from the
+  // panel passes them so its first baseline is centred on the real ink.
   return originY + (metrics.descent - metrics.ascent) / 2;
 }
