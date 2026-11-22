@@ -15,7 +15,7 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 | **FB-02** | No way to re-colour part of a converted word without hunting rows | S | **DONE** with FB-01 | Selecting one letter inside the group tints only that letter |
 | **FB-03** | Text editing is split between canvas editing and a strip that changes under you | M | DONE | Editing a label opens one panel that owns font, size, tracking, line height, align and fill, and stays put while you type |
 | **FB-04** | No exact size/tracking entry for type | S | DONE | Type size and tracking accept typed numbers; the canvas follows live |
-| **FB-05** | Converting to curves feels mandatory for effects | M | DONE | Warp, outline and gradient all work on live text, so conversion is a choice, not a step. Verified on a label per effect, through re-typing and resizing, then in the downloaded SVG. 3D is the one effect that truly needs outlines, and its panel now says so and offers the conversion |
+| **FB-05** | Converting to curves feels mandatory for effects | M | DONE | Warp, outline and gradient all work on live text, so conversion is a choice, not a step. Verified on a label per effect, through re-typing and resizing, then in the downloaded SVG. 3D is the one effect that truly needs outlines, and its panel now says so and offers the conversion. Combinations hold too: a gradient under a warp, a stroke on a warp, and a gradient through a conversion into an extrusion |
 
 ## Objects & layers
 

@@ -2154,6 +2154,12 @@ export default function App() {
     const generated: VectorPath[] = [];
     const removeIds: string[] = [];
     for (const textPath of texts) {
+      // Outlining traces the letters' shape; the paint is still the label's, so
+      // a gradient survives the conversion rather than collapsing to its base.
+      const keepPaint = (paths: VectorPath[]): VectorPath[] =>
+        textPath.fillGradient
+          ? paths.map((p) => ({ ...p, fillGradient: textPath.fillGradient }))
+          : paths;
       removeIds.push(textPath.id);
       const origin = textPath.points[0] ?? { x: 100, y: 100 };
       // A label on a path, or wrapped in a shape, already knows its layout;
@@ -2182,7 +2188,7 @@ export default function App() {
           })
         );
         if (warped) {
-          generated.push(...warped);
+          generated.push(...keepPaint(warped));
           continue;
         }
       }
@@ -2198,7 +2204,7 @@ export default function App() {
           strokeWidth: textPath.strokeWidth || 0,
           matrix: textPath.textMatrix,
         });
-      generated.push(...outlines);
+      generated.push(...keepPaint(outlines));
     }
     if (!generated.length) {
       notify('That text could not be converted');

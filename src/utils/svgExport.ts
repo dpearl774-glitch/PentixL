@@ -249,8 +249,10 @@ export function generateSvgCode(
           for (const outline of outlined) {
             const d = pathToSvgD(outline);
             if (!d) continue;
+            // The letters inherit the label's paint: outlining a gradient
+            // label must not flatten it to the colour underneath.
             content += `    <path d="${d}" fill-rule="${outline.fillRule ?? 'evenodd'}" fill="${escapeXml(
-              monoColor ?? outline.fill
+              monoColor ?? fillValue
             )}" fill-opacity="${(monoColor ? 1 : (outline.fillOpacity ?? 1) * objectAlpha).toFixed(2)}" stroke="${escapeXml(
               monoColor ?? outline.stroke
             )}" stroke-width="${outline.strokeWidth}"${clipAttr ? ` ${clipAttr}` : ''} />\n`;
