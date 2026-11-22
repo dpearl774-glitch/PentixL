@@ -2,7 +2,7 @@ import { RangeInput } from './ui/primitives';
 import React, { useEffect, useState } from 'react';
 import { AlignCenter, AlignLeft, AlignRight, Check, Plus, Type as TypeIcon, X } from 'lucide-react';
 import type { GradientDef, SavedTextStyle, TextRange } from '../types/vector';
-import { normalizeTextRanges } from '../utils/textRanges';
+import { normalizeTextRanges, styleAt } from '../utils/textRanges';
 import { Button, Chip, NumberField, SectionLabel, Sheet } from './ui/primitives';
 
 export const SYSTEM_FONTS = [
@@ -95,6 +95,8 @@ export const TextSheet: React.FC<TextSheetProps> = ({
   // Its own swatch: tinting from the label's colour would paint a range the
   // same colour as the rest of the word.
   const [tintColor, setTintColor] = useState('#FF5C8A');
+  // Its own typeface too: refonting must not change the label's own font.
+  const [rangeFont, setRangeFont] = useState(initialFontFamily);
   const [selectedChars, setSelectedChars] = useState(0);
   const textArea = React.useRef<HTMLTextAreaElement | null>(null);
   const [query, setQuery] = useState('');
@@ -182,16 +184,28 @@ export const TextSheet: React.FC<TextSheetProps> = ({
   };
 
   /** Tints the highlighted letters, replacing any range they sit inside */
-  const tintSelection = () => {
+  /**
+   * Puts a style on the highlighted letters. Only the dimension being set
+   * changes: refonting a tinted range keeps its colour, and tinting a refonted
+   * one keeps its typeface.
+   */
+  const styleSelection = (patch: { fill?: string; fontFamily?: string }) => {
     const selection = selectedRange();
     if (!selection) return;
-    const fill = tintColor.toUpperCase();
     const kept = ranges.filter(
       (range) => range.end <= selection.start || range.start >= selection.end
     );
-    setRanges(normalizeTextRanges([...kept, { ...selection, fill }], text.length) ?? []);
+    const existing = styleAt(ranges, selection.start);
+    const next: TextRange = {
+      ...selection,
+      fill: patch.fill ?? existing.fill ?? undefined,
+      fontFamily: patch.fontFamily ?? existing.fontFamily ?? undefined,
+    };
+    setRanges(normalizeTextRanges([...kept, next], text.length) ?? []);
     setSelectedChars(0);
   };
+
+  const tintSelection = () => styleSelection({ fill: tintColor.toUpperCase() });
 
   const tintedChars = ranges.reduce((total, range) => total + (range.end - range.start), 0);
 
@@ -473,6 +487,18 @@ export const TextSheet: React.FC<TextSheetProps> = ({
               {tintedChars > 0 ? `${tintedChars} letters` : 'none'}
             </span>
           </div>
+          <select
+            value={rangeFont}
+            onChange={(e) => setRangeFont(e.target.value)}
+            aria-label="Range typeface"
+            className="h-8 w-full rounded-md border border-line bg-ink-0 px-2 text-[11.5px] text-dim outline-none focus:border-accent/60"
+          >
+            {allFonts.map((font) => (
+              <option key={font.value} value={font.value}>
+                {font.label}
+              </option>
+            ))}
+          </select>
           <div className="flex items-center gap-1.5">
             <label className="relative h-8 w-8 shrink-0 cursor-pointer overflow-hidden rounded-md border border-line-strong">
               <span className="absolute inset-0" style={{ backgroundColor: tintColor }} />
@@ -495,6 +521,15 @@ export const TextSheet: React.FC<TextSheetProps> = ({
             </button>
             <button
               type="button"
+              aria-label="Refont selected letters"
+              disabled={selectedChars === 0 || !text.trim()}
+              onClick={() => styleSelection({ fontFamily: rangeFont })}
+              className="press h-8 flex-1 rounded-md border border-line bg-ink-2 text-[11.5px] font-semibold text-dim hover:text-text disabled:opacity-40"
+            >
+              Refont
+            </button>
+            <button
+              type="button"
               aria-label="Clear letter tint"
               disabled={tintedChars === 0}
               onClick={() => setRanges([])}
@@ -504,8 +539,8 @@ export const TextSheet: React.FC<TextSheetProps> = ({
             </button>
           </div>
           <p className="text-[10.5px] leading-snug text-mute">
-            Highlight letters above, then tint them with the colour beside it. The label stays
-            type.
+            Highlight letters above, then tint them with the colour or set them in the typeface
+            picked above. The label stays type.
           </p>
         </section>
 

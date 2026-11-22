@@ -44,11 +44,12 @@ export interface GradientDef {
  * Only style lives here: the words and the position stay with the object. The
  * label keeps being live type after a style is applied.
  */
-/** A stretch of a label's characters with its own paint */
+/** A stretch of a label's characters with its own paint and typeface */
 export interface TextRange {
   start: number;
   end: number;
   fill?: string;
+  fontFamily?: string;
 }
 
 export interface SavedTextStyle {

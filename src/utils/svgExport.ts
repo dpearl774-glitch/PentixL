@@ -242,24 +242,27 @@ export function generateSvgCode(
           // A label with part-of-a-word colours is traced one run at a time, so
           // the letters keep the colour they were given instead of the base.
           const runs = path.textRanges?.length ? textRuns(path) : null;
-          if (runs && runs.length === 1) {
-            for (const run of runs[0]) {
-              if (!run.text.trim()) continue;
-              const runFill = monoColor ?? run.fill ?? path.fill;
-              const parts = expandTextToVectorPaths(run.text, {
-                fontSize: path.fontSize,
-                fontFamily: path.fontFamily,
-                fontWeight: path.fontWeight,
-                letterSpacing: path.letterSpacing,
-                fillColor: runFill,
-                strokeColor: monoColor ?? path.stroke,
-                strokeWidth: path.strokeWidth,
-                originX: origin.x + run.x,
-                originY: origin.y,
-                matrix: path.textMatrix,
-              });
-              for (const part of parts) emitOutline(part, runFill);
-            }
+          if (runs) {
+            const step = textLineHeight(path.fontSize, path.lineHeight);
+            runs.forEach((lineRuns, lineIndex) => {
+              for (const run of lineRuns) {
+                if (!run.text.trim()) continue;
+                const runFill = monoColor ?? run.fill ?? path.fill;
+                const parts = expandTextToVectorPaths(run.text, {
+                  fontSize: path.fontSize,
+                  fontFamily: run.fontFamily ?? path.fontFamily,
+                  fontWeight: path.fontWeight,
+                  letterSpacing: path.letterSpacing,
+                  fillColor: runFill,
+                  strokeColor: monoColor ?? path.stroke,
+                  strokeWidth: path.strokeWidth,
+                  originX: origin.x + run.x,
+                  originY: origin.y + lineIndex * step,
+                  matrix: path.textMatrix,
+                });
+                for (const part of parts) emitOutline(part, runFill);
+              }
+            });
             continue;
           }
 
@@ -337,14 +340,15 @@ export function generateSvgCode(
           .map((line, index) => {
             const runs = runLines?.[index]?.length
               ? runLines[index]
-              : [{ text: line, fill: null, x: lineStarts[index] ?? 0 }];
+              : [{ text: line, fill: null, fontFamily: null, x: lineStarts[index] ?? 0 }];
             return runs
               .map((run, runIndex) => {
                 const first = runIndex === 0;
                 const x = first ? ` x="${lineStarts[index] ?? 0}"` : '';
                 const dy = first ? ` dy="${index === 0 ? 0 : lineHeight.toFixed(2)}"` : '';
                 const fill = run.fill ? ` fill="${escapeXml(run.fill)}"` : '';
-                return `<tspan${x}${dy}${fill}>${escapeXml(
+                const family = run.fontFamily ? ` font-family="${escapeXml(run.fontFamily)}"` : '';
+                return `<tspan${x}${dy}${fill}${family}>${escapeXml(
                   run.text || (runs.length === 1 ? ' ' : '')
                 )}</tspan>`;
               })

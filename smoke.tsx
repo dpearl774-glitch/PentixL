@@ -2199,6 +2199,36 @@ const runLines = textRuns({
   fontSize: 64,
   textRanges: [{ start: 3, end: 5, fill: '#FF0000' }],
 } as never);
+const mixedFont = textRuns({
+  id: 'f',
+  name: 'f',
+  points: [],
+  closed: false,
+  fill: '#FFFFFF',
+  fillOpacity: 1,
+  stroke: 'none',
+  strokeWidth: 0,
+  strokeOpacity: 1,
+  strokeCap: 'round',
+  strokeJoin: 'round',
+  pressureProfile: 'uniform',
+  text: 'PENTIX',
+  fontSize: 64,
+  textRanges: [{ start: 2, end: 4, fontFamily: 'Impact, sans-serif' }],
+} as never);
+check(
+  'a change of typeface splits the line as well',
+  mixedFont[0].length === 3 &&
+    mixedFont[0][1].fontFamily === 'Impact, sans-serif' &&
+    mixedFont[0][1].fill === null &&
+    mixedFont[0][1].text === 'NT'
+);
+check(
+  'a style keeps a tint and a typeface on the same letters',
+  normalizeTextRanges([{ start: 0, end: 3, fill: '#FF0000', fontFamily: 'Impact, sans-serif' }], 3)?.[0]
+    .fontFamily === 'Impact, sans-serif'
+);
+
 check(
   'a line splits into runs where the colour changes',
   runLines.length === 1 &&

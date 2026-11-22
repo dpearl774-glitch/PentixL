@@ -44,7 +44,7 @@ import {
 } from '../utils/transform';
 import { textLineHeight, textLines, textLineStarts, textMatrixCss } from '../utils/textGeometry';
 import { warpTextGlyphs } from '../utils/textWarp';
-import { fillAt, textRuns } from '../utils/textRanges';
+import { fillAt, fontAt, textRuns } from '../utils/textRanges';
 import { preWarpGeometry, warpPathsInBox } from '../utils/warp';
 import type { WarpSpec } from '../types/vector';
 import { textPathDy, textPathSource } from '../utils/textPath';
@@ -3165,7 +3165,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                                 stroke={path.stroke !== 'none' ? path.stroke : undefined}
                                 strokeWidth={path.strokeWidth}
                                 fontSize={fontSize}
-                                fontFamily={fontFamily}
+                                fontFamily={fontAt(path.textRanges, index) ?? fontFamily}
                                 fontWeight={fontWeight}
                                 className="pointer-events-none select-none"
                               >
@@ -3227,13 +3227,14 @@ export const Canvas: React.FC<CanvasProps> = ({
                                                                 lines.map((line, index) => {
                                   const runs = rangedRuns?.[index]?.length
                                     ? rangedRuns[index]
-                                    : [{ text: line, fill: null, x: lineStarts[index] ?? 0 }];
+                                    : [{ text: line, fill: null, fontFamily: null, x: lineStarts[index] ?? 0 }];
                                   return runs.map((run, runIndex) => (
                                     <tspan
                                       key={`${index}-${runIndex}`}
                                       x={runIndex === 0 ? lineStarts[index] ?? 0 : undefined}
                                       dy={runIndex === 0 && index > 0 ? lineHeight : 0}
                                       fill={run.fill ?? undefined}
+                                      fontFamily={run.fontFamily ?? undefined}
                                     >
                                       {run.text || (runs.length === 1 ? ' ' : '')}
                                     </tspan>
