@@ -97,6 +97,7 @@ function rangedMetrics(lines: string[], input: TextMetricsInput): TextMetricsBox
   // a range set in a face with a taller ascender would poke out of its frame.
   let ascent = 0;
   let descent = 0;
+  let measuredAny = false;
   for (const line of lines) {
     let lineWidth = 0;
     let runStart = 0;
@@ -114,6 +115,7 @@ function rangedMetrics(lines: string[], input: TextMetricsInput): TextMetricsBox
             const box = inkBox(measured, size, line.slice(runStart, index + 1));
             ascent = Math.max(ascent, box.ascent);
             descent = Math.max(descent, box.descent);
+            measuredAny = true;
           } catch {
             // keep the estimate for this run
           }
@@ -127,8 +129,11 @@ function rangedMetrics(lines: string[], input: TextMetricsInput): TextMetricsBox
   const extraLines = Math.max(0, lines.length - 1) * textLineHeight(size, input.lineHeight);
   return {
     width,
-    ascent: ascent || size * FALLBACK_ASCENT,
-    descent: (descent || size * FALLBACK_DESCENT) + extraLines,
+    // A measured descent of 0 is a fact, not a missing value: regular weights
+    // usually hang nothing below the baseline, and padding that away made the
+    // box 13 px taller than its letters.
+    ascent: measuredAny ? Math.max(1, ascent) : size * FALLBACK_ASCENT,
+    descent: (measuredAny ? descent : size * FALLBACK_DESCENT) + extraLines,
   };
 }
 
