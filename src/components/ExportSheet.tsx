@@ -103,6 +103,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
   const outHeight = crop ? Math.round(crop.height) : canvasHeight;
   const monoColor = MONO_COLOR[mono];
 
+  /** Exports are self-contained: live text becomes outlines, not a font lookup. */
   const svg = useMemo(
     () =>
       generateSvgCode(
@@ -114,6 +115,8 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
           backgroundColor,
           monoColor,
           crop: crop ?? undefined,
+          // The markup above is the file below, so both get the outlines.
+          outlineText: true,
         },
         pressureConfig
       ),
@@ -134,38 +137,21 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
     [svg]
   );
 
-  /** Exports are self-contained: live text becomes outlines, not a font lookup. */
-  const outputSvg = () =>
-    generateSvgCode(
-      exportLayers,
-      {
-        width: outWidth,
-        height: outHeight,
-        includeBackground: !transparent,
-        backgroundColor,
-        monoColor,
-        crop: crop ?? undefined,
-        outlineText: true,
-      },
-      pressureConfig
-    );
-
   const slug =
     projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'pentix';
   const suffix = `${activeScope === 'selection' ? '-mark' : ''}${mono !== 'off' ? '-mono' : ''}`;
 
   const copy = async () => {
     setError(null);
-    const svgOutput = outputSvg();
-    try {
-      await navigator.clipboard.writeText(svgOutput);
+          try {
+        await navigator.clipboard.writeText(svg);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
       // Older iOS and non-secure local previews have no clipboard API. A
       // temporary textarea still gives them a way to copy the markup.
       const area = document.createElement('textarea');
-      area.value = svgOutput;
+      area.value = svg;
       area.style.position = 'fixed';
       area.style.opacity = '0';
       document.body.appendChild(area);
@@ -181,7 +167,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
     setBusy(true);
     setError(null);
     try {
-      await exportToPng(outputSvg(), outWidth, outHeight, scale, `${slug}${suffix}-${scale}x.png`);
+      await exportToPng(svg, outWidth, outHeight, scale, `${slug}${suffix}-${scale}x.png`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'PNG export failed on this device.');
     } finally {
@@ -191,7 +177,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
 
   const share = async () => {
     setError(null);
-    const svgOutput = outputSvg();
+    const svgOutput = svg;
     let file: File;
     if (tab === 'png') {
       try {
@@ -367,7 +353,7 @@ export const ExportSheet: React.FC<ExportSheetProps> = ({
               </Button>
               <Button
                 variant="primary"
-                onClick={() => downloadSvg(outputSvg(), `${slug}${suffix}.svg`)}
+                onClick={() => downloadSvg(svg, `${slug}${suffix}.svg`)}
               >
                 <Download size={14} /> Download
               </Button>

@@ -2547,6 +2547,27 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
               {Math.round(extrudeDepth)}
             </span>
           </div>
+          {/* A label has no closed shape to pull, so every control below would
+              sit dead without saying why. Extruding is the one effect that
+              needs the outline, and here that is worth saying out loud. */}
+          {!canExtrude && (
+            <div className="mt-1.5 rounded-md border border-line bg-ink-0 p-1.5">
+              <p className="text-[9.5px] leading-snug text-mute">
+                {hasTextSelection
+                  ? 'A live label has no closed shape to pull. Convert it to curves, then extrude.'
+                  : 'Nothing here has a closed shape to pull.'}
+              </p>
+              {hasTextSelection && (
+                <button
+                  type="button"
+                  onClick={onExpandText}
+                  className="press mt-1.5 h-7 w-full rounded-md bg-ink-3 font-sans text-[9px] font-bold uppercase text-dim hover:text-accent"
+                >
+                  Convert to curves
+                </button>
+              )}
+            </div>
+          )}
           <div className="mt-1.5 grid grid-cols-2 gap-1">
             <button
               type="button"

@@ -15,7 +15,7 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 | **FB-02** | No way to re-colour part of a converted word without hunting rows | S | **DONE** with FB-01 | Selecting one letter inside the group tints only that letter |
 | **FB-03** | Text editing is split between canvas editing and a strip that changes under you | M | DONE | Editing a label opens one panel that owns font, size, tracking, line height, align and fill, and stays put while you type |
 | **FB-04** | No exact size/tracking entry for type | S | DONE | Type size and tracking accept typed numbers; the canvas follows live |
-| **FB-05** | Converting to curves feels mandatory for effects | M | OPEN | Warp, outline and gradient all work on live text, so conversion is a choice, not a step |
+| **FB-05** | Converting to curves feels mandatory for effects | M | DONE | Warp, outline and gradient all work on live text, so conversion is a choice, not a step. Verified on a label per effect, through re-typing and resizing, then in the downloaded SVG. 3D is the one effect that truly needs outlines, and its panel now says so and offers the conversion |
 
 ## Objects & layers
 
@@ -77,7 +77,7 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 
 - DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode), FB-10, FB-11 (Transform panel), FB-21, FB-25 (fixed bar, locks), FB-13, FB-14 (wide gradient ramp), FB-03, FB-04 (text panel with typed numbers), FB-09 (row shape previews), FB-15, FB-22 (named tool panels), FB-16 (three-step first run), FB-24 (saved label styles)
 - OPEN, small: none
-- OPEN, medium: FB-05, FB-18
+- OPEN, medium: FB-18
 - OPEN, large: FB-23
 - PARKED: FB-19, FB-20
 

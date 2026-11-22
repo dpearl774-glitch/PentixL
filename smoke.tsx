@@ -14,6 +14,9 @@ import { ToolOptions } from './src/components/ToolOptions';
 import { TextSheet } from './src/components/TextSheet';
 import { ToolPanel } from './src/components/ToolPanel';
 import { FirstRunTour } from './src/components/FirstRunTour';
+import { savedTextStyleFrom } from './src/utils/textStyles';
+import type { GradientDef } from './src/types/vector';
+import { sanitizeUserPrefs } from './src/utils/userPrefs';
 import { TopBar } from './src/components/TopBar';
 import { FontsSheet } from './src/components/FontsSheet';
 import { fitBezierPath } from './src/utils/curveFit';
@@ -1784,6 +1787,44 @@ check(
     toolPanelHtml.includes('Tap to place a point') &&
     toolPanelHtml.includes('aria-label="Close Pen panel"') &&
     toolPanelHtml.includes('options')
+);
+
+/* A saved style carries its paint: losing the gradient made styles look flat */
+const radial: GradientDef = {
+  type: 'radial',
+  angle: 0,
+  stops: [
+    { offset: 0, color: '#4C8DFF', opacity: 1 },
+    { offset: 1, color: '#5CE1C5', opacity: 1 },
+  ],
+};
+const styleData = {
+  fontFamily: 'Impact, sans-serif',
+  fontSize: 96,
+  letterSpacing: 3,
+  lineHeight: 1.6,
+  textAlign: 'center' as const,
+  fillColor: '#4C8DFF',
+};
+const withGradient = savedTextStyleFrom({ ...styleData, fillGradient: radial }, 'Impact 96');
+const fromLabel = savedTextStyleFrom(styleData, 'Impact 96', radial);
+const flat = savedTextStyleFrom(styleData, 'Impact 96');
+check(
+  'a saved style keeps the panel gradient',
+  withGradient.fillGradient?.type === 'radial' && withGradient.name === 'Impact 96 · gradient'
+);
+check(
+  'a saved style keeps the label gradient when the panel had none',
+  fromLabel.fillGradient?.stops.length === 2
+);
+check(
+  'a flat style stays flat and unsuffixed',
+  flat.fillGradient === undefined && flat.name === 'Impact 96'
+);
+check(
+  'a stored style survives the preference sanitiser',
+  sanitizeUserPrefs({ savedTextStyles: [withGradient] }).savedTextStyles[0]?.fillGradient?.type ===
+    'radial'
 );
 
 check(

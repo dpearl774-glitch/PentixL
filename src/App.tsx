@@ -57,6 +57,7 @@ import {
 import { expandTextToVectorPaths } from './utils/contourTracer';
 import { ensureBundledFonts } from './utils/bundledFonts';
 import { outlineLayoutText } from './utils/textOutlineConversion';
+import { savedTextStyleFrom } from './utils/textStyles';
 import { LogoTemplate } from './data/templates';
 import {
   clearCornerRounding,
@@ -1976,19 +1977,7 @@ export default function App() {
     (data: TextSheetData, name: string) => {
       // The panel's gradient covers both cases: a new label wearing a saved
       // gradient, and an existing one that already had it.
-      const gradient = data.fillGradient ?? textEditPath?.fillGradient;
-      const style: SavedTextStyle = {
-        id: `style-${Date.now()}`,
-        name: gradient ? `${name} · gradient` : name,
-        fontFamily: data.fontFamily,
-        fontSize: data.fontSize,
-        letterSpacing: data.letterSpacing,
-        lineHeight: data.lineHeight,
-        textAlign: data.textAlign,
-        fill: data.fillColor,
-        ...(gradient ? { fillGradient: gradient } : {}),
-      };
-      const styleName = style.name;
+      const style = savedTextStyleFrom(data, name, textEditPath?.fillGradient);
       // The same type twice is one style, not two chips with the same name.
       // Paint counts: a gradient is a different style from the flat colour
       // underneath it, even when the font and size match.
@@ -2001,7 +1990,7 @@ export default function App() {
         other.fill === style.fill &&
         JSON.stringify(other.fillGradient ?? null) === JSON.stringify(style.fillGradient ?? null);
       setSavedTextStyles((prev) => [style, ...prev.filter((s) => !same(s))].slice(0, 12));
-      notify(`Style “${styleName}” saved`);
+      notify(`Style “${style.name}” saved`);
     },
     [notify, textEditPath]
   );
