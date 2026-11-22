@@ -1,7 +1,8 @@
 import { RangeInput } from './ui/primitives';
 import React, { useEffect, useState } from 'react';
 import { AlignCenter, AlignLeft, AlignRight, Check, Plus, Type as TypeIcon, X } from 'lucide-react';
-import type { GradientDef, SavedTextStyle } from '../types/vector';
+import type { GradientDef, SavedTextStyle, TextRange } from '../types/vector';
+import { normalizeTextRanges } from '../utils/textRanges';
 import { Button, Chip, NumberField, SectionLabel, Sheet } from './ui/primitives';
 
 export const SYSTEM_FONTS = [
@@ -25,6 +26,8 @@ export interface TextSheetData {
   fillColor: string;
   /** A gradient paint rides along with a style, so a new label gets it too */
   fillGradient?: GradientDef;
+  /** Characters that paint differently from the rest of the label */
+  textRanges?: TextRange[];
   editingPathId: string | null;
 }
 
@@ -39,6 +42,7 @@ interface TextSheetProps {
   initialTextAlign: TextAlign;
   initialFillColor: string;
   initialFillGradient?: GradientDef;
+  initialTextRanges?: TextRange[];
   customFonts: string[];
   /** Most recently used first, so a big library stays out of the way */
   recentFonts: string[];
@@ -68,6 +72,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
   initialTextAlign,
   initialFillColor,
   initialFillGradient,
+  initialTextRanges,
   customFonts,
   recentFonts,
   editingPathId,
@@ -86,6 +91,12 @@ export const TextSheet: React.FC<TextSheetProps> = ({
   const [textAlign, setTextAlign] = useState<TextAlign>(initialTextAlign);
   const [fillColor, setFillColor] = useState(initialFillColor);
   const [fillGradient, setFillGradient] = useState<GradientDef | undefined>(initialFillGradient);
+  const [ranges, setRanges] = useState<TextRange[]>(initialTextRanges ?? []);
+  // Its own swatch: tinting from the label's colour would paint a range the
+  // same colour as the rest of the word.
+  const [tintColor, setTintColor] = useState('#FF5C8A');
+  const [selectedChars, setSelectedChars] = useState(0);
+  const textArea = React.useRef<HTMLTextAreaElement | null>(null);
   const [query, setQuery] = useState('');
 
   useEffect(() => {
@@ -98,6 +109,8 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     setTextAlign(initialTextAlign);
     setFillColor(initialFillColor);
     setFillGradient(initialFillGradient);
+    setRanges(initialTextRanges ?? []);
+    setSelectedChars(0);
     setQuery('');
   }, [
     open,
@@ -109,6 +122,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     initialTextAlign,
     initialFillColor,
     initialFillGradient,
+    initialTextRanges,
   ]);
 
   const allFonts = React.useMemo(() => {
@@ -158,6 +172,29 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     );
   };
 
+  /** The characters the user has highlighted in the field above */
+  const selectedRange = (): { start: number; end: number } | null => {
+    const el = textArea.current;
+    if (!el) return null;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    return end > start ? { start, end } : null;
+  };
+
+  /** Tints the highlighted letters, replacing any range they sit inside */
+  const tintSelection = () => {
+    const selection = selectedRange();
+    if (!selection) return;
+    const fill = tintColor.toUpperCase();
+    const kept = ranges.filter(
+      (range) => range.end <= selection.start || range.start >= selection.end
+    );
+    setRanges(normalizeTextRanges([...kept, { ...selection, fill }], text.length) ?? []);
+    setSelectedChars(0);
+  };
+
+  const tintedChars = ranges.reduce((total, range) => total + (range.end - range.start), 0);
+
   const data = (): TextSheetData => ({
     text: text.trim(),
     fontFamily,
@@ -167,6 +204,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     textAlign,
     fillColor,
     fillGradient,
+    textRanges: ranges,
     editingPathId,
   });
 
@@ -188,7 +226,8 @@ export const TextSheet: React.FC<TextSheetProps> = ({
       letterSpacing !== initialLetterSpacing ||
       lineHeight !== initialLineHeight ||
       textAlign !== initialTextAlign ||
-      fillColor !== initialFillColor;
+      fillColor !== initialFillColor ||
+      JSON.stringify(ranges) !== JSON.stringify(initialTextRanges ?? []);
     if (changed) submit();
     else onClose();
   };
@@ -223,8 +262,14 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     >
       <div className="flex flex-col gap-5">
         <textarea
+          ref={textArea}
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onSelect={(e) =>
+            setSelectedChars(
+              Math.max(0, (e.currentTarget.selectionEnd ?? 0) - (e.currentTarget.selectionStart ?? 0))
+            )
+          }
           rows={2}
           placeholder="Brand name"
           autoFocus
@@ -417,6 +462,51 @@ export const TextSheet: React.FC<TextSheetProps> = ({
             </button>
           )}
           <TypeIcon size={14} className="text-mute" />
+        </section>
+
+        {/* Part of a word, without converting it: the label keeps its string and
+            the highlighted letters keep their own paint. */}
+        <section className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <SectionLabel>Part of the word</SectionLabel>
+            <span className="font-mono text-[10px] text-mute">
+              {tintedChars > 0 ? `${tintedChars} letters` : 'none'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <label className="relative h-8 w-8 shrink-0 cursor-pointer overflow-hidden rounded-md border border-line-strong">
+              <span className="absolute inset-0" style={{ backgroundColor: tintColor }} />
+              <input
+                type="color"
+                value={tintColor}
+                onChange={(e) => setTintColor(e.target.value.toUpperCase())}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                aria-label="Tint colour"
+              />
+            </label>
+            <button
+              type="button"
+              aria-label="Tint selected letters"
+              disabled={selectedChars === 0 || !text.trim()}
+              onClick={tintSelection}
+              className="press h-8 flex-1 rounded-md border border-line bg-ink-2 text-[11.5px] font-semibold text-dim hover:text-text disabled:opacity-40"
+            >
+              Tint {selectedChars > 0 ? `${selectedChars} highlighted` : 'highlighted letters'}
+            </button>
+            <button
+              type="button"
+              aria-label="Clear letter tint"
+              disabled={tintedChars === 0}
+              onClick={() => setRanges([])}
+              className="press h-8 rounded-md border border-line px-2.5 text-[11.5px] font-semibold text-dim hover:text-text disabled:opacity-40"
+            >
+              Clear
+            </button>
+          </div>
+          <p className="text-[10.5px] leading-snug text-mute">
+            Highlight letters above, then tint them with the colour beside it. The label stays
+            type.
+          </p>
         </section>
 
         {onSaveStyle && (

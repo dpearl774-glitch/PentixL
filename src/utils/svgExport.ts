@@ -10,6 +10,7 @@ import { pathToSvgD, generateVariableStrokePolygon } from './bezier';
 import { gradientMarkup } from './gradients';
 import { expandTextToVectorPaths } from './contourTracer';
 import { outlineLayoutText } from './textOutlineConversion';
+import { textRuns } from './textRanges';
 import {
   extrusionFaces,
   extrusionFrontPath,
@@ -228,6 +229,40 @@ export function generateSvgCode(
           }
         }
         if (outlineText) {
+          const emitOutline = (outline: VectorPath, fill: string) => {
+            const d = pathToSvgD(outline);
+            if (!d) return;
+            content += `    <path d="${d}" fill-rule="${outline.fillRule ?? 'evenodd'}" fill="${escapeXml(
+              fill
+            )}" fill-opacity="${(monoColor ? 1 : (outline.fillOpacity ?? 1) * objectAlpha).toFixed(2)}" stroke="${escapeXml(
+              monoColor ?? outline.stroke
+            )}" stroke-width="${outline.strokeWidth}"${clipAttr ? ` ${clipAttr}` : ''} />\n`;
+          };
+
+          // A label with part-of-a-word colours is traced one run at a time, so
+          // the letters keep the colour they were given instead of the base.
+          const runs = path.textRanges?.length ? textRuns(path) : null;
+          if (runs && runs.length === 1) {
+            for (const run of runs[0]) {
+              if (!run.text.trim()) continue;
+              const runFill = monoColor ?? run.fill ?? path.fill;
+              const parts = expandTextToVectorPaths(run.text, {
+                fontSize: path.fontSize,
+                fontFamily: path.fontFamily,
+                fontWeight: path.fontWeight,
+                letterSpacing: path.letterSpacing,
+                fillColor: runFill,
+                strokeColor: monoColor ?? path.stroke,
+                strokeWidth: path.strokeWidth,
+                originX: origin.x + run.x,
+                originY: origin.y,
+                matrix: path.textMatrix,
+              });
+              for (const part of parts) emitOutline(part, runFill);
+            }
+            continue;
+          }
+
           let outlined = bakedLayout ?? expandTextToVectorPaths(path.text, {
             fontSize: path.fontSize,
             fontFamily: path.fontFamily,
@@ -247,15 +282,9 @@ export function generateSvgCode(
             if (warpBox) outlined = warpPathsInBox(outlined, warpBox, path.warp);
           }
           for (const outline of outlined) {
-            const d = pathToSvgD(outline);
-            if (!d) continue;
             // The letters inherit the label's paint: outlining a gradient
             // label must not flatten it to the colour underneath.
-            content += `    <path d="${d}" fill-rule="${outline.fillRule ?? 'evenodd'}" fill="${escapeXml(
-              monoColor ?? fillValue
-            )}" fill-opacity="${(monoColor ? 1 : (outline.fillOpacity ?? 1) * objectAlpha).toFixed(2)}" stroke="${escapeXml(
-              monoColor ?? outline.stroke
-            )}" stroke-width="${outline.strokeWidth}"${clipAttr ? ` ${clipAttr}` : ''} />\n`;
+            emitOutline(outline, monoColor ?? fillValue);
           }
           continue;
         }
@@ -301,11 +330,26 @@ export function generateSvgCode(
           .join(' ');
         const lineHeight = textLineHeight(path.fontSize, path.lineHeight);
         const lineStarts = textLineStarts(path);
+        // Part-of-a-word colours ride along as tspans, so a live text export
+        // keeps them the way the canvas draws them.
+        const runLines = path.textRanges?.length ? textRuns(path) : null;
         const body = textLines(path.text)
-          .map(
-            (line, index) =>
-              `<tspan x="${lineStarts[index] ?? 0}" dy="${index === 0 ? 0 : lineHeight.toFixed(2)}">${escapeXml(line || ' ')}</tspan>`
-          )
+          .map((line, index) => {
+            const runs = runLines?.[index]?.length
+              ? runLines[index]
+              : [{ text: line, fill: null, x: lineStarts[index] ?? 0 }];
+            return runs
+              .map((run, runIndex) => {
+                const first = runIndex === 0;
+                const x = first ? ` x="${lineStarts[index] ?? 0}"` : '';
+                const dy = first ? ` dy="${index === 0 ? 0 : lineHeight.toFixed(2)}"` : '';
+                const fill = run.fill ? ` fill="${escapeXml(run.fill)}"` : '';
+                return `<tspan${x}${dy}${fill}>${escapeXml(
+                  run.text || (runs.length === 1 ? ' ' : '')
+                )}</tspan>`;
+              })
+              .join('');
+          })
           .join('');
         content += `    <text id="path-${path.id}" ${attrs}>${body}</text>\n`;
         continue;

@@ -44,6 +44,13 @@ export interface GradientDef {
  * Only style lives here: the words and the position stay with the object. The
  * label keeps being live type after a style is applied.
  */
+/** A stretch of a label's characters with its own paint */
+export interface TextRange {
+  start: number;
+  end: number;
+  fill?: string;
+}
+
 export interface SavedTextStyle {
   id: string;
   name: string;
@@ -241,6 +248,11 @@ export interface VectorPath {
   lineHeight?: number;
   /** How the lines of a multi-line label line up with each other */
   textAlign?: 'left' | 'center' | 'right';
+  /**
+   * Characters inside the string that paint differently, so part of a word can
+   * be tinted while the label stays live type. Indices count the whole text.
+   */
+  textRanges?: TextRange[];
   /**
    * Degrees of turn applied to this object, measured from the orientation it
    * was drawn in. Geometry stays baked; this is the record that lets a typed

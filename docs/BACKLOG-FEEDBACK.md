@@ -61,7 +61,7 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 |---|---|---|---|---|
 | **FB-21** | A selection bar that never moves: Align · Group · Merge · More · Delete | S | DONE | Those five actions are always in the same place for any selection; panels open around them |
 | **FB-22** | Named panels per job that stay put (Text, Fill, Gradient, Effects) | L | DONE | Opening one does not re-arrange the others, and it remembers where it was left |
-| **FB-23** | Style part of a word without converting it (PixelLab's range colours) | L | OPEN | Selecting letters in the text editor can tint or refont just those letters while the label stays type |
+| **FB-23** | Style part of a word without converting it (PixelLab's range colours) | L | DOING | Selecting letters in the text editor can tint or refont just those letters while the label stays type. Tint shipped: highlight letters, pick a tint colour, the label stays live type and the tint survives re-editing, warping, and the outlined export. Still open: refonting a range |
 | **FB-24** | Saved text/gradient styles (“My Styles”) | M | DONE | A styled label can be saved and applied to another label in one tap, staying editable |
 | **FB-25** | Locked and hidden objects let taps pass through | S | DONE | A tap over a locked object reaches the object beneath it, as PixelLab does on iOS |
 | **FB-26** | Merge must stay vector, never raster | S | DONE | Merge/Unite produces one editable path (never an image), unlike PixelLab's permanent raster merge |
@@ -71,15 +71,15 @@ Size: **S** half a day · **M** a day · **L** several days · **XL** a project
 | Badge | Item | Why parked |
 |---|---|---|
 | **FB-19** | Copy PixelLab’s visual shell wholesale | Copying a competitor’s chrome buys familiarity but not their polish; take the panel *structure*, keep Pentix’s own look |
-| **FB-20** | Image-texture fills | Big feature, no tester evidence of need yet |
+| **FB-20** | Image-texture fills | SHIPPED, unofficially: a reference picture can already be clipped into selected shapes, stored on the object and exported. What is missing is a way to reach it from the paint panel, and image fills on type. Re-scope against that before treating it as new work |
 
 ## Counts
 
 - DONE: FB-01, FB-02, FB-12, FB-17 (commits `39353ba`, `a613ab6`), FB-06, FB-07, FB-08, FB-26 (panel select mode), FB-10, FB-11 (Transform panel), FB-21, FB-25 (fixed bar, locks), FB-13, FB-14 (wide gradient ramp), FB-03, FB-04 (text panel with typed numbers), FB-09 (row shape previews), FB-15, FB-22 (named tool panels), FB-16 (three-step first run), FB-24 (saved label styles), FB-05 (effects prove live type), FB-18 (measured time-to-logo)
 - OPEN, small: none
 - OPEN, medium: none
-- OPEN, large: FB-23
-- PARKED: FB-19, FB-20
+- DOING, large: FB-23 (range tint shipped; range refont open)
+- PARKED: FB-19 (a rejected direction, not work), FB-20 (mostly already built — see above)
 
 ## Order I would work them
 

@@ -16,6 +16,7 @@ import { ToolPanel } from './src/components/ToolPanel';
 import { FirstRunTour } from './src/components/FirstRunTour';
 import { savedTextStyleFrom } from './src/utils/textStyles';
 import { clearTasks, finishTask, medianMs, startTask } from './src/utils/perfTrace';
+import { fillAt, normalizeTextRanges, textRuns } from './src/utils/textRanges';
 import type { GradientDef } from './src/types/vector';
 import { sanitizeUserPrefs } from './src/utils/userPrefs';
 import { TopBar } from './src/components/TopBar';
@@ -1861,7 +1862,8 @@ check(
   textSheetHtml.includes('aria-label="Font size in pixels"') &&
     textSheetHtml.includes('aria-label="Letter spacing in pixels"') &&
     textSheetHtml.includes('aria-label="Line height"') &&
-    textSheetHtml.includes('aria-label="Align lines centre"')
+    textSheetHtml.includes('aria-label="Align lines centre"') &&
+    textSheetHtml.includes('aria-label="Tint selected letters"')
 );
 check(
   'recent fonts come before the full list',
@@ -2162,6 +2164,50 @@ const helpHtml = renderToStaticMarkup(<HelpSheet open onClose={noop} />);
 check('help owns the long instructions', helpHtml.includes('Drag off a ruler') && helpHtml.includes('never export'));
 check('help covers grid, fonts and pressure', helpHtml.includes('line strength') && helpHtml.includes('Imported typefaces') && helpHtml.includes('Uniform is constant'));
 check('help lists the text editing gesture', helpHtml.includes('Double-tap a label'));
+/* Part of a word, painted without converting the label */
+const clamped = normalizeTextRanges(
+  [
+    { start: -4, end: 3, fill: '#FF0000' },
+    { start: 3, end: 5, fill: '#FF0000' },
+    { start: 9, end: 40, fill: '#00FF00' },
+    { start: 20, end: 24, fill: '#0000FF' },
+  ],
+  10
+);
+check(
+  'ranges clamp to the string and join neighbours with the same colour',
+  clamped?.length === 2 && clamped[0].start === 0 && clamped[0].end === 5 && clamped[1].end === 10
+);
+check(
+  'only the letters inside a range paint differently',
+  fillAt(clamped, 2) === '#FF0000' && fillAt(clamped, 5) === null && fillAt(clamped, 9) === '#00FF00'
+);
+const runLines = textRuns({
+  id: 't',
+  name: 't',
+  points: [],
+  closed: false,
+  fill: '#FFFFFF',
+  fillOpacity: 1,
+  stroke: 'none',
+  strokeWidth: 0,
+  strokeOpacity: 1,
+  strokeCap: 'round',
+  strokeJoin: 'round',
+  pressureProfile: 'uniform',
+  text: 'PENTIX',
+  fontSize: 64,
+  textRanges: [{ start: 3, end: 5, fill: '#FF0000' }],
+} as never);
+check(
+  'a line splits into runs where the colour changes',
+  runLines.length === 1 &&
+    runLines[0].map((run) => run.text).join('') === 'PENTIX' &&
+    runLines[0].length === 3 &&
+    runLines[0][1].fill === '#FF0000' &&
+    runLines[0][1].x > runLines[0][0].x
+);
+
 check(
   'help surfaces the speed numbers and their empty state',
   helpHtml.includes('Speed on this device') &&

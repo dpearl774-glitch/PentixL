@@ -58,6 +58,7 @@ import { expandTextToVectorPaths } from './utils/contourTracer';
 import { ensureBundledFonts } from './utils/bundledFonts';
 import { outlineLayoutText } from './utils/textOutlineConversion';
 import { savedTextStyleFrom } from './utils/textStyles';
+import { normalizeTextRanges } from './utils/textRanges';
 import { clearTasks, finishTask, startTask } from './utils/perfTrace';
 import { LogoTemplate } from './data/templates';
 import {
@@ -2046,6 +2047,9 @@ export default function App() {
                     textAlign: data.textAlign,
                     fill: data.fillColor,
                     fillGradient: data.fillGradient,
+                    // Re-clamped against the new string: editing the text can
+                    // only leave a range covering characters that still exist.
+                    textRanges: normalizeTextRanges(data.textRanges, data.text.length),
                     name: `Text “${data.text.slice(0, 14)}”`,
                   }
                 : p
@@ -2108,6 +2112,7 @@ export default function App() {
         lineHeight: data.lineHeight,
         textAlign: data.textAlign,
         fillGradient: data.fillGradient,
+        textRanges: normalizeTextRanges(data.textRanges, data.text.length),
         ...(host && hostStart
           ? { textPath: { pathId: host.id, offset: 0 }, textMatrix: [1, 0, 0, 1, 0, 0] as [number, number, number, number, number, number] }
           : {}),
@@ -5096,6 +5101,7 @@ export default function App() {
         initialTextAlign={textEditPath?.textAlign ?? 'left'}
         initialFillColor={textEditPath?.fill ?? fillColor}
         initialFillGradient={textEditPath?.fillGradient}
+        initialTextRanges={textEditPath?.textRanges}
         customFonts={customFonts}
         recentFonts={recentFonts}
         editingPathId={textEditPath?.id ?? null}

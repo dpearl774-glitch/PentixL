@@ -44,6 +44,7 @@ import {
 } from '../utils/transform';
 import { textLineHeight, textLines, textLineStarts, textMatrixCss } from '../utils/textGeometry';
 import { warpTextGlyphs } from '../utils/textWarp';
+import { fillAt, textRuns } from '../utils/textRanges';
 import { preWarpGeometry, warpPathsInBox } from '../utils/warp';
 import type { WarpSpec } from '../types/vector';
 import { textPathDy, textPathSource } from '../utils/textPath';
@@ -3048,6 +3049,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                     const textPaint =
                       gradientFill(path) ??
                       (path.fill && path.fill !== 'none' ? path.fill : CANVAS.accent);
+                    // Part-of-a-word paint: lines split where the colour changes.
+                    const rangedRuns = path.textRanges?.length ? textRuns(path) : null;
                     // A live warp places one glyph at a time: the label bends on
                     // screen and still types, resizes and restyles as one label.
                     // While the warp panel is being dialled in, the label on
@@ -3157,7 +3160,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                               <text
                                 key={`ink-${index}`}
                                 transform={glyph.transform}
-                                fill={textPaint}
+                                fill={fillAt(path.textRanges, index) ?? textPaint}
                                 fillOpacity={path.fillOpacity ?? 1}
                                 stroke={path.stroke !== 'none' ? path.stroke : undefined}
                                 strokeWidth={path.strokeWidth}
@@ -3221,11 +3224,21 @@ export const Canvas: React.FC<CanvasProps> = ({
                                   {lines.filter(Boolean).join(' ')}
                                 </textPath>
                               ) : (
-                                lines.map((line, index) => (
-                                  <tspan key={index} x={lineStarts[index] ?? 0} dy={index === 0 ? 0 : lineHeight}>
-                                    {line || ' '}
-                                  </tspan>
-                                ))
+                                                                lines.map((line, index) => {
+                                  const runs = rangedRuns?.[index]?.length
+                                    ? rangedRuns[index]
+                                    : [{ text: line, fill: null, x: lineStarts[index] ?? 0 }];
+                                  return runs.map((run, runIndex) => (
+                                    <tspan
+                                      key={`${index}-${runIndex}`}
+                                      x={runIndex === 0 ? lineStarts[index] ?? 0 : undefined}
+                                      dy={runIndex === 0 && index > 0 ? lineHeight : 0}
+                                      fill={run.fill ?? undefined}
+                                    >
+                                      {run.text || (runs.length === 1 ? ' ' : '')}
+                                    </tspan>
+                                  ));
+                                })
                               )}
                             </text>
                           </>
