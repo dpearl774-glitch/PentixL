@@ -20,13 +20,13 @@ interface TourStep {
 const STEPS: TourStep[] = [
   {
     anchor: 'panel',
-    title: 'Draw something',
-    body: 'This panel holds the options for whichever tool is active. Pick a shape here, then drag on the artboard to size it.',
+    title: 'Pick a tool',
+    body: 'Five tabs sit at the bottom: Select, Shapes, Text, Draw and Layers. The sheet here holds the active tool’s options, and it changes when you switch tools.',
   },
   {
     anchor: 'strip',
-    title: 'Combine it',
-    body: 'Select two objects and the strip offers Group and Merge. Merge joins them into one path that stays editable — no rasterising.',
+    title: 'Select, then arrange',
+    body: 'Tap artwork to take it. A group is taken whole and moves as one; to move a single piece, open Layers and switch Group to Object. Group and Merge sit in Arrange when two objects are selected.',
   },
   {
     anchor: 'export',
@@ -125,7 +125,7 @@ export const FirstRunTour: React.FC<{
   const { style: cardStyle, maxHeight } = place();
 
   // A ring that ran off the edge would hide its own border on a phone whose
-  // strip is wider than the screen.
+  // options bar is wider than the screen.
   const ringBox = rect
     ? {
         left: Math.max(0, rect.left - RING),

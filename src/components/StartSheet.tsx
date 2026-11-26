@@ -27,7 +27,7 @@ export const StartSheet: React.FC<StartSheetProps> = ({
     onClose={onClose}
     title="Pentix"
     eyebrow="Vector studio"
-    subtitle="A pen tool, shape builder and pathfinder that fit under your thumbs."
+    subtitle="A pen tool, shape builder and pathfinder in one dock you can reach."
   >
     <div className="flex flex-col gap-2.5 pb-1">
       <div className="mb-0.5 flex items-center gap-3">

@@ -1,5 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Eye, Grid3x3, Layers, Menu, Pencil, Redo2, Share2, Undo2 } from 'lucide-react';
+import {
+  Check,
+  Eye,
+  Grid3x3,
+  Layers,
+  Menu,
+  MoreHorizontal,
+  Pencil,
+  Redo2,
+  Share2,
+  Undo2,
+} from 'lucide-react';
 import { IconButton } from './ui/primitives';
 
 interface TopBarProps {
@@ -22,8 +33,9 @@ interface TopBarProps {
 }
 
 /**
- * Document bar. Undo/redo live here because they are the two actions you reach
- * for most often, and they stay put while the canvas viewport changes.
+ * Document bar. The phone gets one primary action (Export) and one overflow
+ * menu; undo/redo stay visible because they are the two actions reached for
+ * most often. Layers, grid and preview no longer compete for the same 346 px.
  */
 export const TopBar: React.FC<TopBarProps> = ({
   projectName,
@@ -43,6 +55,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(projectName);
+  const [moreOpen, setMoreOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -60,9 +73,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   };
 
   return (
-    <header className="z-30 flex h-12 shrink-0 items-center gap-0.5 border-b border-line bg-ink-1 px-1.5">
+    <header className="relative z-30 flex h-14 shrink-0 items-center gap-1 border-b border-line bg-ink-1 px-2">
       <IconButton label="Open menu" onClick={onOpenMenu}>
-        <Menu size={18} />
+        <Menu size={19} />
       </IconButton>
 
       {editing ? (
@@ -78,16 +91,16 @@ export const TopBar: React.FC<TopBarProps> = ({
               setEditing(false);
             }
           }}
-          className="h-8 min-w-0 flex-1 rounded-lg border border-accent/60 bg-ink-0 px-2 text-[13px] font-semibold text-text outline-none"
+          className="h-9 min-w-0 flex-1 rounded-lg border border-accent/60 bg-ink-0 px-2.5 text-[14px] font-semibold text-text outline-none"
         />
       ) : (
         <button
           type="button"
           onClick={() => setEditing(true)}
-          className="press -ml-0.5 flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1.5 py-1 text-left"
+          className="press -ml-0.5 flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1.5 text-left"
           title="Rename document"
         >
-          <span className="truncate text-[13px] font-bold tracking-tight text-text">
+          <span className="truncate text-[13.5px] font-semibold tracking-[-0.01em] text-text">
             {projectName}
           </span>
           <span
@@ -100,36 +113,22 @@ export const TopBar: React.FC<TopBarProps> = ({
         </button>
       )}
 
-      <div className="flex shrink-0 items-center rounded-lg border border-line bg-ink-0/60">
+      <div className="flex shrink-0 items-center">
         <IconButton label="Undo" onClick={onUndo} disabled={!canUndo}>
-          <Undo2 size={17} />
+          <Undo2 size={18} />
         </IconButton>
-        <span className="h-5 w-px bg-line" />
         <IconButton label="Redo" onClick={onRedo} disabled={!canRedo}>
-          <Redo2 size={17} />
+          <Redo2 size={18} />
         </IconButton>
       </div>
 
-      <IconButton label="Layers and objects" onClick={onOpenLayers} className="relative">
-        <Layers size={17} />
-        {layersCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-line-strong px-1 font-mono text-[9px] font-bold text-text">
-            {layersCount}
-          </span>
-        )}
-      </IconButton>
-
       <IconButton
-        label="Alignment grid"
-        title={gridVisible ? 'Hide grid' : 'Show grid'}
-        active={gridVisible}
-        onClick={onToggleGrid}
+        label="More actions"
+        active={moreOpen}
+        aria-expanded={moreOpen}
+        onClick={() => setMoreOpen((open) => !open)}
       >
-        <Grid3x3 size={17} />
-      </IconButton>
-
-      <IconButton label="Preview artboard" onClick={onPreview}>
-        <Eye size={17} />
+        <MoreHorizontal size={19} />
       </IconButton>
 
       <button
@@ -138,10 +137,71 @@ export const TopBar: React.FC<TopBarProps> = ({
         aria-label="Export"
         data-tour="export"
         title="Export"
-        className="press ml-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent text-ink-0"
+        className="press ml-0.5 flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-accent px-3 font-sans text-[11px] font-bold text-ink-0"
       >
-        <Share2 size={16} />
+        <Share2 size={14} />
+        Export
       </button>
+
+      {moreOpen && (
+        <button
+          type="button"
+          aria-label="Close more actions"
+          className="fixed inset-0 z-20 cursor-default"
+          onClick={() => setMoreOpen(false)}
+        />
+      )}
+
+      {/* Kept mounted so the bar has one stable markup; hidden when closed. */}
+      <div
+        className={`absolute right-2 top-[54px] z-40 w-56 overflow-hidden rounded-xl border border-line bg-ink-2 p-1 shadow-2xl shadow-black/50 ${
+          moreOpen ? '' : 'hidden'
+        }`}
+      >
+        <button
+          type="button"
+          aria-label="Layers and objects"
+          onClick={() => {
+            setMoreOpen(false);
+            onOpenLayers();
+          }}
+          className="flex h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-[12.5px] font-medium text-text hover:bg-ink-3"
+        >
+          <Layers size={17} className="text-dim" />
+          Layers
+          {layersCount > 0 && (
+            <span className="ml-auto rounded-full bg-ink-3 px-2 py-0.5 font-mono text-[10px] text-dim">
+              {layersCount}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          aria-label="Alignment grid"
+          aria-pressed={gridVisible}
+          onClick={() => {
+            onToggleGrid();
+            setMoreOpen(false);
+          }}
+          className="flex h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-[12.5px] font-medium text-text hover:bg-ink-3"
+        >
+          <Grid3x3 size={17} className="text-dim" />
+          Grid
+          {gridVisible && <Check size={15} className="ml-auto text-accent" />}
+        </button>
+        <button
+          type="button"
+          aria-label="Preview artboard"
+          onClick={() => {
+            setMoreOpen(false);
+            onPreview();
+          }}
+          className="flex h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-[12.5px] font-medium text-text hover:bg-ink-3"
+        >
+          <Eye size={17} className="text-dim" />
+          Preview
+        </button>
+      </div>
     </header>
   );
 };

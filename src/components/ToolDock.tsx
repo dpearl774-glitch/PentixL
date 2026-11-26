@@ -1,5 +1,15 @@
 import React from 'react';
-import { MousePointer2, PenTool, Pencil, Square, Type, Brush, Crosshair, Hand } from 'lucide-react';
+import {
+  Brush,
+  Crosshair,
+  Hand,
+  Layers,
+  MousePointer2,
+  Pencil,
+  PenTool,
+  Square,
+  Type,
+} from 'lucide-react';
 import { ToolType } from '../types/vector';
 import { haptic } from '../theme';
 
@@ -7,6 +17,8 @@ interface ToolDockProps {
   currentTool: ToolType;
   onSelectTool: (tool: ToolType) => void;
   onOpenShapes: () => void;
+  onOpenLayers: () => void;
+  layersOpen: boolean;
 }
 
 const ShapeBuilderGlyph: React.FC<{ size?: number }> = ({ size = 21 }) => (
@@ -27,67 +39,170 @@ const ShapeBuilderGlyph: React.FC<{ size?: number }> = ({ size = 21 }) => (
   </svg>
 );
 
-interface Slot {
-  id: ToolType;
-  label: string;
-  aria: string;
-  icon: React.ReactNode;
-  opensSheet?: boolean;
-}
-
-/** Every tool is one tap away. Direct Select is its own slot: node editing
- * must never be hidden behind a gesture. */
-const SLOTS: Slot[] = [
-  { id: 'select', label: 'Select', aria: 'Select and move', icon: <MousePointer2 size={21} /> },
-  { id: 'hand', label: 'Pan', aria: 'Pan canvas', icon: <Hand size={21} /> },
-  { id: 'direct-select', label: 'Nodes', aria: 'Direct select nodes', icon: <Crosshair size={21} /> },
-  { id: 'pen', label: 'Pen', aria: 'Pen tool', icon: <PenTool size={21} /> },
+/** Tools that are one tap away once Draw is open. */
+const DRAW_SLOTS: { id: ToolType; label: string; aria: string; icon: React.ReactNode }[] = [
+  { id: 'pen', label: 'Pen', aria: 'Pen tool', icon: <PenTool size={20} /> },
   { id: 'pencil', label: 'Pencil', aria: 'Pencil tool', icon: <Pencil size={20} /> },
-  { id: 'pressure-brush', label: 'Brush', aria: 'Pressure brush', icon: <Brush size={21} /> },
+  { id: 'pressure-brush', label: 'Brush', aria: 'Pressure brush', icon: <Brush size={20} /> },
+  { id: 'direct-select', label: 'Nodes', aria: 'Direct select nodes', icon: <Crosshair size={20} /> },
   {
     id: 'shape-builder',
     label: 'Build',
     aria: 'Shape builder',
-    icon: <ShapeBuilderGlyph />,
+    icon: <ShapeBuilderGlyph size={20} />,
   },
-  { id: 'shape', label: 'Shapes', aria: 'Shape library', icon: <Square size={20} />, opensSheet: true },
-  { id: 'text', label: 'Text', aria: 'Text tool', icon: <Type size={21} /> },
+  { id: 'hand', label: 'Pan', aria: 'Pan canvas', icon: <Hand size={20} /> },
 ];
 
-export const ToolDock: React.FC<ToolDockProps> = ({ currentTool, onSelectTool, onOpenShapes }) => (
-  <div className="z-30 shrink-0 border-t border-line bg-ink-1">
-    <div className="safe-bottom">
-      <div className="mx-auto flex h-[58px] max-w-2xl items-stretch px-1">
-        {SLOTS.map((slot) => {
-          const active = currentTool === slot.id;
-          return (
+/**
+ * The phone dock. Five fixed, labelled destinations — the same shape as a
+ * shipped mobile editor — instead of a row of nine unlabelled desktop icons.
+ * The drawing tools live one level down in the Draw tray.
+ */
+export const ToolDock: React.FC<ToolDockProps> = ({
+  currentTool,
+  onSelectTool,
+  onOpenShapes,
+  onOpenLayers,
+  layersOpen,
+}) => {
+  const [drawOpen, setDrawOpen] = React.useState(false);
+  const drawActive = DRAW_SLOTS.some((slot) => slot.id === currentTool);
+
+  React.useEffect(() => {
+    setDrawOpen(false);
+  }, [currentTool, layersOpen]);
+
+  const slots: Array<{
+    key: string;
+    label: string;
+    icon: React.ReactNode;
+    active: boolean;
+    onClick: () => void;
+    expanded?: boolean;
+  }> = [
+    {
+      key: 'select',
+      label: 'Select',
+      icon: <MousePointer2 size={21} />,
+      active: currentTool === 'select',
+      onClick: () => onSelectTool('select'),
+    },
+    {
+      key: 'shapes',
+      label: 'Shapes',
+      icon: <Square size={21} />,
+      active: currentTool === 'shape',
+      onClick: () => {
+        onSelectTool('shape');
+        onOpenShapes();
+      },
+    },
+    {
+      key: 'text',
+      label: 'Text',
+      icon: <Type size={21} />,
+      active: currentTool === 'text',
+      onClick: () => onSelectTool('text'),
+    },
+    {
+      key: 'draw',
+      label: 'Draw',
+      icon: <Pencil size={21} />,
+      active: drawActive,
+      expanded: drawOpen,
+      onClick: () => setDrawOpen((open) => !open),
+    },
+    {
+      key: 'layers',
+      label: 'Layers',
+      icon: <Layers size={21} />,
+      active: layersOpen,
+      onClick: onOpenLayers,
+    },
+  ];
+
+  return (
+    <div className="relative z-40 shrink-0 border-t border-line bg-ink-1/95 backdrop-blur">
+      {drawOpen && (
+        <>
+          <button
+            type="button"
+            aria-label="Close drawing tools"
+            className="fixed inset-0 z-40 cursor-default bg-ink-0/45 backdrop-blur-[2px]"
+            onClick={() => setDrawOpen(false)}
+          />
+          <div className="anim-rise absolute bottom-full left-2 right-2 z-50 mb-2 rounded-2xl border border-line bg-ink-2 p-2 shadow-2xl shadow-black/50">
+            <div className="flex items-center justify-between px-2 pb-2">
+              <span className="font-sans text-[10px] font-bold uppercase tracking-[0.12em] text-mute">
+                Drawing tools
+              </span>
+              <span className="font-sans text-[10px] text-mute">Pick one</span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {DRAW_SLOTS.map((slot) => {
+                const active = currentTool === slot.id;
+                return (
+                  <button
+                    key={slot.id}
+                    type="button"
+                    aria-label={slot.aria}
+                    aria-pressed={active}
+                    onClick={() => {
+                      haptic(8);
+                      onSelectTool(slot.id);
+                      setDrawOpen(false);
+                    }}
+                    className={`press flex h-14 flex-col items-center justify-center gap-1 rounded-xl border ${
+                      active
+                        ? 'border-accent/40 bg-accent/10 text-accent'
+                        : 'border-transparent bg-ink-3 text-dim'
+                    }`}
+                  >
+                    {slot.icon}
+                    <span className="font-sans text-[10px] font-semibold leading-none">
+                      {slot.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
+      <div className="safe-bottom relative z-50">
+        <div className="mx-auto flex h-16 max-w-2xl items-stretch px-1.5">
+          {slots.map((slot) => (
             <button
-              key={slot.id}
+              key={slot.key}
               type="button"
-              aria-label={slot.aria}
-              aria-pressed={active}
+              aria-label={slot.label}
+              aria-pressed={slot.active}
+              aria-expanded={slot.expanded}
               onClick={() => {
                 haptic(8);
-                // The slot is a tool first and a sheet second: tapping Shapes arms
-                // the shape tool, so closing the library leaves you ready to draw
-                // instead of back in Select with nothing highlighted.
-                onSelectTool(slot.id);
-                if (slot.opensSheet) onOpenShapes();
+                slot.onClick();
               }}
-              className="press relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg"
+              className={`press relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl ${
+                slot.active ? 'bg-accent/10 text-accent' : 'text-dim'
+              }`}
             >
-              <span className={active ? 'text-accent' : 'text-dim'}>{slot.icon}</span>
-              {/* Only the active tool is named — six labels at phone width read as noise */}
-              {active && (
-                <span className="max-w-full truncate font-sans text-[8.5px] uppercase leading-none tracking-[0.06em] text-accent">
-                  {slot.label}
-                </span>
+              {slot.active && (
+                <span className="absolute top-1 h-[2px] w-5 rounded-full bg-accent" />
               )}
-              {active && <span className="absolute -top-px h-[2px] w-6 rounded-full bg-accent" />}
+              <span className={slot.active ? 'text-accent' : 'text-dim'}>{slot.icon}</span>
+              <span
+                className={`max-w-full truncate font-sans text-[10px] font-semibold leading-none tracking-[0.01em] ${
+                  slot.active ? 'text-accent' : 'text-dim'
+                }`}
+              >
+                {slot.label}
+              </span>
             </button>
-          );
-        })}
+          ))}
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};

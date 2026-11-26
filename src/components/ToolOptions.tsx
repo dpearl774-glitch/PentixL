@@ -256,6 +256,36 @@ const StrokeStepper: React.FC<{ width: number; onChange: (width: number) => void
 );
 
 /**
+ * One labelled, fixed slot per job, as PixelLab's phone bar does: icon over a
+ * short name, equal widths, never a horizontal scroll. Tabs replace the old
+ * chip row only while an object is selected, so they stay predictable.
+ */
+const PanelTab: React.FC<{
+  label: string;
+  icon: React.ReactNode;
+  active?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}> = ({ label, icon, active, disabled = false, onClick }) => (
+  <button
+    type="button"
+    // Omitted for action tabs (Text): only the toggles report a pressed state.
+    aria-pressed={active}
+    disabled={disabled}
+    onClick={onClick}
+    className={`press relative flex h-12 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl border ${
+      active ? 'border-accent/40 bg-accent/10 text-accent' : 'border-transparent text-dim'
+    } disabled:pointer-events-none disabled:opacity-30`}
+  >
+    {active && <span className="absolute top-0 h-[2px] w-5 rounded-full bg-accent" />}
+    {icon}
+    <span className="max-w-full truncate font-sans text-[9.5px] font-semibold uppercase leading-none tracking-[0.02em]">
+      {label}
+    </span>
+  </button>
+);
+
+/**
  * One name per job. The panel title is the tool's, not the selection's, so the
  * same tool always opens the same panel in the same place.
  */
@@ -361,24 +391,36 @@ const Swatch: React.FC<{
     type="button"
     onClick={onClick}
     aria-label={label}
-    className="press relative grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-line bg-ink-2"
+    title={color === 'none' ? `${label} — none` : label}
+    className="press relative grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-line bg-ink-2"
   >
     {hollow ? (
       <span
-        className="h-4 w-4 rounded-[3px]"
-        style={{ border: `${Math.min(3, Math.max(1.5, (width ?? 2) / 2))}px solid ${color}` }}
+        className="h-[18px] w-[18px] rounded-[4px]"
+        style={{
+          border:
+            color === 'none'
+              ? '1.5px dashed #8b93a7'
+              : `${Math.min(3, Math.max(1.5, (width ?? 2) / 2))}px solid ${color}`,
+        }}
       />
     ) : (
       <span
-        className="h-4 w-4 rounded-[3px]"
+        className="h-[18px] w-[18px] rounded-[4px]"
         style={{
-          backgroundColor: color,
-          backgroundImage:
-            color === 'none'
-              ? 'linear-gradient(45deg, #ff6b6b 1.5px, transparent 1.5px 50%, #ff6b6b 50%, #ff6b6b 51.5px, transparent 51.5px)'
-              : undefined,
+          backgroundColor: color === 'none' ? 'transparent' : color,
         }}
       />
+    )}
+    {/* A red stroke through the chip: at a glance, none means none — not a
+        very dark colour or an empty slot that failed to paint. */}
+    {color === 'none' && (
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 grid place-items-center"
+      >
+        <span className="h-[2px] w-[26px] -rotate-45 rounded-full bg-danger shadow-[0_0_0_1px_rgba(0,0,0,0.35)]" />
+      </span>
     )}
   </button>
 );
@@ -518,6 +560,20 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   onDeleteReference,
 }) => {
   const isDrawing = drawingPointCount > 0 && (tool === 'pen' || tool === 'pressure-brush');
+
+  /** The selection row: object chips in select mode, node chips in node editing. */
+  const selectionStripVisible =
+    !isDrawing && !reference && selectedCount > 0 && tool !== 'shape';
+
+  /** Object, Arrange, Effects and 3D — the tabs that open a panel in the chrome. */
+  const objectChipsVisible = selectionStripVisible && tool !== 'direct-select';
+
+  /** Nothing selected in Select: the bar becomes the Add palette. */
+  const addChipsVisible = tool === 'select' && selectedCount === 0 && !isDrawing && !reference;
+
+  /** Transform also needs a frame; it is the one object chip that can vanish alone. */
+  const transformChipVisible =
+    objectChipsVisible && Boolean(transformBox) && Boolean(onTransformPosition && onTransformSize);
 
   /**
    * The strip never re-arranges itself: every tool shows the same five slots,
@@ -1071,17 +1127,18 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   }, [cornerIds, cornerTarget]);
 
   /**
-   * A panel whose trigger has left the strip must not stay on screen: deleting
-   * the selection hides the More chip, and without this the panel was left with
-   * no way to close and the whole app read as frozen.
+   * A panel may not outlive the chip that opened it: node editing, the shape
+   * tool, a reference, a live path or a deleted selection hides that chip, and
+   * the panel closes with it instead of reappearing when the chip returns.
    */
   React.useEffect(() => {
-    if (selectedCount === 0) {
+    if (!objectChipsVisible) {
       setMoreMenu(false);
       setAlignMenu(false);
       setThreeDMenu(false);
     }
-  }, [selectedCount]);
+    if (!transformChipVisible) setTransformMenu(false);
+  }, [objectChipsVisible, transformChipVisible]);
 
   const closePanels = () => {
     setWarpPreviewOn(false);
@@ -1089,7 +1146,52 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
     setMoreMenu(false);
     setAlignMenu(false);
     setThreeDMenu(false);
+    setTransformMenu(false);
   };
+
+  const toggleTransformMenu = () => {
+    if (transformMenu) {
+      setTransformMenu(false);
+      return;
+    }
+    setAlignMenu(false);
+    setMoreMenu(false);
+    setThreeDMenu(false);
+    setTransformMenu(true);
+  };
+
+  // The arrangement actions live in the Arrange panel now, with names on them.
+  const arrangeActions: Array<{
+    label: string;
+    icon: React.ReactNode;
+    onClick: () => void;
+    disabled?: boolean;
+    danger?: boolean;
+  }> = [
+    { label: 'Duplicate', icon: <Copy size={12} />, onClick: onDuplicate },
+    { label: 'Paste', icon: <ClipboardPaste size={12} />, onClick: onPaste, disabled: !canPaste },
+    { label: 'Delete', icon: <Trash2 size={12} />, onClick: onDelete, danger: true },
+    {
+      label: 'Group',
+      icon: <LayersIcon size={12} />,
+      onClick: onGroup,
+      disabled: selectedCount < 2,
+    },
+    {
+      label: 'Merge',
+      icon: <Combine size={12} />,
+      onClick: onMerge,
+      disabled: selectedCount < 2 || hasTextSelection,
+    },
+    { label: 'Flip H', icon: <FlipHorizontal size={12} />, onClick: () => onFlip('horizontal') },
+    { label: 'Flip V', icon: <FlipVertical size={12} />, onClick: () => onFlip('vertical') },
+    ...(hasTextSelection
+      ? [
+          { label: 'Edit text', icon: <TypeIcon size={12} />, onClick: onEditText },
+          { label: 'To curves', icon: <Wand2 size={12} />, onClick: onExpandText },
+        ]
+      : []),
+  ];
 
   if (tool === 'hand' && selectedCount === 0 && !reference) {
     return (
@@ -1106,47 +1208,135 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
     );
   }
 
+  const activePanelOpen =
+    objectChipsVisible && (alignMenu || moreMenu || threeDMenu || transformMenu);
+
   return (
-    <div className="relative z-20 shrink-0 border-t border-line bg-ink-1/95">
-      {panelIsOpen && (
+    <div className="relative z-20 flex shrink-0 flex-col border-t border-line bg-ink-1/95">
+      {panelIsOpen && !addChipsVisible && !activePanelOpen && (
         <ToolPanel name={panel.name} hint={panel.hint} onClose={togglePanel}>
           {panelBlocks}
         </ToolPanel>
       )}
+      {/* PixelLab's phone pattern: fixed, labelled categories instead of a
+          scrolling chip row. The tool panel keeps an icon slot so its options
+          stay one tap away without crowding the tabs. */}
       <div
         data-tour="strip"
-        className="scroll-x mx-auto flex h-11 max-w-3xl items-center gap-1.5 px-2"
+        className="scroll-x order-3 mx-auto flex h-14 w-full max-w-3xl items-center gap-1 px-2.5"
       >
-        <Chip
-          active={panelIsOpen}
-          disabled={!hasPanelContent}
-          icon={panel.icon}
-          aria-label={`${panel.name} options`}
-          onClick={togglePanel}
-        >
-          {panel.name}
-        </Chip>
-        <Divider />
-        <Swatch color={fillColor} label="Fill colour" onClick={() => onOpenColor('fill')} />
-        <Swatch
-          color={strokeColor}
-          label="Stroke colour"
-          hollow
-          width={strokeWidth}
-          onClick={() => onOpenColor('stroke')}
-        />
-        <Divider />
-        {/* ---------------- Object selected ---------------- */}
-        {!isDrawing && !reference && selectedCount > 0 && tool !== 'shape' && (
+        {objectChipsVisible ? (
           <>
-            <span className="shrink-0 rounded-full bg-ink-3 px-2 py-1 font-mono text-[10px] font-bold text-dim">
-              {selectedCount} selected
-            </span>
-
-            {tool === 'direct-select' ? (
-              /* Node editing: keep the strip about nodes, not transforms */
+            <div className="flex min-w-0 flex-1 items-stretch gap-0.5">
+              {hasTextSelection && (
+                <PanelTab
+                  label="Text"
+                  icon={<TypeIcon size={14} />}
+                  onClick={() => {
+                    closePanels();
+                    onEditText();
+                  }}
+                />
+              )}
+              {transformChipVisible && (
+                <PanelTab
+                  label="Object"
+                  icon={<Move size={14} />}
+                  active={transformMenu}
+                  onClick={toggleTransformMenu}
+                />
+              )}
+              <PanelTab
+                label="Arrange"
+                icon={<AlignHorizontalJustifyStart size={14} />}
+                active={alignMenu}
+                onClick={() => {
+                  setMoreMenu(false);
+                  setThreeDMenu(false);
+                  setTransformMenu(false);
+                  setAlignMenu((v) => !v);
+                }}
+              />
+              <PanelTab
+                label="Effects"
+                icon={<SlidersHorizontal size={14} />}
+                active={moreMenu}
+                onClick={() => {
+                  setAlignMenu(false);
+                  setThreeDMenu(false);
+                  setTransformMenu(false);
+                  setMoreMenu((v) => !v);
+                }}
+              />
+              <PanelTab
+                label="3D"
+                icon={<Box size={14} />}
+                active={threeDMenu || extrudeDepth > 0}
+                onClick={() => {
+                  setAlignMenu(false);
+                  setMoreMenu(false);
+                  setTransformMenu(false);
+                  setThreeDMenu((v) => !v);
+                }}
+              />
+            </div>
+          </>
+        ) : addChipsVisible ? (
+          <>
+            {/* Colours before a shape exists: the next stroke/fill uses these. */}
+            <Swatch color={fillColor} label="Fill colour" onClick={() => onOpenColor('fill')} />
+            <Swatch
+              color={strokeColor}
+              label="Stroke colour"
+              hollow
+              width={strokeWidth}
+              onClick={() => onOpenColor('stroke')}
+            />
+            <Divider />
+            <div className="flex min-w-0 flex-1 items-stretch gap-0.5">
+              <PanelTab label="Text" icon={<TypeIcon size={14} />} onClick={onOpenText} />
+            <PanelTab
+              label="Square"
+              icon={<Square size={14} />}
+              onClick={() => onQuickShape('rectangle')}
+            />
+            <PanelTab
+              label="Circle"
+              icon={<Circle size={14} />}
+              onClick={() => onQuickShape('circle')}
+            />
+            <PanelTab
+              label="Star"
+              icon={<Star size={14} />}
+              onClick={() => onQuickShape('star')}
+            />
+              <PanelTab label="Shapes" icon={<Hexagon size={14} />} onClick={onOpenShapes} />
+            </div>
+          </>
+        ) : (
+          <>
+            <Chip
+              active={panelIsOpen}
+              disabled={!hasPanelContent}
+              icon={panel.icon}
+              aria-label={`${panel.name} options`}
+              onClick={togglePanel}
+            >
+              {panel.name}
+            </Chip>
+            <Divider />
+            <Swatch color={fillColor} label="Fill colour" onClick={() => onOpenColor('fill')} />
+            <Swatch
+              color={strokeColor}
+              label="Stroke colour"
+              hollow
+              width={strokeWidth}
+              onClick={() => onOpenColor('stroke')}
+            />
+            <Divider />
+            {/* Node editing keeps its own operations; object tabs never appear here. */}
+            {selectionStripVisible && (
               <>
-                <Divider />
                 <Chip
                   icon={<Spline size={13} />}
                   onClick={onToggleNodeType}
@@ -1180,133 +1370,50 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                   </span>
                 )}
               </>
-            ) : (
-              <>
-                <Divider />
-                <IconButton label="Duplicate" size="sm" onClick={onDuplicate}>
-                  <Copy size={14} />
-                </IconButton>
-                <IconButton label="Paste objects" size="sm" onClick={onPaste} disabled={!canPaste}>
-                  <ClipboardPaste size={14} />
-                </IconButton>
-                {transformBox && onTransformPosition && onTransformSize && (
-                  <Chip
-                    active={transformMenu}
-                    icon={<Move size={13} />}
-                    aria-label="Transform: exact position, size and angle"
-                    onClick={() => {
-                      setAlignMenu(false);
-                      setMoreMenu(false);
-                      setThreeDMenu(false);
-                      setTransformMenu((v) => !v);
-                    }}
-                  >
-                    Transform
-                  </Chip>
-                )}
-                <Chip
-                  active={alignMenu}
-                  icon={<AlignHorizontalJustifyStart size={13} />}
-                  onClick={() => {
-                    setMoreMenu(false);
-                    setThreeDMenu(false);
-                    setAlignMenu((v) => !v);
-                  }}
-                >
-                  Align
-                </Chip>
-                {/* Group and Merge sit here for every selection, greyed until two
-                    objects are picked, so their place never depends on what is selected. */}
-                <Chip
-                  icon={<LayersIcon size={13} />}
-                  onClick={onGroup}
-                  disabled={selectedCount < 2}
-                >
-                  Group
-                </Chip>
-                <Chip
-                  icon={<Combine size={13} />}
-                  onClick={onMerge}
-                  disabled={selectedCount < 2 || hasTextSelection}
-                >
-                  Merge
-                </Chip>
-                <Chip
-                  active={moreMenu}
-                  icon={<SlidersHorizontal size={13} />}
-                  onClick={() => {
-                    setAlignMenu(false);
-                    setThreeDMenu(false);
-                    setTransformMenu(false);
-                    setMoreMenu((v) => !v);
-                  }}
-                >
-                  More
-                </Chip>
-                <IconButton label="Delete" size="sm" tone="danger" onClick={onDelete}>
-                  <Trash2 size={14} />
-                </IconButton>
-                {/* Named, because two bare mirror glyphs beside More read as
-                    decoration nobody could identify. */}
-                <Chip icon={<FlipHorizontal size={13} />} onClick={() => onFlip('horizontal')}>
-                  Flip H
-                </Chip>
-                <Chip icon={<FlipVertical size={13} />} onClick={() => onFlip('vertical')}>
-                  Flip V
-                </Chip>
-                {/* 3D used to be the second slider inside More, where it read as
-                    a buried extra. It is its own panel now. */}
-                <Chip
-                  active={threeDMenu || extrudeDepth > 0}
-                  icon={<Box size={13} />}
-                  aria-label="3D settings"
-                  onClick={() => {
-                    setAlignMenu(false);
-                    setMoreMenu(false);
-                    setTransformMenu(false);
-                    setThreeDMenu((v) => !v);
-                  }}
-                >
-                  3D{extrudeDepth > 0 ? ` · ${Math.round(extrudeDepth)}` : ''}
-                </Chip>
-
-                {hasTextSelection && (
-                  <>
-                    <Divider />
-                    <Chip icon={<TypeIcon size={13} />} onClick={onEditText}>
-                      Edit text
-                    </Chip>
-                    <Chip
-                      icon={<Wand2 size={13} />}
-                      aria-label="Create outlines"
-                      onClick={onExpandText}
-                    >
-                      To curves
-                    </Chip>
-                  </>
-                )}
-
-              </>
+            )}
+            {selectedCount === 0 && !isDrawing && (
+              <span className="min-w-0 truncate text-[11px] text-mute">{panel.hint}</span>
             )}
           </>
         )}
-
-        {selectedCount === 0 && !isDrawing && (
-          <span className="min-w-0 truncate text-[11px] text-mute">{panel.hint}</span>
-        )}
       </div>
 
-      {/* Panels live outside the scrolling strip — inside it their tops were
-          clipped, which made Align and More look dead. */}
-      {(alignMenu || moreMenu || threeDMenu || transformMenu) && (
-        <div
-          className="fixed inset-0 z-30"
-          aria-hidden="true"
-          onPointerDown={closePanels}
-        />
-      )}
-      {alignMenu && (
-        <div className="absolute bottom-[calc(100%+6px)] left-2 z-40 w-[186px] rounded-lg border border-line bg-ink-2 p-1.5 shadow-2xl">
+      {/* Panels sit in the chrome flow, not over the canvas: the artboard
+          shrinks instead of disappearing under a sheet, and the canvas's
+          thumb helpers stay reachable. */}
+      {alignMenu && objectChipsVisible && (
+        <div className="order-2 w-full max-h-[28dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t border-line bg-ink-2 px-3 pb-2">
+          <div className="sticky top-0 z-30 -mx-3 mb-2 flex h-11 items-center justify-between border-b border-line bg-ink-2/95 px-3 backdrop-blur">
+            <span className="flex items-center gap-1.5 font-sans text-[10px] font-bold uppercase tracking-[0.12em] text-text">
+              <AlignHorizontalJustifyStart size={13} className="text-accent" /> Arrange
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="font-mono text-[10px] text-mute">{selectedCount} selected</span>
+              <button
+                type="button"
+                aria-label="Close arrange"
+                onClick={() => setAlignMenu(false)}
+                className="press grid h-8 w-8 place-items-center rounded-lg text-dim hover:bg-ink-3 hover:text-text"
+              >
+                <X size={16} />
+              </button>
+            </span>
+          </div>
+          <div className="mb-1.5 grid grid-cols-3 gap-1">
+            {arrangeActions.map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                disabled={action.disabled}
+                onClick={action.onClick}
+                className={`press flex h-8 items-center justify-center gap-1 rounded-md bg-ink-3 font-sans text-[9px] font-bold uppercase tracking-[0.04em] disabled:opacity-35 ${
+                  action.danger ? 'text-danger' : 'text-dim hover:text-accent'
+                }`}
+              >
+                {action.icon} {action.label}
+              </button>
+            ))}
+          </div>
           <div className="grid grid-cols-3 gap-1">
             {ALIGN_BUTTONS.map((b) => (
               <button
@@ -1342,12 +1449,25 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
         </div>
       )}
 
-      {moreMenu && (
+      {moreMenu && objectChipsVisible && (
         <div
           ref={morePanelRef}
-          className="absolute bottom-[calc(100%+6px)] right-2 z-40 max-h-[38dvh] w-[196px] overflow-y-auto overscroll-contain rounded-lg border border-line bg-ink-2 p-1.5 shadow-2xl"
+          className="order-2 w-full max-h-[28dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t border-line bg-ink-2 px-3 pb-2"
         >
-          <div className="sticky -top-1.5 z-10 -mx-1.5 -mt-1.5 mb-1 flex gap-1 overflow-x-auto border-b border-line bg-ink-2/95 px-1.5 py-1.5">
+          <div className="sticky top-0 z-30 -mx-3 mb-2 flex h-11 items-center justify-between border-b border-line bg-ink-2/95 px-3 backdrop-blur">
+            <span className="flex items-center gap-1.5 font-sans text-[10px] font-bold uppercase tracking-[0.12em] text-text">
+              <SlidersHorizontal size={13} className="text-accent" /> Effects
+            </span>
+            <button
+              type="button"
+              aria-label="Close effects"
+              onClick={() => setMoreMenu(false)}
+              className="press grid h-8 w-8 place-items-center rounded-lg text-dim hover:bg-ink-3 hover:text-text"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="mb-1 flex gap-1 overflow-x-auto border-b border-line px-1.5 py-1.5">
             {[
               ['Corner', 'Corner'],
               ['Path', 'Pathfinder'],
@@ -2456,17 +2576,56 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
         </div>
       )}
 
-      {transformMenu && transformBox && onTransformPosition && onTransformSize && (
-        <div className="absolute bottom-[calc(100%+6px)] left-2 z-40 w-[228px] rounded-lg border border-line bg-ink-2 p-2 shadow-2xl">
-          <div className="flex items-center justify-between px-0.5">
-            <span className="flex items-center gap-1 font-sans text-[9px] uppercase tracking-[0.08em] text-mute">
-              <Move size={11} /> Transform
+      {transformMenu &&
+        transformChipVisible &&
+        transformBox &&
+        onTransformPosition &&
+        onTransformSize && (
+        <div className="order-2 w-full max-h-[32dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t border-line bg-ink-2 px-3 pb-2">
+          <div className="sticky top-0 z-30 -mx-3 mb-2 flex h-11 items-center justify-between border-b border-line bg-ink-2/95 px-3 backdrop-blur">
+            <span className="flex items-center gap-1.5 font-sans text-[10px] font-bold uppercase tracking-[0.12em] text-text">
+              <Move size={13} className="text-accent" /> Object
             </span>
-            <span className="font-mono text-[9px] text-mute">px</span>
+            <span className="flex items-center gap-0.5">
+              <span className="mr-1 font-mono text-[10px] text-mute">px</span>
+              <IconButton label="Duplicate object" size="sm" onClick={onDuplicate}>
+                <Copy size={14} />
+              </IconButton>
+              <IconButton label="Delete object" size="sm" tone="danger" onClick={onDelete}>
+                <Trash2 size={14} />
+              </IconButton>
+              <button
+                type="button"
+                aria-label="Close transform"
+                onClick={() => setTransformMenu(false)}
+                className="press grid h-8 w-8 place-items-center rounded-lg text-mute hover:bg-ink-3 hover:text-text"
+              >
+                <X size={16} />
+              </button>
+            </span>
+          </div>
+          {/* PixelLab keeps colour with the object's properties, not as a chip
+              in the bar, so the tabs stay equal-width and thumb-sized. */}
+          <div className="mt-0 flex h-11 items-center gap-2 rounded-xl bg-ink-3 px-2.5">
+            <Swatch color={fillColor} label="Fill colour" onClick={() => onOpenColor('fill')} />
+            <span className="font-sans text-[10px] font-semibold uppercase tracking-[0.04em] text-dim">
+              Fill
+            </span>
+            <span className="flex-1" />
+            <Swatch
+              color={strokeColor}
+              label="Stroke colour"
+              hollow
+              width={strokeWidth}
+              onClick={() => onOpenColor('stroke')}
+            />
+            <span className="font-sans text-[10px] font-semibold uppercase tracking-[0.04em] text-dim">
+              Stroke
+            </span>
           </div>
           {/* Typed values sit beside the handles, so a badge can be placed at an
               exact X rather than near one. */}
-          <div className="mt-1.5 grid grid-cols-2 gap-1">
+          <div className="mt-2 grid grid-cols-2 gap-1.5">
             {(
               [
                 ['x', 'X', Math.round(transformBox.x), -4000, 4000],
@@ -2477,9 +2636,9 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
             ).map(([key, label, value, min, max]) => (
               <label
                 key={key}
-                className="flex h-8 items-center gap-1 rounded-md bg-ink-3 px-1.5"
+                className="flex h-9 items-center gap-1.5 rounded-lg bg-ink-3 px-2"
               >
-                <span className="w-3 shrink-0 font-mono text-[9px] font-bold text-mute">
+                <span className="w-3.5 shrink-0 font-mono text-[10px] font-bold text-mute">
                   {label}
                 </span>
                 <span className="flex-1 text-right">
@@ -2499,16 +2658,16 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
             ))}
           </div>
           {onTurnSelection && (
-            <div className="mt-1 flex items-center gap-1 rounded-md bg-ink-3 px-1 py-1">
+            <div className="mt-1.5 flex h-9 items-center gap-1.5 rounded-lg bg-ink-3 px-1.5">
               <button
                 type="button"
                 aria-label="Turn left 90 degrees"
                 onClick={() => onTurnSelection(-90)}
-                className="press grid h-6 w-6 place-items-center rounded text-dim hover:text-accent"
+                className="press grid h-7 w-7 place-items-center rounded-md text-dim hover:text-accent"
               >
-                <RotateCcw size={12} />
+                <RotateCcw size={13} />
               </button>
-              <span className="text-[9px] font-semibold uppercase tracking-[0.06em] text-mute">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-mute">
                 Angle
               </span>
               <span className="flex-1" />
@@ -2524,27 +2683,33 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                 type="button"
                 aria-label="Turn right 90 degrees"
                 onClick={() => onTurnSelection(90)}
-                className="press grid h-6 w-6 place-items-center rounded text-dim hover:text-accent"
+                className="press grid h-7 w-7 place-items-center rounded-md text-dim hover:text-accent"
               >
-                <RotateCw size={12} />
+                <RotateCw size={13} />
               </button>
             </div>
           )}
-          <p className="mt-1 px-0.5 text-[9px] leading-snug text-mute">
-            X and Y are the frame's top-left corner. The angle reads back from the
-            object, and 0 puts it back upright.
-          </p>
         </div>
       )}
 
-      {threeDMenu && (
-        <div className="absolute bottom-[calc(100%+6px)] left-2 z-40 max-h-[38dvh] w-[216px] overflow-y-auto overscroll-contain rounded-lg border border-line bg-ink-2 p-2 shadow-2xl">
-          <div className="flex items-center justify-between px-0.5">
-            <span className="flex items-center gap-1 font-sans text-[9px] uppercase tracking-[0.08em] text-mute">
-              <Box size={11} /> 3D extrusion
+      {threeDMenu && objectChipsVisible && (
+        <div className="order-2 w-full max-h-[28dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t border-line bg-ink-2 px-3 pb-2">
+          <div className="sticky top-0 z-30 -mx-3 mb-2 flex h-11 items-center justify-between border-b border-line bg-ink-2/95 px-3 backdrop-blur">
+            <span className="flex items-center gap-1.5 font-sans text-[10px] font-bold uppercase tracking-[0.12em] text-text">
+              <Box size={13} className="text-accent" /> 3D extrusion
             </span>
-            <span className="font-mono text-[10px] font-bold text-accent">
-              {Math.round(extrudeDepth)}
+            <span className="flex items-center gap-1.5">
+              <span className="font-mono text-[10px] font-bold text-accent">
+                {Math.round(extrudeDepth)}
+              </span>
+              <button
+                type="button"
+                aria-label="Close 3D"
+                onClick={() => setThreeDMenu(false)}
+                className="press grid h-8 w-8 place-items-center rounded-lg text-dim hover:bg-ink-3 hover:text-text"
+              >
+                <X size={16} />
+              </button>
             </span>
           </div>
           {/* A label has no closed shape to pull, so every control below would

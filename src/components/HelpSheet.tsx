@@ -101,7 +101,7 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
     onClose={onClose}
     title="Gestures & shortcuts"
     eyebrow="Reference"
-    subtitle="Everything the two-thumb layout gives you."
+    subtitle="Everything the dock, canvas and panels give you."
   >
     <div className="flex flex-col gap-2.5 pb-2">
       <Group icon={<Hand size={14} />} title="Canvas">
@@ -111,7 +111,7 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
         </Item>
         <Item term="Tap canvas">Deselects. With the text tool it places a label.</Item>
         <Item term={<Key>space</Key>}>Hold to pan, release to return to the tool you were on.</Item>
-        <Item term="Top bar">Undo and redo sit beside the document name. Layers open as a see-through panel.</Item>
+        <Item term="Top bar">Undo and redo sit beside the document name. Layers is the last tab in the dock; the ⇧⌃⌥ and Precise pills sit under the zoom control.</Item>
       </Group>
 
       {/* Near the top: the numbers answer a question the tester asks about the
@@ -139,10 +139,16 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
         <Item term="Transparent">Off in the export panel drops the background entirely.</Item>
       </Group>
 
-      <Group icon={<span className="font-mono text-[13px]">⇧⌃⌥</span>} title="Thumb modifiers">
+      <Group icon={<span className="font-mono text-[13px]">⇧⌃⌥</span>} title="Modifiers">
+        <Item term="On screen">
+          Tap the ⇧⌃⌥ pill under the zoom control and arm one or more. Tap Done, then drag; the active
+          glyphs stay lit on the pill. Clear is the release action — tapping the pill only opens or
+          closes this tray.
+        </Item>
         <Item term={<Key>⇧ Shift</Key>}>Constrain pen segments to 45°, lock shapes to equal proportions, scale proportionally.</Item>
-        <Item term={<Key>⌃ Ctrl</Key>}>Temporarily switch to direct selection.</Item>
+        <Item term={<Key>⌃ Ctrl</Key>}>Switch to direct selection while armed.</Item>
         <Item term={<Key>⌥ Alt</Key>}>Break a bezier handle, or flip shape builder into erase.</Item>
+        <Item term="Keyboard">Holding the physical Shift, Ctrl or Alt key arms the same modifier.</Item>
       </Group>
 
       <Group icon={<PenTool size={14} />} title="Pen">
@@ -151,7 +157,7 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
         <Item term="Tap first node">Closes the path.</Item>
         <Item term="Tap a node">Reopens it for editing.</Item>
         <Item term="Alt + tap node">Deletes that node.</Item>
-        <Item term="Check button">Commits the path — right thumb rail, or “Done” in the strip.</Item>
+        <Item term="Check button">Commits the path — “Done” in the options bar.</Item>
       </Group>
 
       <Group icon={<Pencil size={14} />} title="Pencil">
@@ -163,23 +169,27 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
 
       <Group icon={<Combine size={14} />} title="Shape builder & pathfinder">
         <Item term="Build tool">With two or more shapes on the layer, drag across the regions you want to merge — release to commit.</Item>
-        <Item term="Erase">Flip the Build strip to Erase, or hold Alt, then tap regions to remove them.</Item>
+        <Item term="Erase">Flip the Build row to Erase, or hold Alt, then tap regions to remove them.</Item>
         <Item term="Pathfinder">
-          Select two or more objects, then Unite, Minus, Intersect or Exclude from More in the strip above the dock.
+          Select two or more objects, then Unite, Minus, Intersect or Exclude from Effects → Pathfinder.
         </Item>
       </Group>
 
       <Group icon={<MousePointer2 size={14} />} title="Selection">
         <Item term="Direct mode">Double-tap an object to edit its nodes. Select in the dock returns you to object mode.</Item>
-        <Item term="Align">With objects selected, Align lines up edges or centres, or evens the gaps.</Item>
-        <Item term="Objects panel">Eye hides an object, the lock freezes it, and the slider sets its opacity.</Item>
+        <Item term="Groups">Tap any member and the whole group comes with it, so a drag moves the group as one. For a single piece, open Layers and switch Group to Object, then tap that row.</Item>
+        <Item term="Arrange">With objects selected, Arrange lines up edges or centres, or evens the gaps.</Item>
+        <Item term="Layers panel">Eye hides an object, the lock freezes it, and the slider sets its opacity.</Item>
         <Item term="Reordering">Tap an arrow to step one place; hold it to send the object to the front or back.</Item>
         <Item term="Handles">Eight stretch handles plus a rotation handle above the box.</Item>
-        <Item term="Right rail">Duplicate, delete and the nudge pad in 0.5, 1, 5 or 10 px steps.</Item>
+        <Item term="Object sheet">
+          Duplicate and delete sit in its header; X/Y give exact nudges, and the precision pad gives free
+          movement.
+        </Item>
       </Group>
 
       <Group icon={<TypeIcon size={14} />} title="Text">
-        <Item term="Add text">Type tool or the Text chip in the options strip.</Item>
+        <Item term="Add text">The Text tab in the dock, or the Text chip in the options bar.</Item>
         <Item term="Edit text">Double-tap a label, or tap it with the type tool, to change it.</Item>
         <Item term="To curves">Select the text and use “To curves” to convert glyphs into editable paths.</Item>
       </Group>
@@ -188,14 +198,15 @@ export const HelpSheet: React.FC<HelpSheetProps> = ({ open, onClose }) => (
         <Item term="Fonts">Imported typefaces are stored on this device and return after a refresh.</Item>
         <Item term="References">Saved with the document, and locked behind the artwork until unlocked.</Item>
         <Item term="Pressure">Auto uses stylus pressure or finger speed, Speed follows motion, Uniform is constant.</Item>
-        <Item term="Simplify">Reduces anchors on paths and traces you have already made. Lives in More.</Item>
+        <Item term="Simplify">Reduces anchors on paths and traces you have already made. Lives in Effects.</Item>
         <Item term="Preview">
-          The eye in the top bar hides every panel, ruler, grid, guide and selection, leaving only
+          More actions (⋯) → Preview hides every panel, ruler, grid, guide and selection, leaving only
           the artboard. Drag to pan, pinch to zoom, and tap Exit or press Esc to come back.
         </Item>
-        <Item term="Pad">
-          Optional trackpad for pen, pencil, node and select work: steer the crosshair, click to press,
-          drag to move what it landed on, scroll to pan and ⌘-scroll to zoom. Hide it from the menu.
+        <Item term="Precision pad">
+          The “Precise” pill under the zoom control opens an optional trackpad for pen, pencil, node and
+          select work: steer the crosshair, click to press, drag to move what it landed on, scroll to pan
+          and ⌘-scroll to zoom. Hide it from the menu.
         </Item>
       </Group>
 

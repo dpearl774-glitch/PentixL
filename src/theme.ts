@@ -21,10 +21,10 @@ export interface CanvasPalette {
 }
 
 export const DARK_CANVAS: CanvasPalette = {
-  /** Artboard paper */
-  artboard: '#101216',
+  /** Artboard paper: a real sheet, not a dark poster */
+  artboard: '#f6f4ef',
   /** Hairline around the paper — a border, not a drawn shape */
-  artboardEdge: '#23272f',
+  artboardEdge: '#d8d3c8',
   /** Page behind the artboard */
   page: '#08090b',
   /** Alignment grid: present when asked for, never competing with artwork */

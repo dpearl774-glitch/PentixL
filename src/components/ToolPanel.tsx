@@ -47,10 +47,9 @@ export function rememberPanelScroll(name: string, top: number) {
 }
 
 /**
- * A named panel for one job. The frame is the same whatever the tool is — name,
- * one line of guidance, a close button, and a body that scrolls inside itself —
- * so options never make the strip below change shape. It stays until it is
- * closed, and reopens where it was left.
+ * A named panel for one job. Full-bleed, like a phone sheet: a 44 px header,
+ * one line of guidance, a close button, and a body that scrolls inside itself.
+ * It stays until it is closed, and reopens where it was left.
  */
 export const ToolPanel: React.FC<{
   name: string;
@@ -69,30 +68,30 @@ export const ToolPanel: React.FC<{
   }, [name]);
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-2 pt-1.5">
+    <div className="w-full">
       <div
         data-tour="panel"
-        className="overflow-hidden rounded-xl border border-line bg-ink-2/95 shadow-xl"
+        className="overflow-hidden rounded-t-2xl border-t border-line bg-ink-2/95"
       >
-        <div className="flex items-center gap-2 border-b border-line/70 px-2 py-1">
-          <span className="shrink-0 font-sans text-[9px] font-bold uppercase tracking-[0.1em] text-accent">
+        <div className="flex h-11 items-center gap-2 border-b border-line/70 px-4">
+          <span className="shrink-0 font-sans text-[10px] font-bold uppercase tracking-[0.12em] text-text">
             {name}
           </span>
-          {hint && <span className="min-w-0 flex-1 truncate text-[10.5px] text-mute">{hint}</span>}
+          {hint && <span className="min-w-0 flex-1 truncate text-[11px] text-mute">{hint}</span>}
           <span className="flex-1" />
           <button
             type="button"
             aria-label={`Close ${name} panel`}
             onClick={onClose}
-            className="press grid h-6 w-6 place-items-center rounded-md text-mute hover:bg-ink-3 hover:text-text"
+            className="press grid h-8 w-8 place-items-center rounded-lg text-mute hover:bg-ink-3 hover:text-text"
           >
-            <X size={13} />
+            <X size={16} />
           </button>
         </div>
         <div
           ref={bodyRef}
           onScroll={(event) => rememberPanelScroll(name, event.currentTarget.scrollTop)}
-          className="flex max-h-[34dvh] flex-wrap items-center gap-1.5 overflow-y-auto overscroll-contain px-2 py-2"
+          className="flex max-h-[28dvh] flex-wrap items-center gap-2 overflow-y-auto overscroll-contain px-4 py-3"
         >
           {children}
         </div>

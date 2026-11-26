@@ -143,7 +143,7 @@ const DropLine: React.FC<{ edge: 'above' | 'below' }> = ({ edge }) => (
 
 const Chip: React.FC<{ path: VectorPath; small?: boolean }> = ({ path, small }) => (
   <span
-    className={`grid shrink-0 place-items-center rounded-[5px] border border-line-strong ${
+    className={`relative grid shrink-0 place-items-center rounded-[5px] border border-line-strong ${
       small ? 'h-4 w-4' : 'h-5 w-5'
     } ${path.visible === false ? 'opacity-30' : ''}`}
     style={{
@@ -157,6 +157,11 @@ const Chip: React.FC<{ path: VectorPath; small?: boolean }> = ({ path, small }) 
     {path.text && <TypeIcon size={small ? 8 : 10} className="text-ink-0 mix-blend-difference" />}
     {path.pattern && !path.text && (
       <span className="h-1.5 w-1.5 rounded-[2px] bg-ink-0/80" />
+    )}
+    {!path.text && path.fill === 'none' && path.stroke === 'none' && (
+      <span className="pointer-events-none absolute inset-0 grid place-items-center">
+        <span className="h-[1.5px] w-[18px] -rotate-45 rounded-full bg-danger" />
+      </span>
     )}
   </span>
 );

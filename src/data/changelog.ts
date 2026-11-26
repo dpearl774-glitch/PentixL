@@ -15,6 +15,17 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-11-26-mobile-shell',
+    date: '26 Nov 2026',
+    title: 'A five-tab dock, and groups that stay together',
+    items: [
+      'Select, Shapes, Text, Draw and Layers now share one labelled dock; the drawing tools open from Draw.',
+      'Tap any grouped object and the whole group comes with it, so a drag moves every piece. Switch Layers to Object mode to move one member on its own.',
+      'Shift, Ctrl and Alt live in the ⇧⌃⌥ pill: arm them, tap Done, then drag. Clear releases them, and Precise opens the trackpad.',
+      'A red slash crosses a fill or stroke thumbnail set to none. The tour, help sheet and manual now describe the new shell.',
+    ],
+  },
+  {
     id: '2026-11-15-manual-web',
     date: '15 Nov 2026',
     title: 'The manual is a page, not a download',

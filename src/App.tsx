@@ -3,8 +3,8 @@ import { EyeOff, Maximize2 } from 'lucide-react';
 
 import { TopBar } from './components/TopBar';
 import { ToolDock } from './components/ToolDock';
+import { ModifierTray } from './components/ModifierTray';
 import { ToolOptions } from './components/ToolOptions';
-import { ThumbZone } from './components/ThumbZone';
 import { Canvas } from './components/Canvas';
 import { AppMenu } from './components/AppMenu';
 import { LayersSheet } from './components/LayersSheet';
@@ -654,7 +654,6 @@ export default function App() {
     };
   }, []);
   /** The nudge pad hides the selection rectangle while it is open */
-  const [nudgePadOpen, setNudgePadOpen] = useState(false);
   /** A warp being dialled in from the panel; painted, never saved */
   const [warpPreview, setWarpPreview] = useState<WarpSpec | null>(null);
 
@@ -665,7 +664,7 @@ export default function App() {
     const w = rect?.width ?? window.innerWidth;
     const h = rect?.height ?? window.innerHeight;
     const { width: aw, height: ah } = viewRef.current;
-    // Keep a small gutter so the artboard never hides under the thumb rails.
+    // Keep a small gutter so the artboard never hides under the dock or a panel.
     const sideGutter = w < 640 ? 64 : 180;
     const verticalGutter = 28;
     const scale = Math.min(
@@ -702,7 +701,6 @@ export default function App() {
   useEffect(() => {
     if (!previewMode) return;
     setSheet(null);
-    setNudgePadOpen(false);
     haptic(8);
     const id = window.setTimeout(fitArtboard, 80);
     return () => window.clearTimeout(id);
@@ -713,6 +711,35 @@ export default function App() {
   useEffect(() => {
     fitArtboard();
   }, [fitArtboard]);
+
+  // A panel opening shrinks the canvas. Keep the artboard centred in the new
+  // viewport when it still fits, so the object being edited never slips under
+  // the sheet; a zoomed-in view is left alone.
+  useEffect(() => {
+    const el = canvasWrapRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const rect = el.getBoundingClientRect();
+        const { width: aw, height: ah } = viewRef.current;
+        const artW = aw * viewRef.current.zoom;
+        const artH = ah * viewRef.current.zoom;
+        if (artW > rect.width - 16 || artH > rect.height - 16) return;
+        setView((prev) => ({
+          ...prev,
+          panX: (rect.width - aw * prev.zoom) / 2,
+          panY: Math.max(8, (rect.height - ah * prev.zoom) / 2 - 18),
+        }));
+      });
+    });
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, []);
 
   /* ------------------------------------------------------------------ *
    * Sheets & transient UI
@@ -4443,6 +4470,7 @@ export default function App() {
           shapeSides={shapeSides}
           modifiers={modifiers}
           selection={previewMode ? emptySelection : selection}
+          groupSelectMode={groupSelectMode}
           onSelectionChange={setSelection}
           gridVisible={previewMode ? false : gridVisible}
           gridSnapEnabled={gridSnap}
@@ -4486,7 +4514,7 @@ export default function App() {
           onRequestText={requestText}
           onEditText={(path) => openTextSheet({ path })}
           onToolSwitch={changeTool}
-          hideTransformBox={previewMode || nudgePadOpen || !showTransforms}
+          hideTransformBox={previewMode || !showTransforms}
           warpPreview={previewMode ? null : warpPreview}
           showPrecisionPad={previewMode ? false : showPrecisionPad}
         />
@@ -4516,18 +4544,8 @@ export default function App() {
           {Math.round(view.zoom * 100)}%
         </button>
 
-        <ThumbZone
-          modifiers={modifiers}
-          onModifierChange={setModifiers}
-          onNudge={nudge}
-          isDrawing={(activePathInProgress?.points.length ?? 0) > 0}
-          onFinishPath={finishPath}
-          hasSelection={selection.selectedPathIds.length > 0}
-          onDuplicate={duplicateSelection}
-          onDelete={deleteSelection}
-          visible={sheet === null || sheet === 'layers'}
-          onNudgeOpenChange={setNudgePadOpen}
-        />
+        <ModifierTray modifiers={modifiers} onChange={setModifiers} tool={tool} />
+
         </>
         )}
       </main>
@@ -4708,6 +4726,8 @@ export default function App() {
           changeTool('shape');
           setSheet('shapes');
         }}
+        onOpenLayers={() => setSheet((current) => (current === 'layers' ? null : 'layers'))}
+        layersOpen={sheet === 'layers'}
       />
       </>
       )}
@@ -4889,8 +4909,13 @@ export default function App() {
           if (!layer) return;
           setActiveLayerId(id);
           setSelection({
-            selectedPathIds: layer.paths.map((p) => p.id),
+            // Match the canvas: hidden and locked members stay out of a group
+            // drag, so taking the group cannot move frozen artwork.
+            selectedPathIds: layer.paths
+              .filter((p) => p.visible !== false && p.locked !== true)
+              .map((p) => p.id),
             selectedAnchorIndex: null,
+            selectedAnchorIndexes: [],
             selectedHandleType: null,
           });
         }}
@@ -4901,8 +4926,14 @@ export default function App() {
           const wholeGroup = groupSelectMode === 'group' && owner?.isGroup === true;
           if (wholeGroup && owner) setActiveLayerId(owner.id);
           setSelection({
-            selectedPathIds: wholeGroup && owner ? owner.paths.map((p) => p.id) : [id],
+            selectedPathIds:
+              wholeGroup && owner
+                ? owner.paths
+                    .filter((p) => p.visible !== false && p.locked !== true)
+                    .map((p) => p.id)
+                : [id],
             selectedAnchorIndex: null,
+            selectedAnchorIndexes: [],
             selectedHandleType: null,
           });
         }}

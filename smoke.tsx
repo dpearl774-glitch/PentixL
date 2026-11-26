@@ -38,6 +38,7 @@ import { BackupSheet } from './src/components/BackupSheet';
 import { HelpSheet } from './src/components/HelpSheet';
 import { ExportSheet } from './src/components/ExportSheet';
 import { offsetPaths } from './src/utils/offsetPath';
+import { pathIdsForTap } from './src/utils/groupSelection';
 import { isInvisibleFragment, stripInvisibleFragments } from './src/utils/fragments';
 import { splitPathsIntoGrid } from './src/utils/gridSplit';
 import {
@@ -339,10 +340,19 @@ check(
 /* Pencil: the dock slot, the strip, and a sparse smooth fit */
 console.log('Pencil');
 const dockHtml = renderToStaticMarkup(
-  <ToolDock currentTool="pencil" onSelectTool={noop} onOpenShapes={noop} />
+  <ToolDock
+    currentTool="pencil"
+    onSelectTool={noop}
+    onOpenShapes={noop}
+    onOpenLayers={noop}
+    layersOpen={false}
+  />
 );
-check('dock has a pencil slot', dockHtml.includes('aria-label="Pencil tool"'));
-check('the active pencil is named in the dock', dockHtml.includes('>Pencil<'));
+check('dock groups drawing tools behind Draw', dockHtml.includes('aria-label="Draw"'));
+check(
+  'the active drawing tool marks Draw',
+  dockHtml.includes('aria-label="Draw"') && dockHtml.includes('aria-pressed="true"')
+);
 
 const toolOptionsBase: React.ComponentProps<typeof ToolOptions> = {
   tool: 'pencil',
@@ -1501,15 +1511,27 @@ check(
   '3D direction reaches into the export bounds',
   turnedBox.minX < flatBox.minX && turnedBox.minY < flatBox.minY
 );
+/** The fixed object-tab bar: its pressed state per label. */
+const pressedTabLabels = (html: string) =>
+  [...html.matchAll(
+    /<button[^>]*aria-pressed="(true|false)"[^>]*>(?:(?!<\/button>)[\s\S])*?<span[^>]*>([^<]+)<\/span>/g
+  )].map((m) => ({ label: m[2].trim(), pressed: m[1] }));
 const threeDStrip = renderToStaticMarkup(
   <ToolOptions {...toolOptionsBase} tool="select" selectedCount={1} extrudeDepth={32} />
 );
-check('3D has its own button in the strip', threeDStrip.includes('aria-label="3D settings"'));
-check('3D button reports the current depth', threeDStrip.includes('3D · 32'));
+const threeDTabs = pressedTabLabels(threeDStrip);
+check('3D has its own tab in the object bar', threeDTabs.some((tab) => tab.label === '3D'));
+check(
+  '3D tab lights up when a pull exists',
+  threeDTabs.some((tab) => tab.label === '3D' && tab.pressed === 'true')
+);
 const flatStrip = renderToStaticMarkup(
   <ToolOptions {...toolOptionsBase} tool="select" selectedCount={1} extrudeDepth={0} />
 );
-check('3D button reads as off when nothing is pulled', flatStrip.includes('>3D<'));
+check(
+  '3D tab reads as off when nothing is pulled',
+  pressedTabLabels(flatStrip).some((tab) => tab.label === '3D' && tab.pressed === 'false')
+);
 
 const offsetSquare = offsetPaths(
   [
@@ -1769,14 +1791,61 @@ const toolPanelHtml = renderToStaticMarkup(
 const tourStepOne = renderToStaticMarkup(<FirstRunTour step={0} onStep={noop} onFinish={noop} />);
 const tourLastStep = renderToStaticMarkup(<FirstRunTour step={2} onStep={noop} onFinish={noop} />);
 check(
-  'first run walks draw, combine, export',
+  'first run walks tools, groups, export',
   tourStepOne.includes('Step 1 of 3') &&
-    tourStepOne.includes('Draw something') &&
+    tourStepOne.includes('Pick a tool') &&
+    tourStepOne.includes('Five tabs sit at the bottom') &&
     tourStepOne.includes('Skip the walkthrough') &&
     tourStepOne.includes('Next step') &&
     tourLastStep.includes('Step 3 of 3') &&
     tourLastStep.includes('Take it with you') &&
     tourLastStep.includes('Finish walkthrough')
+);
+const groupedLayer: Layer = {
+  id: 'group-test',
+  name: 'Group test',
+  visible: true,
+  locked: false,
+  opacity: 1,
+  isGroup: true,
+  paths: [
+    { ...path, id: 'group-a', name: 'A' },
+    { ...path, id: 'group-b', name: 'B' },
+    { ...path, id: 'group-hidden', name: 'Hidden', visible: false },
+  ],
+};
+const groupedLayers = [groupedLayer];
+check(
+  'tapping a group member takes the visible group',
+  pathIdsForTap(groupedLayers, 'group-a', [], {
+    groupSelectMode: 'group',
+    additive: false,
+  }).join('|') === 'group-a|group-b'
+);
+check(
+  'an already-selected member moves on its own',
+  pathIdsForTap(groupedLayers, 'group-a', ['group-a'], {
+    groupSelectMode: 'group',
+    additive: false,
+  }).join('|') === 'group-a'
+);
+check(
+  'object mode takes only the tapped member',
+  pathIdsForTap(groupedLayers, 'group-a', [], {
+    groupSelectMode: 'objects',
+    additive: false,
+  }).join('|') === 'group-a'
+);
+check(
+  'shift adds and removes the whole group',
+  pathIdsForTap(groupedLayers, 'group-a', [], {
+    groupSelectMode: 'group',
+    additive: true,
+  }).join('|') === 'group-a|group-b' &&
+    pathIdsForTap(groupedLayers, 'group-a', ['group-a', 'group-b'], {
+      groupSelectMode: 'group',
+      additive: true,
+    }).length === 0
 );
 check(
   'first run tour renders nothing without a step',

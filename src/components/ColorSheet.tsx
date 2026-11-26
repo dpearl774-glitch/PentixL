@@ -5,6 +5,7 @@ import { GradientDef, GradientStop, StrokeCap, StrokeJoin, VectorPath } from '..
 import type { StoredSwatch } from '../utils/projectStorage';
 import { pathToSvgD } from '../utils/bezier';
 import { clamp01, gradientCss, mixHex, sortedStops } from '../utils/gradients';
+import { CANVAS } from '../theme';
 import { Button, SectionLabel, Segmented, Sheet } from './ui/primitives';
 
 type ColorMode = 'fill' | 'stroke' | 'background';
@@ -541,14 +542,23 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
         {/* Hex + eyedropper + none */}
         <div className="flex items-center gap-3">
           <span
-            className="h-14 w-14 shrink-0 rounded-lg border border-line-strong"
+            className="relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-lg border border-line-strong"
             style={{
               backgroundColor: isNone ? 'transparent' : effective,
               backgroundImage: isNone
-                ? 'linear-gradient(45deg,#FF6B6B 1.5px,transparent 1.5px 50%,#FF6B6B 50%,#FF6B6B 51.5px,transparent 51.5px)'
+                ? 'linear-gradient(45deg, #2a2f3a 25%, transparent 25% 75%, #2a2f3a 75%), linear-gradient(45deg, #2a2f3a 25%, transparent 25% 75%, #2a2f3a 75%)'
                 : undefined,
+              backgroundSize: isNone ? '8px 8px' : undefined,
+              backgroundPosition: isNone ? '0 0, 4px 4px' : undefined,
             }}
-          />
+            aria-label={isNone ? 'No colour' : effective}
+          >
+            {isNone && (
+              <span className="pointer-events-none absolute inset-0 grid place-items-center">
+                <span className="h-[2.5px] w-[64px] -rotate-45 rounded-full bg-danger shadow-[0_0_0_1px_rgba(0,0,0,0.35)]" />
+              </span>
+            )}
+          </span>
 
           <div className="flex min-w-0 flex-1 flex-col gap-2">
             <div className="flex items-center gap-2">
@@ -936,7 +946,7 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
                 <div className="font-sans text-[12px] font-bold uppercase text-text">
                   {artboardColor}
                 </div>
-                <div className="text-[11px] text-mute">Default is #101216</div>
+                <div className="text-[11px] text-mute">Default is {CANVAS.artboard.toUpperCase()}</div>
               </div>
               <Button variant="secondary" size="sm" onClick={onResetBackground}>
                 <RotateCcw size={13} /> Reset

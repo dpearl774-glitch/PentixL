@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { CANVAS } from '../theme';
 import { POINTER_DRAG_SLOP, TOUCH_DRAG_SLOP } from '../utils/pointer';
+import { pathIdsForTap } from '../utils/groupSelection';
 import {
   AnchorPoint,
   CanvasView,
@@ -101,7 +102,7 @@ const RULER_SIZE = 26;
 const PAD_POINTER_ID = 8301;
 
 const PadGlyph: React.FC = () => (
-  // Sized for an icon-only button now: 16px like the dock, on the 12-unit box
+  // Sized for the view-control pill: 16px like the dock, on the 12-unit box
   // so the 1.25 stroke lands at the same optical weight as the 1.7px icons.
   <svg
     width={16}
@@ -208,6 +209,8 @@ interface CanvasProps {
   shapeSides: number;
   modifiers: ModifierState;
   selection: SelectionState;
+  /** Layer panel's mode: a tap on a grouped member takes the whole group */
+  groupSelectMode?: 'group' | 'objects';
   onSelectionChange: (newSelection: SelectionState) => void;
   gridVisible: boolean;
   gridSnapEnabled: boolean;
@@ -283,6 +286,7 @@ export const Canvas: React.FC<CanvasProps> = ({
   shapeSides,
   modifiers,
   selection,
+  groupSelectMode = 'group',
   onSelectionChange,
   gridVisible,
   gridSnapEnabled,
@@ -1033,6 +1037,17 @@ export const Canvas: React.FC<CanvasProps> = ({
     });
     return ids;
   }, [layers]);
+
+  /** A tap on a grouped member takes the group, unless that member is already
+   * selected — then it is the explicit single-object case. */
+  const selectionForTap = React.useCallback(
+    (pathId: string): string[] =>
+      pathIdsForTap(layers, pathId, selection.selectedPathIds, {
+        groupSelectMode,
+        additive: modifiers.shift || modifiers.ctrl,
+      }),
+    [groupSelectMode, layers, modifiers.ctrl, modifiers.shift, selection.selectedPathIds]
+  );
 
   /**
    * A clip mask lives in world space, so moving only the clipped child left the
@@ -2903,7 +2918,7 @@ export const Canvas: React.FC<CanvasProps> = ({
             <line x1="0" y1="0" x2="0" y2="8" stroke={CANVAS.erase} strokeWidth="2.8" opacity="0.85" />
           </pattern>
           <pattern id="selection-overlap-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <rect width="8" height="8" fill="rgba(205, 255, 92, 0.10)" />
+            <rect width="8" height="8" fill={CANVAS.accentSoft} />
             <line x1="0" y1="0" x2="0" y2="8" stroke={CANVAS.accent} strokeWidth="1.4" opacity="0.7" />
           </pattern>
           {clippingMasks.map((mask) => {
@@ -3093,15 +3108,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                         return;
                       }
                       if (effectiveTool === 'select') {
-                        const isAlready = selection.selectedPathIds.includes(path.id);
-                        const newSelected =
-                          modifiers.shift || modifiers.ctrl
-                            ? isAlready
-                              ? selection.selectedPathIds.filter((id) => id !== path.id)
-                              : [...selection.selectedPathIds, path.id]
-                            : isAlready
-                              ? selection.selectedPathIds
-                              : [path.id];
+                        const newSelected = selectionForTap(path.id);
 
                         onSelectionChange({
                           selectedPathIds: newSelected,
@@ -3287,15 +3294,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                               onToolSwitch('direct-select');
                               return;
                             }
-                            const isAlready = selection.selectedPathIds.includes(path.id);
-                            let newSelected: string[];
-                            if (modifiers.shift || modifiers.ctrl) {
-                              newSelected = isAlready
-                                ? selection.selectedPathIds.filter((id) => id !== path.id)
-                                : [...selection.selectedPathIds, path.id];
-                            } else {
-                              newSelected = isAlready ? selection.selectedPathIds : [path.id];
-                            }
+                            const newSelected = selectionForTap(path.id);
 
                             onSelectionChange({
                               selectedPathIds: newSelected,
@@ -3393,15 +3392,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                               onToolSwitch('direct-select');
                               return;
                             }
-                            const isAlready = selection.selectedPathIds.includes(path.id);
-                            let newSelected: string[];
-                            if (modifiers.shift || modifiers.ctrl) {
-                              newSelected = isAlready
-                                ? selection.selectedPathIds.filter((id) => id !== path.id)
-                                : [...selection.selectedPathIds, path.id];
-                            } else {
-                              newSelected = isAlready ? selection.selectedPathIds : [path.id];
-                            }
+                            const newSelected = selectionForTap(path.id);
 
                             onSelectionChange({
                               selectedPathIds: newSelected,
@@ -3694,7 +3685,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                               cx={activePathInProgress.points[0].x}
                               cy={activePathInProgress.points[0].y}
                               r={12 / view.zoom}
-                              fill="rgba(205, 255, 92, 0.25)"
+                              fill={CANVAS.accentSoft}
                               stroke={CANVAS.accent}
                               strokeWidth={2 / view.zoom}
                             />
@@ -3744,7 +3735,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                       cx={first.x}
                       cy={first.y}
                       r={12 / view.zoom}
-                      fill="rgba(205, 255, 92, 0.22)"
+                      fill={CANVAS.accentSoft}
                       stroke={CANVAS.accent}
                       strokeWidth={2 / view.zoom}
                     />
@@ -3775,7 +3766,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                 y={transformBox.box.minY}
                 width={transformBox.box.width}
                 height={transformBox.box.height}
-                fill="rgba(205, 255, 92, 0.05)"
+                fill="none"
                 stroke={CANVAS.accent}
                 strokeWidth={1.5 / view.zoom}
                 strokeDasharray="4 4"
@@ -3852,8 +3843,8 @@ export const Canvas: React.FC<CanvasProps> = ({
                 cx={transformBox.box.centerX}
                 cy={transformBox.box.minY - 26 / view.zoom}
                 r={7 / view.zoom}
-                fill="#F59E0B"
-                stroke={CANVAS.ink}
+                fill="#FFFFFF"
+                stroke={CANVAS.accent}
                 strokeWidth={2 / view.zoom}
                 className="pointer-events-none shadow-md"
               />
@@ -3911,7 +3902,7 @@ export const Canvas: React.FC<CanvasProps> = ({
               y={Math.min(marqueeBox.start.y, marqueeBox.current.y)}
               width={Math.abs(marqueeBox.current.x - marqueeBox.start.x)}
               height={Math.abs(marqueeBox.current.y - marqueeBox.start.y)}
-              fill="rgba(205, 255, 92, 0.12)"
+              fill={CANVAS.accentSoft}
               stroke={CANVAS.accent}
               strokeWidth={1.5 / view.zoom}
               strokeDasharray="4 4"
@@ -3958,7 +3949,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                     {/* Interactive Sub-region boundary & background hitbox */}
                     <path
                       d={region.pathD}
-                      fill={isActive ? (isErase ? 'rgba(255, 107, 107, 0.2)' : 'rgba(205, 255, 92, 0.18)') : 'rgba(255, 255, 255, 0.001)'}
+                      fill={isActive ? (isErase ? CANVAS.eraseSoft : CANVAS.accentSoft) : 'rgba(255, 255, 255, 0.001)'}
                       stroke={isActive ? (isErase ? CANVAS.erase : CANVAS.accent) : 'transparent'}
                       strokeWidth={(isActive ? 2.5 : 0) / view.zoom}
                       strokeDasharray={undefined}
@@ -3996,9 +3987,7 @@ export const Canvas: React.FC<CanvasProps> = ({
                 <path
                   d={sbUnionPreviewD}
                   fill={
-                    modifiers.alt || sbMode === 'erase'
-                      ? 'rgba(255, 107, 107, 0.18)'
-                      : 'rgba(205, 255, 92, 0.18)'
+                    modifiers.alt || sbMode === 'erase' ? CANVAS.eraseSoft : CANVAS.accentSoft
                   }
                   stroke={modifiers.alt || sbMode === 'erase' ? CANVAS.erase : CANVAS.accent}
                   strokeWidth={2.5 / view.zoom}
@@ -4652,9 +4641,10 @@ export const Canvas: React.FC<CanvasProps> = ({
               onClick={openPad}
               aria-label="Open precision pad: steer a crosshair instead of covering a node or an object with your finger"
               title="Precision pad"
-              className="press absolute bottom-2 left-1/2 z-20 grid h-9 w-9 -translate-x-1/2 place-items-center rounded-md border border-line bg-ink-2 text-dim hover:border-line-strong hover:text-text"
+              className="press absolute right-2 top-12 z-20 flex h-8 items-center gap-1.5 rounded-full border border-line bg-ink-2/90 px-2.5 font-sans text-[10px] font-semibold text-dim backdrop-blur hover:border-line-strong hover:text-text"
             >
               <PadGlyph />
+              Precise
             </button>
           )}
         </>

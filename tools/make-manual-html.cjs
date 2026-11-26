@@ -3,6 +3,12 @@
  * content log that tools/make-tutorial-pdf.cjs writes while it lays out the
  * PDF. One source of prose, two outputs, so they cannot drift.
  *
+ * The page's shell (hero, tiles, styles, header, footer) lives in
+ * tools/manual-template.html, a copy of the page as shipped, with {{TOC}},
+ * {{BODY}}, {{CHAPTER_COUNT}} and {{SCREEN_COUNT}} where the generated parts
+ * go. tools/manual.js is the shipped script, copied beside the screenshots so
+ * the reading-progress bar and theme toggle stay part of the build.
+ *
  * Run: node tools/make-tutorial-pdf.cjs && node tools/make-manual-html.cjs
  */
 const fs = require('fs');
@@ -10,14 +16,17 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const CONTENT = path.join(ROOT, 'artifacts', 'manual-content.json');
+const TEMPLATE = path.join(ROOT, 'tools', 'manual-template.html');
+const SCRIPT = path.join(ROOT, 'tools', 'manual.js');
 const SHOTS = path.join(ROOT, 'artifacts', 'tutorial');
 const OUT_PAGE = path.join(ROOT, 'public', 'manual.html');
 const OUT_SHOTS = path.join(ROOT, 'public', 'manual');
 
 const entries = JSON.parse(fs.readFileSync(CONTENT, 'utf8'));
 
-// The PDF prints "How to use this guide" as a hand-laid-out opening page, so it
-// is not in the content log. The web manual needs it as a real chapter.
+// The PDF prints "How to use this guide" as a hand-laid-out opening page, so
+// older content logs start at Chapter 1. The web manual needs it as a real
+// chapter, and the PDF now records it too; this keeps an old log readable.
 if (entries[0] && entries[0].type !== 'chapter') {
   entries.unshift({ type: 'chapter', title: 'How to use this guide', kicker: 'Before you start' });
 }
@@ -63,6 +72,9 @@ const useShot = (file) => {
 /** Writes only what changed, and clears anything an earlier run left behind. */
 const emitShots = async () => {
   const emitted = new Set();
+  // A content-only rebuild (no artifacts/tutorial folder) must not clear the
+  // screenshots already published beside the manual page.
+  if (!wanted.size) return emitted;
   for (const file of wanted) {
     const from = path.join(SHOTS, file);
     const name = assetName(file);
@@ -89,6 +101,12 @@ const closeChapter = () => {
   open = false;
 };
 
+const kbd = (item) => {
+  const keys = Array.isArray(item.keys) ? item.keys : [item.key];
+  const sep = item.sep == null ? ' ' : item.sep;
+  return keys.map((key) => `<kbd>${esc(key)}</kbd>`).join(sep);
+};
+
 for (const entry of entries) {
   if (entry.type === 'chapter') {
     closeChapter();
@@ -104,6 +122,32 @@ for (const entry of entries) {
     body += `<h2>${esc(entry.title)}</h2>\n`;
   } else if (entry.type === 'p') {
     body += `<p>${esc(entry.text)}</p>\n`;
+  } else if (entry.type === 'quote') {
+    body += `<blockquote class="pull">${esc(entry.text)}`;
+    if (entry.note) body += `<span>${esc(entry.note)}</span>`;
+    body += '</blockquote>\n';
+  } else if (entry.type === 'tour') {
+    body += '<ol class="tour">\n';
+    for (const item of entry.items) {
+      body += `  <li><strong>${esc(item.label)}</strong>${esc(item.body)}</li>\n`;
+    }
+    body += '</ol>\n';
+  } else if (entry.type === 'try') {
+    body += `<div class="try"><h3>${esc(entry.title)}</h3><p>${esc(entry.body)}</p></div>\n`;
+  } else if (entry.type === 'keys') {
+    body += '<ul class="keys">\n';
+    for (const item of entry.items) {
+      body += `  <li>${kbd(item)} ${esc(item.what)}</li>\n`;
+    }
+    body += '</ul>\n';
+  } else if (entry.type === 'refgrid') {
+    body += '<table class="refgrid">\n';
+    body += '  <thead><tr><th>To do this</th><th>Reach for</th></tr></thead>\n';
+    body += '  <tbody>\n';
+    for (const [what, reach] of entry.rows) {
+      body += `    <tr><td>${esc(what)}</td><td>${esc(reach)}</td></tr>\n`;
+    }
+    body += '  </tbody>\n</table>\n';
   } else if (entry.type === 'ul') {
     body += '<ul>\n';
     for (const item of entry.items) {
@@ -139,193 +183,29 @@ const toc = chapters
   )
   .join('\n');
 
-const html = `<!doctype html>
-<html lang="en" data-theme="dark">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Pentix — Manual</title>
-<meta name="description" content="The Pentix manual: drawing, nodes, shapes, patterns, export and everything else." />
-<meta name="theme-color" content="#08090b" />
-<style>
-  :root {
-    --ink-0: #08090b;
-    --ink-1: #0c0e11;
-    --ink-2: #12151a;
-    --ink-3: #191d23;
-    --line: #24282f;
-    --text: #eceef1;
-    --dim: #b3b9c2;
-    --mute: #7d848e;
-    --accent: #4c8dff;
-    --panel: #101318;
-  }
-  :root[data-theme='light'] {
-    --ink-0: #eef0f3;
-    --ink-1: #f6f7f9;
-    --ink-2: #ffffff;
-    --ink-3: #e6e9ee;
-    --line: #d7dbe2;
-    --text: #14171c;
-    --dim: #3f4750;
-    --mute: #6d7681;
-    --accent: #2f6fdb;
-    --panel: #f4f6f9;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--ink-0); color: var(--text); }
-  body {
-    font: 16px/1.65 system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    -webkit-text-size-adjust: 100%;
-  }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  header.top {
-    position: sticky; top: 0; z-index: 10;
-    display: flex; align-items: center; gap: 12px;
-    padding: 12px 20px;
-    background: color-mix(in srgb, var(--ink-0) 88%, transparent);
-    backdrop-filter: blur(10px);
-    border-bottom: 1px solid var(--line);
-  }
-  .brand { font-weight: 800; letter-spacing: -0.01em; white-space: nowrap; }
-  .brand span { color: var(--mute); font-weight: 600; }
-  header.top .spacer { flex: 1; }
-  header.top a.btn, header.top button.btn {
-    font-size: 13px; font-weight: 700; padding: 7px 12px; border-radius: 8px;
-    border: 1px solid var(--line); color: var(--text); background: var(--ink-2);
-    white-space: nowrap; cursor: pointer; font-family: inherit;
-  }
-  header.top a.btn.primary { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); border-color: transparent; }
-  .wrap { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 40px; max-width: 1080px; margin: 0 auto; padding: 28px 20px 96px; }
-  details.toc { position: sticky; top: 64px; align-self: start; max-height: calc(100vh - 96px); overflow: auto; }
-  details.toc > summary {
-    list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px;
-    font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--mute);
-    margin: 0 0 8px; padding: 2px 0;
-  }
-  details.toc > summary::-webkit-details-marker { display: none; }
-  details.toc > summary::after { content: '▾'; font-size: 10px; }
-  details.toc[open] > summary::after { content: '▴'; }
-  nav.toc { }
-  nav.toc h2 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--mute); margin: 0 0 10px; }
-  nav.toc ol { list-style: none; margin: 0; padding: 0; }
-  nav.toc li a { display: flex; gap: 10px; padding: 6px 8px; border-radius: 7px; color: var(--dim); font-size: 13.5px; }
-  nav.toc li a:hover { background: var(--ink-3); text-decoration: none; color: var(--text); }
-  nav.toc .num { color: var(--mute); font-variant-numeric: tabular-nums; font-size: 12px; padding-top: 1px; }
-  main { min-width: 0; }
-  .lead { color: var(--mute); font-size: 15px; margin: -4px 0 26px; }
-  section.chapter { padding-top: 8px; margin-bottom: 48px; scroll-margin-top: 80px; }
-  .kicker { margin: 0 0 6px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
-  h1 { font-size: clamp(24px, 4vw, 32px); line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 18px; }
-  h2 { font-size: 17px; margin: 30px 0 8px; letter-spacing: -0.01em; }
-  p { margin: 0 0 12px; color: var(--dim); }
-  ul { margin: 0 0 16px; padding-left: 20px; color: var(--dim); }
-  li { margin-bottom: 7px; }
-  li strong { color: var(--text); }
-  aside.callout { margin: 20px 0; padding: 14px 16px; background: var(--panel); border-left: 3px solid var(--accent); border-radius: 8px; }
-  aside.callout h3 { margin: 0 0 6px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
-  aside.callout p { margin: 0; font-size: 14.5px; }
-  figure { margin: 20px 0 24px; }
-  figure img { display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto; border: 1px solid var(--line); border-radius: 10px; background: var(--ink-2); }
-  figure.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  figure.pair > div { min-width: 0; }
-  figure.pair img { max-width: none; }
-  figcaption { margin-top: 8px; font-size: 12.5px; color: var(--mute); text-align: center; grid-column: 1 / -1; }
-  footer.bottom { border-top: 1px solid var(--line); padding: 20px; text-align: center; color: var(--mute); font-size: 13px; }
-  @media (max-width: 860px) {
-    .wrap { grid-template-columns: 1fr; gap: 0; padding-top: 16px; }
-    details.toc { position: static; max-height: none; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
-    nav.toc ol { columns: 2; column-gap: 16px; }
-  }
-  @media (max-width: 520px) {
-    nav.toc ol { columns: 1; }
-    header.top { padding: 10px 14px; gap: 8px; }
-    header.top a.btn, header.top button.btn { font-size: 12px; padding: 6px 10px; }
-    .brand span.suffix { display: none; }
-    .wrap { padding: 14px 16px 72px; }
-  }
-</style>
-</head>
-<body>
-<header class="top">
-  <span class="brand">Pentix <span class="suffix">· manual</span></span>
-  <span class="spacer"></span>
-  <button class="btn" id="theme" type="button" aria-label="Switch between light and dark">Theme</button>
-  <a class="btn" href="pentix-tutorial.pdf" download>PDF</a>
-  <a class="btn primary" href="./">Open Pentix</a>
-</header>
+const template = fs.readFileSync(TEMPLATE, 'utf8');
+for (const token of ['{{TOC}}', '{{BODY}}', '{{CHAPTER_COUNT}}', '{{SCREEN_COUNT}}']) {
+  if (!template.includes(token)) throw new Error(`manual template is missing ${token}`);
+}
 
-<div class="wrap">
-  <details class="toc" open>
-    <summary>Contents</summary>
-    <nav aria-label="Contents">
-      <ol>
-${toc}
-      </ol>
-    </nav>
-  </details>
-  <main>
-    <p class="lead">Everything Pentix does, in order. This page and its images are stored on your device the first time you read it, so it opens without a connection.</p>
-${body}
-  </main>
-</div>
-
-<footer class="bottom">Pentix — a local-first vector logo studio. Your work never leaves the device.</footer>
-
-<script src="manual/manual.js" defer></script>
-</body>
-</html>
-`;
+const html = template
+  .replace('{{TOC}}', () => toc)
+  .replace('{{BODY}}', () => body)
+  .replace('{{CHAPTER_COUNT}}', () => String(chapters.length))
+  .replace('{{SCREEN_COUNT}}', () => String(wanted.size));
 
 emitShots().then((emitted) => {
-fs.writeFileSync(OUT_PAGE, html);
-// A separate file: the deployed CSP allows only same-origin scripts.
-fs.writeFileSync(
-  path.join(OUT_SHOTS, 'manual.js'),
-  `// Follows the app's theme choice, falling back to the system, and remembers
-// nothing — the toggle is a per-visit override.
-// Follow the app's theme choice, then the system, and let the reader override.
-  (function () {
-    var root = document.documentElement;
-    var KEY = 'pentix.theme';
-    var stored = null;
-    try { stored = localStorage.getItem(KEY); } catch (e) {}
-    var systemLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
-    var mode = stored === 'light' || stored === 'dark' ? stored : (stored === 'system' ? (systemLight ? 'light' : 'dark') : (systemLight ? 'light' : 'dark'));
-    var apply = function (value) {
-      root.dataset.theme = value;
-      var meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.setAttribute('content', value === 'light' ? '#eef0f3' : '#08090b');
-    };
-    apply(mode);
-    // Contents open on a wide screen (as a sidebar) and folded on a phone, so
-    // the manual itself is what the reader lands on.
-    var toc = document.querySelector('details.toc');
-    if (toc) {
-      var wide = window.matchMedia('(min-width: 861px)');
-      var syncToc = function () {
-        if (wide.matches) toc.setAttribute('open', '');
-        else toc.removeAttribute('open');
-      };
-      syncToc();
-      // A tablet turned on its side gains the sidebar instead of a stray fold.
-      if (wide.addEventListener) wide.addEventListener('change', syncToc);
-    }
-
-    var button = document.getElementById('theme');
-    if (button) button.addEventListener('click', function () {
-      apply(root.dataset.theme === 'light' ? 'dark' : 'light');
-    });
-  })();
-`
-);
-const shotsBytes = [...emitted].reduce(
-  (sum, name) => sum + fs.statSync(path.join(OUT_SHOTS, name)).size,
-  0
-);
-console.log(
-  `wrote public/manual.html (${(Buffer.byteLength(html) / 1024).toFixed(0)} kB, ${chapters.length} chapters, ` +
-    `${emitted.size} screenshots ${EXT} ${(shotsBytes / 1024).toFixed(0)} kB)`
-);
+  // The page is checked in with CRLF; keep one line-ending style so a rebuild
+  // only shows real copy changes.
+  fs.writeFileSync(OUT_PAGE, html.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n'));
+  // A separate file: the deployed CSP allows only same-origin scripts.
+  fs.copyFileSync(SCRIPT, path.join(OUT_SHOTS, 'manual.js'));
+  const shotsBytes = [...emitted].reduce(
+    (sum, name) => sum + fs.statSync(path.join(OUT_SHOTS, name)).size,
+    0
+  );
+  console.log(
+    `wrote public/manual.html (${(Buffer.byteLength(html) / 1024).toFixed(0)} kB, ${chapters.length} chapters, ` +
+      `${emitted.size} screenshots ${EXT} ${(shotsBytes / 1024).toFixed(0)} kB)`
+  );
 });
