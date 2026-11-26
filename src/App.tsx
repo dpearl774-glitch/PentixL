@@ -766,33 +766,37 @@ export default function App() {
   React.useEffect(() => {
     if (!('serviceWorker' in navigator) || !import.meta.env.PROD) return;
     let stopped = false;
-    let timer = 0;
+    let quick = 0;
+    let slow = 0;
     const stop = () => {
       stopped = true;
-      if (timer) window.clearInterval(timer);
+      window.clearInterval(quick);
+      window.clearInterval(slow);
     };
-    const poll = async () => {
-      const status = await updateStatus();
-      // No controller means this is the first install, not an update.
+    // No controller means this is the first install, not an update.
+    const offer = (status: { waiting: boolean; controlled: boolean }) => {
       if (!stopped && status.waiting && status.controlled) {
         setUpdateReady(true);
         stop();
       }
     };
+    // A local look, no request: catches a worker that finished installing.
+    const poll = () => void updateStatus().then(offer);
+    // A real check. A waiting worker only exists once the browser has seen
+    // changed sw.js bytes, so a tab left open all day needed this and had none.
+    const check = () => void lookForUpdate().then(offer);
     const onVisible = () => {
       if (document.visibilityState !== 'visible' || stopped) return;
-      void lookForUpdate().then((status) => {
-        if (!stopped && status.waiting && status.controlled) {
-          setUpdateReady(true);
-          stop();
-        }
-      });
+      check();
     };
-    void poll();
-    timer = window.setInterval(poll, 3000);
+    poll();
+    check();
+    quick = window.setInterval(poll, 3000);
+    slow = window.setInterval(check, 5 * 60 * 1000);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
-      window.clearInterval(timer);
+      window.clearInterval(quick);
+      window.clearInterval(slow);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
