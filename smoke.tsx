@@ -39,6 +39,7 @@ import { HelpSheet } from './src/components/HelpSheet';
 import { ExportSheet } from './src/components/ExportSheet';
 import { offsetPaths } from './src/utils/offsetPath';
 import { pathIdsForTap } from './src/utils/groupSelection';
+import { snapAngleToAxes, snapBoxMove, snapPoint } from './src/utils/snapping';
 import { isInvisibleFragment, stripInvisibleFragments } from './src/utils/fragments';
 import { splitPathsIntoGrid } from './src/utils/gridSplit';
 import {
@@ -2191,6 +2192,8 @@ const sheetHtml = renderToStaticMarkup(
     onToggleRulers={noop}
     guidesVisible
     onToggleGuides={noop}
+    guidesSnap
+    onToggleGuidesSnap={noop}
     guidesLocked
     onToggleGuidesLock={noop}
     guides={[
@@ -2212,6 +2215,7 @@ check('locked spacing inputs disabled', /aria-label="Horizontal"[\s\S]{0,120}dis
 check('snap toggle independent', sheetHtml.includes('aria-label="Snap to grid"'));
 check('visibility toggle independent', sheetHtml.includes('aria-label="Show grid"'));
 check('guides can be hidden without deleting them', sheetHtml.includes('aria-label="Show guides"'));
+check('snap to guides has its own switch', sheetHtml.includes('aria-label="Snap to guides"'));
 check('line visibility slider', sheetHtml.includes('aria-label="Grid line visibility"'));
 check(
   'lock all guides reads locked on every row',
@@ -2225,6 +2229,53 @@ check('lock all guides toggle', sheetHtml.includes('aria-label="Lock all guides"
 check('artboard colour row', sheetHtml.includes('#123456') && sheetHtml.includes('pick, hex or reset'));
 check('size apply shows target dims', sheetHtml.includes('Apply') && sheetHtml.includes('1000 × 500 px'));
 check('artboard presets for logo boards', sheetHtml.includes('1024²') && sheetHtml.includes('Fit artwork'));
+
+/* ------------------------------- Snapping ------------------------------- */
+console.log('Snap to grid and guides');
+const snapBox = {
+  minX: 103,
+  minY: 47,
+  maxX: 203,
+  maxY: 147,
+  width: 100,
+  height: 100,
+  centerX: 153,
+  centerY: 97,
+};
+const gridOnly = { grid: true, guides: false, spacingX: 25, spacingY: 25, tolerance: 7 };
+const onGrid = snapBoxMove(snapBox, 0, 0, [], gridOnly);
+check(
+  'an object off the grid is pulled onto the nearest line',
+  onGrid.dx === -3 && onGrid.dy === 3,
+  `${onGrid.dx},${onGrid.dy}`
+);
+check(
+  'snapping does nothing with both switches off',
+  snapBoxMove(snapBox, 0, 0, [], { ...gridOnly, grid: false }).dx === 0
+);
+const guideHit = snapBoxMove(snapBox, 0, 0, [{ id: 'g', axis: 'v', position: 108, locked: false }], {
+  ...gridOnly,
+  guides: true,
+});
+check(
+  'a guide outranks the grid',
+  guideHit.dx === 5 && guideHit.lines.some((line) => line.coordinate === 108),
+  `${guideHit.dx}`
+);
+check(
+  'a far guide is ignored',
+  snapBoxMove(snapBox, 0, 0, [{ id: 'g', axis: 'v', position: 170, locked: false }], {
+    ...gridOnly,
+    guides: true,
+    grid: false,
+  }).dx === 0
+);
+const handle = snapPoint({ x: 118, y: 118 }, [], gridOnly);
+check('a resize handle lands on the grid', handle.x === 125 && handle.y === 125, `${handle.x},${handle.y}`);
+check(
+  'a turn snaps square near an axis and stays free away from one',
+  snapAngleToAxes(0.04, 6) === 0 && snapAngleToAxes(0.5, 6) === 0.5
+);
 check('settings panel is terse', !sheetHtml.includes('Locking freezes') && !sheetHtml.includes('Drag off a ruler'));
 
 /* ---------------------------- Help / reference ---------------------------- */

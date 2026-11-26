@@ -1,7 +1,8 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { CANVAS } from '../theme';
 import { POINTER_DRAG_SLOP, TOUCH_DRAG_SLOP } from '../utils/pointer';
 import { pathIdsForTap } from '../utils/groupSelection';
+import { snapAngleToAxes, snapBoxMove, snapPoint, type SnapLine } from '../utils/snapping';
 import {
   AnchorPoint,
   CanvasView,
@@ -229,6 +230,8 @@ interface CanvasProps {
   guidesLocked?: boolean;
   /** Rulers stay put while every guide is hidden from view */
   guidesVisible?: boolean;
+  /** Snap dragged artwork to the guides, and keep them on screen while it does */
+  guideSnapEnabled?: boolean;
   /** Gradient paint for newly created fills, when the gradient style is active */
   fillGradient?: GradientDef | null;
   fillOpacity?: number;
@@ -329,6 +332,7 @@ export const Canvas: React.FC<CanvasProps> = ({
   onEditText,
   guidesLocked = false,
   guidesVisible = true,
+  guideSnapEnabled = false,
   onToolSwitch,
   hideTransformBox = false,
   showPrecisionPad = true,
@@ -480,6 +484,34 @@ export const Canvas: React.FC<CanvasProps> = ({
       };
     },
     [rawCanvasPoint, gridSnapEnabled, gridSpacingX, gridSpacingY]
+  );
+
+  /** Grid and guide snapping, in artboard units, for the gesture maths. */
+  const snapOptions = useMemo(
+    () => ({
+      grid: gridSnapEnabled,
+      guides: guideSnapEnabled,
+      spacingX: gridSpacingX,
+      spacingY: gridSpacingY,
+      // Seven screen pixels, whatever the zoom, is the reach of a guide.
+      tolerance: 7 / view.zoom,
+    }),
+    [gridSnapEnabled, guideSnapEnabled, gridSpacingX, gridSpacingY, view.zoom]
+  );
+
+  /** Snap feedback is drawn with the smart guides, so it shares their shape. */
+  const snapLines = useCallback(
+    (lines: SnapLine[]): SmartGuideLine[] =>
+      lines.map((line, index) => ({
+        id: `snap-${line.orientation}-${Math.round(line.coordinate)}-${index}`,
+        orientation: line.orientation,
+        coordinate: line.coordinate,
+        start: 0,
+        end: line.orientation === 'vertical' ? view.height : view.width,
+        label: line.orientation === 'vertical' ? 'Guide X' : 'Guide Y',
+        sourceType: 'artboard' as const,
+      })),
+    [view.height, view.width]
   );
 
   /* ------------------------------------------------------------------ *
@@ -1748,24 +1780,28 @@ export const Canvas: React.FC<CanvasProps> = ({
       const bbox = draggingTarget.initialBBox;
       const h = draggingTarget.transformHandle;
 
-      let effectivePt = canvasPt;
+      // The handle itself snaps, so the edge being pulled lands on the line.
+      // Object alignment only gets a say when neither switch is on, for the
+      // same reason as the move gesture above.
+      const ownSnap = snapPoint(canvasPt, guides, snapOptions);
+      let effectivePt = { x: ownSnap.x, y: ownSnap.y };
 
-      if (smartGuidesEnabled && !modifiers.alt) {
+      if (smartGuidesEnabled && !modifiers.alt && !gridSnapEnabled && !guideSnapEnabled) {
         const candidates = getSnapCandidates(view.width, view.height, otherSnapBBoxes);
         const snapThreshold = 7 / view.zoom;
 
         const resizeSnap = calculateResizeSmartGuides(
           h,
-          canvasPt,
+          effectivePt,
           bbox,
           candidates,
           snapThreshold,
           40 / view.zoom
         );
         effectivePt = resizeSnap.snappedPoint;
-        setActiveSmartGuides(resizeSnap.guideLines);
+        setActiveSmartGuides([...snapLines(ownSnap.lines), ...resizeSnap.guideLines]);
       } else {
-        if (activeSmartGuides.length > 0) setActiveSmartGuides([]);
+        setActiveSmartGuides(snapLines(ownSnap.lines));
       }
 
       let anchorPoint: Point = { x: bbox.centerX, y: bbox.centerY };
@@ -1833,6 +1869,10 @@ export const Canvas: React.FC<CanvasProps> = ({
       if (modifiers.shift) {
         const snap = (15 * Math.PI) / 180;
         deltaAngle = Math.round(deltaAngle / snap) * snap;
+      } else if (gridSnapEnabled || guideSnapEnabled) {
+        // A grid line and a guide are both axis-aligned, so the turn snaps to
+        // the axes: square to the board, or free if it is nowhere near.
+        deltaAngle = snapAngleToAxes(deltaAngle, 6);
       }
 
       setActiveRotation({ center, angle: deltaAngle, bbox });
@@ -2062,14 +2102,23 @@ export const Canvas: React.FC<CanvasProps> = ({
       const currentInitialBBox =
         draggingTarget.initialBBox || computePathsBoundingBox(draggingTarget.initialSelectedPaths);
 
-      if (smartGuidesEnabled && !modifiers.alt && currentInitialBBox) {
+      // Guides and grid first, and nothing after them: a line the user asked
+      // for outranks a neighbour's edge, or the switch would look broken on a
+      // busy canvas.
+      const ownSnap = currentInitialBBox
+        ? snapBoxMove(currentInitialBBox, rawDx, rawDy, guides, snapOptions)
+        : { dx: rawDx, dy: rawDy, lines: [] as SnapLine[] };
+      dx = ownSnap.dx;
+      dy = ownSnap.dy;
+
+      if (smartGuidesEnabled && !modifiers.alt && currentInitialBBox && !gridSnapEnabled && !guideSnapEnabled) {
         const candidates = getSnapCandidates(view.width, view.height, otherSnapBBoxes);
         const snapThreshold = 7 / view.zoom;
 
         const snapResult = calculateMoveSmartGuides(
           currentInitialBBox,
-          rawDx,
-          rawDy,
+          dx,
+          dy,
           candidates,
           snapThreshold,
           40 / view.zoom
@@ -2077,9 +2126,9 @@ export const Canvas: React.FC<CanvasProps> = ({
 
         dx = snapResult.snappedDeltaX;
         dy = snapResult.snappedDeltaY;
-        setActiveSmartGuides(snapResult.guideLines);
+        setActiveSmartGuides([...snapLines(ownSnap.lines), ...snapResult.guideLines]);
       } else {
-        if (activeSmartGuides.length > 0) setActiveSmartGuides([]);
+        setActiveSmartGuides(snapLines(ownSnap.lines));
       }
 
       // Counters travel with their outline: without this a traced logo leaves a
@@ -2449,7 +2498,9 @@ export const Canvas: React.FC<CanvasProps> = ({
   // Render Grid — a general alignment system: one spacing per axis, one lock,
   // one snap toggle. Editing aid only; it lives outside the layer tree.
   const renderGrid = () => {
-    if (!gridVisible) return null;
+    // Snapping to something invisible is a guess, so the grid draws itself
+    // whenever it is the thing being snapped to.
+    if (!gridVisible && !gridSnapEnabled) return null;
     const stroke = Math.max(0.5, 1 / view.zoom);
     return (
       <g className="canvas-grid pointer-events-none" opacity={gridOpacity}>
@@ -2604,7 +2655,7 @@ export const Canvas: React.FC<CanvasProps> = ({
   const renderGuides = () => {
     // Hidden guides keep their positions and stay draggable once shown again;
     // the draft you pull off a ruler still draws so the gesture has feedback.
-    const shown = guidesVisible ? guides : [];
+    const shown = guidesVisible || guideSnapEnabled ? guides : [];
     if (!shown.length && !rulerDraft) return null;
     const over = 32 / view.zoom;
     const items: { key: string; axis: 'h' | 'v'; position: number; locked: boolean; draft?: boolean }[] = [

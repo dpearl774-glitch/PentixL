@@ -27,6 +27,8 @@ export interface UserPrefs {
   rulersVisible: boolean;
   /** Guides are an aid: hide the whole set without deleting any of them */
   guidesVisible: boolean;
+  /** Snap dragged artwork to the guides, and show them while it does */
+  guidesSnap: boolean;
   guidesLocked: boolean;
   smartGuides: boolean;
   panZoomLocked: boolean;
@@ -76,6 +78,7 @@ export const DEFAULT_PREFS: UserPrefs = {
   gridLocked: false,
   rulersVisible: true,
   guidesVisible: true,
+  guidesSnap: false,
   guidesLocked: false,
   smartGuides: true,
   panZoomLocked: false,
@@ -194,6 +197,7 @@ export function sanitizeUserPrefs(raw: unknown): UserPrefs {
     gridLocked: bool(p.gridLocked, d.gridLocked),
     rulersVisible: bool(p.rulersVisible, d.rulersVisible),
     guidesVisible: bool(p.guidesVisible, d.guidesVisible),
+    guidesSnap: bool(p.guidesSnap, d.guidesSnap),
     guidesLocked: bool(p.guidesLocked, d.guidesLocked),
     smartGuides: bool(p.smartGuides, d.smartGuides),
     panZoomLocked: bool(p.panZoomLocked, d.panZoomLocked),

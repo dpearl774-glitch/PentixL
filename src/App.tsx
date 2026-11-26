@@ -504,6 +504,7 @@ export default function App() {
   const [gridLocked, setGridLocked] = useState(userPrefs.gridLocked);
   const [rulersVisible, setRulersVisible] = useState(userPrefs.rulersVisible);
   const [guidesVisible, setGuidesVisible] = useState(userPrefs.guidesVisible);
+  const [guidesSnap, setGuidesSnap] = useState(userPrefs.guidesSnap);
   const [guidesLocked, setGuidesLocked] = useState(userPrefs.guidesLocked);
   const [guides, setGuides] = useState<Guide[]>([]);
   guidesRef.current = guides;
@@ -567,6 +568,7 @@ export default function App() {
       gridLocked,
       rulersVisible,
       guidesVisible,
+      guidesSnap,
       guidesLocked,
       smartGuides,
       panZoomLocked,
@@ -603,6 +605,7 @@ export default function App() {
       gridLocked,
       rulersVisible,
       guidesVisible,
+      guidesSnap,
       guidesLocked,
       smartGuides,
       panZoomLocked,
@@ -4507,7 +4510,7 @@ export default function App() {
           groupSelectMode={groupSelectMode}
           onSelectionChange={setSelection}
           gridVisible={previewMode ? false : gridVisible}
-          gridSnapEnabled={gridSnap}
+          gridSnapEnabled={previewMode ? false : gridSnap}
           gridSpacingX={gridSpacingX}
           gridSpacingY={gridSpacingY}
           gridOpacity={gridOpacity}
@@ -4515,6 +4518,7 @@ export default function App() {
           rulersVisible={previewMode ? false : rulersVisible}
           guides={previewMode ? [] : guides}
           guidesVisible={!previewMode && guidesVisible}
+          guideSnapEnabled={!previewMode && guidesSnap}
           guidesLocked={guidesLocked}
           onAddGuide={addGuide}
           onUpdateGuide={moveGuideLive}
@@ -5259,6 +5263,11 @@ export default function App() {
         onToggleGuides={() => {
           setGuidesVisible((v) => !v);
           notify(guidesVisible ? 'Guides hidden' : 'Guides shown');
+        }}
+        guidesSnap={guidesSnap}
+        onToggleGuidesSnap={() => {
+          setGuidesSnap((value) => !value);
+          notify(guidesSnap ? 'Guides no longer snap' : 'Objects will snap to guides');
         }}
         guidesLocked={guidesLocked}
         onToggleGuidesLock={() => {

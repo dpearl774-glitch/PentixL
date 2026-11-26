@@ -28,6 +28,9 @@ interface CanvasSettingsSheetProps {
   /** Shows or hides every guide without deleting them */
   guidesVisible: boolean;
   onToggleGuides: () => void;
+  /** Snaps dragged artwork to the guides, and keeps them on screen while it does */
+  guidesSnap: boolean;
+  onToggleGuidesSnap: () => void;
   /** One switch for every guide in the document */
   guidesLocked: boolean;
   onToggleGuidesLock: () => void;
@@ -166,6 +169,8 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
   onToggleRulers,
   guidesVisible,
   onToggleGuides,
+  guidesSnap,
+  onToggleGuidesSnap,
   guidesLocked,
   onToggleGuidesLock,
   guides,
@@ -383,6 +388,13 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
             <Toggle on={gridSnap} onClick={onToggleGridSnap} label="Snap to grid" />
           </div>
 
+          {gridSnap && (
+            <p className="px-1 text-[10.5px] leading-snug text-mute">
+              The grid stays visible while objects snap to it. Drag, resize and turn
+              all land on a line.
+            </p>
+          )}
+
         </section>
 
         {/* -------------------------- Rulers & guides -------------------------- */}
@@ -406,6 +418,13 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
               <Toggle on={guidesVisible} onClick={onToggleGuides} label="Show guides" />
             </div>
             <div className="flex items-center justify-between rounded-lg border border-line bg-ink-1 px-2.5 py-1.5">
+              <span className="flex items-center gap-2 text-[11px] font-semibold text-text">
+                <Magnet size={13} className={guidesSnap ? 'text-accent' : 'text-mute'} />
+                Snap objects to guides
+              </span>
+              <Toggle on={guidesSnap} onClick={onToggleGuidesSnap} label="Snap to guides" />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-line bg-ink-1 px-2.5 py-1.5">
               <span className="text-[11px] font-semibold text-text">Lock all guides</span>
               <Toggle
                 on={guidesLocked}
@@ -416,11 +435,13 @@ export const CanvasSettingsSheet: React.FC<CanvasSettingsSheetProps> = ({
           </div>
 
           <p className="text-[11px] leading-snug text-mute">
-            {!guidesVisible
-              ? `Guides hidden — ${guides.length} kept.`
-              : guidesLocked
-                ? 'All guides locked.'
-                : 'Drag from a ruler to add a guide.'}
+            {guidesSnap
+              ? 'Objects snap to guides, so the guides stay on screen.'
+              : !guidesVisible
+                ? `Guides hidden — ${guides.length} kept.`
+                : guidesLocked
+                  ? 'All guides locked.'
+                  : 'Drag from a ruler to add a guide.'}
           </p>
 
           {guides.length > 0 && (
