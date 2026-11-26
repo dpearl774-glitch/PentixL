@@ -739,7 +739,10 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   ].filter((block): block is React.ReactElement => Boolean(block));
 
   const hasPanelContent = panelBlocks.length > 0;
-  const panelIsOpen = hasPanelContent && (isDrawing || !closedPanels.includes(panel.name));
+  // A panel's presence is the user's choice and nothing else. It used to be
+  // forced open while a stroke was in flight, so a panel you had closed
+  // appeared the moment you touched the canvas and vanished on release.
+  const panelIsOpen = hasPanelContent && !closedPanels.includes(panel.name);
   const togglePanel = () => {
     if (!hasPanelContent) return;
     const next = panelIsOpen
@@ -1127,18 +1130,17 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   }, [cornerIds, cornerTarget]);
 
   /**
-   * A panel may not outlive the chip that opened it: node editing, the shape
-   * tool, a reference, a live path or a deleted selection hides that chip, and
-   * the panel closes with it instead of reappearing when the chip returns.
+   * A panel closes only when the selection it belongs to is gone, never because
+   * a handle went under a finger for a moment. Closing the Object panel on
+   * every transient frame change made a panel flicker shut mid-transform.
    */
   React.useEffect(() => {
-    if (!objectChipsVisible) {
-      setMoreMenu(false);
-      setAlignMenu(false);
-      setThreeDMenu(false);
-    }
-    if (!transformChipVisible) setTransformMenu(false);
-  }, [objectChipsVisible, transformChipVisible]);
+    if (objectChipsVisible) return;
+    setMoreMenu(false);
+    setAlignMenu(false);
+    setThreeDMenu(false);
+    setTransformMenu(false);
+  }, [objectChipsVisible]);
 
   const closePanels = () => {
     setWarpPreviewOn(false);

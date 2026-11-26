@@ -1038,14 +1038,34 @@ export const Canvas: React.FC<CanvasProps> = ({
     return ids;
   }, [layers]);
 
+  /**
+   * A removal an additive tap asked for, held until the finger lifts. On the
+   * phone the modifiers are sticky, so an armed Shift used to deselect the
+   * object on the very tap that began its drag: the drag then held an empty
+   * selection, so the object could not be moved at all — only resized and
+   * rotated, whose handles never go through this path. Keeping the selection
+   * for the gesture and applying the removal on release gives both behaviours
+   * back: Shift-tap still deselects, Shift-drag still moves.
+   */
+  const pendingTapDeselectRef = useRef<string[] | null>(null);
+
   /** A tap on a grouped member takes the group, unless that member is already
    * selected — then it is the explicit single-object case. */
   const selectionForTap = React.useCallback(
-    (pathId: string): string[] =>
-      pathIdsForTap(layers, pathId, selection.selectedPathIds, {
+    (pathId: string): string[] => {
+      const additive = modifiers.shift || modifiers.ctrl;
+      const next = pathIdsForTap(layers, pathId, selection.selectedPathIds, {
         groupSelectMode,
-        additive: modifiers.shift || modifiers.ctrl,
-      }),
+        additive,
+      });
+      // Only a tap that would remove something can be a drag in disguise.
+      if (additive && next.length < selection.selectedPathIds.length) {
+        pendingTapDeselectRef.current = next;
+        return selection.selectedPathIds;
+      }
+      pendingTapDeselectRef.current = null;
+      return next;
+    },
     [groupSelectMode, layers, modifiers.ctrl, modifiers.shift, selection.selectedPathIds]
   );
 
@@ -1272,6 +1292,9 @@ export const Canvas: React.FC<CanvasProps> = ({
     if (padPressRef.current && e.pointerId !== PAD_POINTER_ID) return;
 
     activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // A new gesture starts with nothing held: the previous release either
+    // applied its deselection or turned it into a drag.
+    pendingTapDeselectRef.current = null;
 
     // Handle 2-Finger Pinch / Pan
     if (activePointersRef.current.size === 2) {
@@ -2150,6 +2173,24 @@ export const Canvas: React.FC<CanvasProps> = ({
     setActiveSmartGuides([]);
     setActiveRotation(null);
     referenceDragRef.current = null;
+
+    // An additive tap only removes once it is known to be a tap: if the finger
+    // travelled, the object it grabbed was dragged instead.
+    const heldDeselect = pendingTapDeselectRef.current;
+    pendingTapDeselectRef.current = null;
+    if (heldDeselect && dragStartPoint && currentPointerPoint) {
+      const slop = e.pointerType === 'touch' ? TOUCH_DRAG_SLOP : POINTER_DRAG_SLOP;
+      if (distance(currentPointerPoint, dragStartPoint) * view.zoom < slop) {
+        onSelectionChange({
+          selectedPathIds: heldDeselect,
+          selectedAnchorIndex: null,
+          selectedHandleType: null,
+        });
+        setDraggingTarget(null);
+        setIsPointerDown(false);
+        return;
+      }
+    }
     if (guideDragRef.current) {
       const moved = guideDragStartRef.current;
       const guide = guides.find((g) => g.id === guideDragRef.current!.id);

@@ -25,6 +25,15 @@ import { IconButton, Panel, SectionLabel } from './ui/primitives';
 import { haptic } from '../theme';
 import { pathToPolygon, pathToSvgD } from '../utils/bezier';
 
+/** A picture's own pixels, small enough for a row. */
+const Thumb: React.FC<{ src: string }> = ({ src }) => (
+  <img
+    src={src}
+    alt=""
+    className="h-4 w-4 shrink-0 rounded-[3px] border border-line-strong object-cover"
+  />
+);
+
 /**
  * A row's own outline, drawn small. A colour chip says nothing about what the
  * row is; this shows the object itself, so a row can be recognised before it is
@@ -55,6 +64,10 @@ const PathGlyph: React.FC<{ path: VectorPath }> = ({ path }) => {
     };
   }, [path]);
 
+  // An image object has no fill and an outline only its own rectangle, so the
+  // row drew as a bare hairline. The pixels are already embedded in the path,
+  // so the row can show the picture itself.
+  if (path.image) return <Thumb src={path.image.url} />;
   if (path.text) {
     return (
       <span className="grid h-4 w-4 shrink-0 place-items-center rounded bg-ink-3 text-[9px] font-bold text-dim">
@@ -448,6 +461,8 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
             const isActive = layer.id === activeLayerId;
             const isRenaming = renaming === layer.id;
             const isGroup = layer.isGroup === true;
+            /** A layer that holds a picture is recognisable while it is folded. */
+            const layerImage = layer.paths.find((path) => path.image)?.image;
             const layerDrop = drop?.kind === 'layer' && drop.id === layer.id;
             return (
               <div
@@ -525,6 +540,7 @@ export const LayersSheet: React.FC<LayersSheetProps> = ({
                       className="flex min-w-0 flex-1 items-center gap-1.5 py-2 text-left"
                     >
                       {isGroup && <LayersIcon size={12} className="shrink-0 text-accent" />}
+                      {layerImage && <Thumb src={layerImage.url} />}
                       <span className="truncate text-[13px] font-semibold text-text">
                         {layer.name}
                       </span>

@@ -3,7 +3,7 @@ import { EyeOff, Maximize2 } from 'lucide-react';
 
 import { TopBar } from './components/TopBar';
 import { ToolDock } from './components/ToolDock';
-import { ModifierTray } from './components/ModifierTray';
+import { ModifierNotice, ModifierTray } from './components/ModifierTray';
 import { ToolOptions } from './components/ToolOptions';
 import { Canvas } from './components/Canvas';
 import { AppMenu } from './components/AppMenu';
@@ -3639,9 +3639,15 @@ export default function App() {
    * photo is cropped to them; otherwise it arrives as its own rectangle.
    */
   const placeImageAsArtwork = useCallback(
-    async (reference: ReferenceImage) => {
-      const targetLayerId = resolveWritableLayerId() ?? layersRef.current[0]?.id;
-      if (!targetLayerId) {
+    async (reference: ReferenceImage, options: { clipIntoSelection?: boolean } = {}) => {
+      // A file dropped in from the menu is new artwork, not paint for whatever
+      // happened to be selected when it arrived. Only the References sheet's
+      // own button crops into a shape, because there the preview says so.
+      const wantsOwnLayer = options.clipIntoSelection === false;
+      const targetLayerId = wantsOwnLayer
+        ? null
+        : resolveWritableLayerId() ?? layersRef.current[0]?.id;
+      if (!wantsOwnLayer && !targetLayerId) {
         notify('Nothing to draw into');
         return;
       }
@@ -3653,9 +3659,11 @@ export default function App() {
         notify('That image could not be placed');
         return;
       }
-      const clipTargets = selectedPaths.filter(
-        (path) => path.closed && path.points.length >= 3 && !path.text && !path.isClippingMask
-      );
+      const clipTargets = wantsOwnLayer
+        ? []
+        : selectedPaths.filter(
+            (path) => path.closed && path.points.length >= 3 && !path.text && !path.isClippingMask
+          );
 
       if (clipTargets.length) {
         const ids = new Set(clipTargets.map((path) => path.id));
@@ -3703,6 +3711,27 @@ export default function App() {
         pressureProfile: 'uniform',
         image,
       };
+      if (wantsOwnLayer) {
+        // One picture, one layer: it gets a row and a thumbnail of its own, and
+        // nothing is folded into a shape that merely happened to be selected.
+        const layerId = `layer-${Date.now()}`;
+        const name = reference.name.replace(/\.[^.]+$/, '').trim() || 'Image';
+        const layer: Layer = {
+          id: layerId,
+          name,
+          visible: true,
+          locked: false,
+          opacity: 1,
+          paths: [{ ...placed, name }],
+        };
+        applyLayers((prev) => [...prev, layer]);
+        setActiveLayerId(layerId);
+        setSelection({ selectedPathIds: [id], selectedAnchorIndex: null, selectedHandleType: null });
+        hidePlacedReference(reference.id);
+        notify(`${name} added on its own layer`);
+        return;
+      }
+
       applyLayers((prev) =>
         prev.map((layer) =>
           layer.id === targetLayerId ? { ...layer, paths: [...layer.paths, placed] } : layer
@@ -3718,6 +3747,7 @@ export default function App() {
       notify,
       resolveWritableLayerId,
       selectedPaths,
+      setActiveLayerId,
       view.height,
       view.width,
     ]
@@ -3728,7 +3758,7 @@ export default function App() {
     async (file: File) => {
       try {
         const reference = await referenceImageFromFile(file);
-        await placeImageAsArtwork(reference);
+        await placeImageAsArtwork(reference, { clipIntoSelection: false });
         // The file was never added as a reference, so there is no ghost to hide.
         URL.revokeObjectURL(reference.url);
       } catch (error) {
@@ -4552,6 +4582,7 @@ export default function App() {
 
       {!previewMode && (
       <>
+      <ModifierNotice modifiers={modifiers} onChange={setModifiers} tool={tool} />
       <ToolOptions
         tool={tool}
         selectedCount={selection.selectedPathIds.length}

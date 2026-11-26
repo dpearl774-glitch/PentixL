@@ -2,16 +2,99 @@ import React from 'react';
 import { ModifierState, ToolType } from '../types/vector';
 import { haptic } from '../theme';
 
+/**
+ * The three switches. `hint` is the line inside the tray; `what` is what the
+ * armed-key strip says for the tool in hand. These keys are sticky, not held,
+ * so a lit glyph alone could not explain a tap that behaves differently three
+ * gestures later.
+ */
 const CAPS: Array<{
   key: keyof ModifierState;
   glyph: string;
   label: string;
   hint: string;
+  what: (tool: ToolType) => string;
 }> = [
-  { key: 'shift', glyph: '⇧', label: 'Shift', hint: 'Constrain angle / equal size' },
-  { key: 'ctrl', glyph: '⌃', label: 'Ctrl', hint: 'Direct select while armed' },
-  { key: 'alt', glyph: '⌥', label: 'Alt', hint: 'Break handle / erase' },
+  {
+    key: 'shift',
+    glyph: '⇧',
+    label: 'Shift',
+    hint: 'Constrain angle / equal size',
+    what: (tool) => {
+      switch (tool) {
+        case 'select':
+          return 'tap still moves · corners keep proportions · rotate snaps 15°';
+        case 'direct-select':
+          return 'handles snap to 45° · nodes add to the selection';
+        case 'pen':
+          return 'new segments snap to 45°';
+        case 'pressure-brush':
+          return 'handles snap to 45°';
+        case 'shape':
+          return 'draws an equal-sided shape';
+        default:
+          return 'constrains angles and proportions';
+      }
+    },
+  },
+  {
+    key: 'ctrl',
+    glyph: '⌃',
+    label: 'Ctrl',
+    hint: 'Direct select while armed',
+    what: () => 'tap adds to the selection',
+  },
+  {
+    key: 'alt',
+    glyph: '⌥',
+    label: 'Alt',
+    hint: 'Break handle / erase',
+    what: () => 'breaks handles · pauses smart guides',
+  },
 ];
+
+/**
+ * The armed keys, said out loud, for as long as they are armed. The pill alone
+ * asked the user to remember that a lit glyph changes what a tap does; this
+ * strip names the keys, says what they do to the current tool, and clears them
+ * in one tap, so an armed modifier never reads as a broken app.
+ */
+export const ModifierNotice: React.FC<{
+  modifiers: ModifierState;
+  onChange: (next: ModifierState) => void;
+  tool: ToolType;
+}> = ({ modifiers, onChange, tool }) => {
+  const armed = CAPS.filter((entry) => modifiers[entry.key]);
+  if (armed.length === 0) return null;
+
+  return (
+    <div
+      role="status"
+      className="relative z-20 flex shrink-0 items-center gap-2 border-t border-accent/35 bg-accent/10 px-3 py-1.5"
+    >
+      <span className="flex shrink-0 items-center gap-1 font-mono text-[13px] font-bold leading-none text-accent">
+        {armed.map((entry) => (
+          <span key={entry.key}>{entry.glyph}</span>
+        ))}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[10.5px] leading-tight text-text">
+        {armed
+          .map((entry) => `${entry.label} — ${entry.what(tool)}`)
+          .join(' · ')}
+      </span>
+      <button
+        type="button"
+        onClick={() => {
+          haptic(8);
+          onChange({ shift: false, ctrl: false, alt: false });
+        }}
+        className="press shrink-0 rounded-md bg-ink-2/80 px-2 py-1 text-[10px] font-semibold text-dim hover:text-text"
+      >
+        Clear
+      </button>
+    </div>
+  );
+};
 
 /**
  * The phone still needs Shift, Ctrl and Alt, but not a permanent rail of
