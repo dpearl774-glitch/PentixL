@@ -2,7 +2,7 @@ import { RangeInput } from './ui/primitives';
 import React, { useEffect, useState } from 'react';
 import { AlignCenter, AlignLeft, AlignRight, Check, Plus, Type as TypeIcon, X } from 'lucide-react';
 import type { GradientDef, SavedTextStyle, TextRange } from '../types/vector';
-import { graphemeLetters, normalizeTextRanges, styleAt } from '../utils/textRanges';
+import { graphemeLetters, graphemeWords, normalizeTextRanges, styleAt } from '../utils/textRanges';
 import { Button, Chip, NumberField, SectionLabel, Sheet } from './ui/primitives';
 
 export const SYSTEM_FONTS = [
@@ -189,6 +189,19 @@ export const TextSheet: React.FC<TextSheetProps> = ({
 
   /** The word as a reader counts it, each letter at its own string offset */
   const letters = React.useMemo(() => graphemeLetters(text), [text]);
+
+  /** Whole words, each carrying the letters a tap should pick */
+  const words = React.useMemo(() => graphemeWords(text), [text]);
+
+  const wordPicked = (word: { letters: number[] }) => word.letters.every((i) => picked.includes(i));
+
+  /** A word toggles as one: tap it to pick all of it, tap it again to let it go */
+  const toggleWord = (word: { letters: number[] }) =>
+    setPicked((current) =>
+      word.letters.every((i) => current.includes(i))
+        ? current.filter((i) => !word.letters.includes(i))
+        : Array.from(new Set([...current, ...word.letters]))
+    );
 
   /** Tapped letters, merged into runs so "TI" is one range and "T I" is two */
   const pickedRanges = React.useMemo(() => {
@@ -523,6 +536,34 @@ export const TextSheet: React.FC<TextSheetProps> = ({
                   : 'none'}
             </span>
           </div>
+          {/* One tap for a whole word: the alternative is a tap per letter, and a
+              long brand name is not worth spelling out with the finger. */}
+          {words.length > 0 && words.some((word) => word.letters.length > 1) && (
+            <div className="flex max-h-20 flex-wrap gap-1 overflow-y-auto rounded-lg border border-line bg-ink-0/40 p-1.5">
+              {words.map((word, position) => {
+                const all = wordPicked(word);
+                const some = !all && word.letters.some((i) => picked.includes(i));
+                return (
+                  <button
+                    key={`word-${word.index}`}
+                    type="button"
+                    aria-label={`Word ${word.text}, ${position + 1} of ${words.length}`}
+                    aria-pressed={all}
+                    onClick={() => toggleWord(word)}
+                    className={`press grid h-7 max-w-40 place-items-center truncate rounded-md border px-2 text-[12px] font-semibold ${
+                      all
+                        ? 'border-accent/60 bg-accent/25 text-text'
+                        : some
+                          ? 'border-accent/40 bg-ink-3 text-text'
+                          : 'border-line bg-ink-2 text-dim'
+                    }`}
+                  >
+                    {word.text}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {/* A long label wraps here instead of stretching the sheet. */}
           <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto rounded-lg border border-line bg-ink-0/60 p-1.5">
             {text.trim() === '' && (
@@ -608,9 +649,9 @@ export const TextSheet: React.FC<TextSheetProps> = ({
             </button>
           </div>
           <p className="text-[10.5px] leading-snug text-mute">
-            Tap the letters you want — no highlighting needed. Tint paints the picked letters, Refont
-            sets them in the typeface chosen above, and the rest of the word keeps its own paint. The
-            label stays type.
+            Tap a word to pick all of it, or tap single letters — no highlighting needed. Tint paints
+            the picked letters, Refont sets them in the typeface chosen above, and the rest of the
+            label keeps its own paint. The label stays type.
           </p>
         </section>
 

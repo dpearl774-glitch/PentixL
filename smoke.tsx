@@ -16,7 +16,7 @@ import { ToolPanel } from './src/components/ToolPanel';
 import { FirstRunTour } from './src/components/FirstRunTour';
 import { savedTextStyleFrom } from './src/utils/textStyles';
 import { clearTasks, finishTask, medianMs, startTask } from './src/utils/perfTrace';
-import { fillAt, graphemeLetters, normalizeTextRanges, textRuns } from './src/utils/textRanges';
+import { fillAt, graphemeLetters, graphemeWords, normalizeTextRanges, textRuns } from './src/utils/textRanges';
 import type { GradientDef } from './src/types/vector';
 import { sanitizeUserPrefs } from './src/utils/userPrefs';
 import { TopBar } from './src/components/TopBar';
@@ -2375,6 +2375,31 @@ check(
     fillAt(emojiTint, 13) === '#FF0000' &&
     fillAt(emojiTint, 5) === null &&
     fillAt(emojiTint, 14) === null
+);
+
+/* A whole word is picked in one tap, so words need their letters' offsets */
+const words = graphemeWords('CAFÉ🎨 PIXY');
+check(
+  'a word carries every letter it is made of, at their real offsets',
+  words.length === 2 &&
+    words[0].text === 'CAFÉ🎨' &&
+    words[0].index === 0 &&
+    words[0].letters.join(',') === '0,1,2,3,4' &&
+    words[1].text === 'PIXY' &&
+    words[1].index === 7 &&
+    words[1].letters.join(',') === '7,8,9,10'
+);
+check(
+  'a line break separates words and belongs to neither',
+  graphemeWords('ONE\nTWO').map((word) => word.text).join('|') === 'ONE|TWO'
+);
+const repeatedWords = graphemeWords('PIXY  PIXY');
+check(
+  'the same word twice is two words, told apart by where it starts',
+  repeatedWords.length === 2 &&
+    repeatedWords[0].text === repeatedWords[1].text &&
+    repeatedWords[0].index === 0 &&
+    repeatedWords[1].index === 6
 );
 
 check(

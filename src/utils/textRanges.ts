@@ -53,6 +53,39 @@ export function graphemeLetters(text: string): { index: number; char: string }[]
   return letters;
 }
 
+export interface TextWord {
+  /** Where the word's first letter sits in the label's whole text */
+  index: number;
+  /** The word as written, accents and emoji included */
+  text: string;
+  /** The letters it is made of, each at its own offset in that same text */
+  letters: number[];
+}
+
+/**
+ * The label cut into words, so a long name can be picked in one tap instead of
+ * letter by letter. Spaces, tabs and line breaks separate words and are not part
+ * of any of them; an emoji stays inside the word it touches.
+ */
+export function graphemeWords(text: string): TextWord[] {
+  const words: TextWord[] = [];
+  let current: TextWord | null = null;
+  for (const letter of graphemeLetters(text)) {
+    if (/^\s+$/.test(letter.char)) {
+      current = null;
+      continue;
+    }
+    if (!current) {
+      current = { index: letter.index, text: letter.char, letters: [letter.index] };
+      words.push(current);
+    } else {
+      current.text += letter.char;
+      current.letters.push(letter.index);
+    }
+  }
+  return words;
+}
+
 export interface TextRun {
   text: string;
   /** null means the label's own fill */
