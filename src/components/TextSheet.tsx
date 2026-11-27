@@ -2,7 +2,7 @@ import { RangeInput } from './ui/primitives';
 import React, { useEffect, useState } from 'react';
 import { AlignCenter, AlignLeft, AlignRight, Check, Plus, Type as TypeIcon, X } from 'lucide-react';
 import type { GradientDef, SavedTextStyle, TextRange } from '../types/vector';
-import { normalizeTextRanges, styleAt } from '../utils/textRanges';
+import { graphemeLetters, normalizeTextRanges, styleAt } from '../utils/textRanges';
 import { Button, Chip, NumberField, SectionLabel, Sheet } from './ui/primitives';
 
 export const SYSTEM_FONTS = [
@@ -98,6 +98,9 @@ export const TextSheet: React.FC<TextSheetProps> = ({
   // Its own typeface too: refonting must not change the label's own font.
   const [rangeFont, setRangeFont] = useState(initialFontFamily);
   const [selectedChars, setSelectedChars] = useState(0);
+  // Letters tapped in the picker below the word. Dragging a highlight inside a
+  // field is unreliable on a phone, so the same job gets a target you can tap.
+  const [picked, setPicked] = useState<number[]>([]);
   const textArea = React.useRef<HTMLTextAreaElement | null>(null);
   const [query, setQuery] = useState('');
 
@@ -113,6 +116,7 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     setFillGradient(initialFillGradient);
     setRanges(initialTextRanges ?? []);
     setSelectedChars(0);
+    setPicked([]);
     setQuery('');
   }, [
     open,
@@ -183,6 +187,23 @@ export const TextSheet: React.FC<TextSheetProps> = ({
     return end > start ? { start, end } : null;
   };
 
+  /** The word as a reader counts it, each letter at its own string offset */
+  const letters = React.useMemo(() => graphemeLetters(text), [text]);
+
+  /** Tapped letters, merged into runs so "TI" is one range and "T I" is two */
+  const pickedRanges = React.useMemo(() => {
+    const merged: { start: number; end: number }[] = [];
+    const widths = new Map(letters.map((letter) => [letter.index, letter.char.length]));
+    for (const index of [...picked].sort((a, b) => a - b)) {
+      const width = widths.get(index) ?? 1;
+      const last = merged[merged.length - 1];
+      if (last && index === last.end) last.end = index + width;
+      else if (last && index < last.end) continue;
+      else merged.push({ start: index, end: index + width });
+    }
+    return merged;
+  }, [picked, letters]);
+
   /** Tints the highlighted letters, replacing any range they sit inside */
   /**
    * Puts a style on the highlighted letters. Only the dimension being set
@@ -190,24 +211,30 @@ export const TextSheet: React.FC<TextSheetProps> = ({
    * one keeps its typeface.
    */
   const styleSelection = (patch: { fill?: string; fontFamily?: string }) => {
-    const selection = selectedRange();
-    if (!selection) return;
-    const kept = ranges.filter(
-      (range) => range.end <= selection.start || range.start >= selection.end
-    );
-    const existing = styleAt(ranges, selection.start);
-    const next: TextRange = {
-      ...selection,
-      fill: patch.fill ?? existing.fill ?? undefined,
-      fontFamily: patch.fontFamily ?? existing.fontFamily ?? undefined,
-    };
-    setRanges(normalizeTextRanges([...kept, next], text.length) ?? []);
+    const targets = pickedRanges.length > 0 ? pickedRanges : selectedRange() ? [selectedRange()!] : [];
+    if (targets.length === 0) return;
+    let next = ranges;
+    for (const selection of targets) {
+      const existing = styleAt(ranges, selection.start);
+      const styled: TextRange = {
+        ...selection,
+        fill: patch.fill ?? existing.fill ?? undefined,
+        fontFamily: patch.fontFamily ?? existing.fontFamily ?? undefined,
+      };
+      next = next
+        .filter((range) => range.end <= selection.start || range.start >= selection.end)
+        .concat(styled);
+    }
+    setRanges(normalizeTextRanges(next, text.length) ?? []);
     setSelectedChars(0);
+    setPicked([]);
   };
 
   const tintSelection = () => styleSelection({ fill: tintColor.toUpperCase() });
 
   const tintedChars = ranges.reduce((total, range) => total + (range.end - range.start), 0);
+  // One per tapped letter, not per string unit: an emoji is still one letter.
+  const targetCount = pickedRanges.length > 0 ? picked.length : selectedChars;
 
   const data = (): TextSheetData => ({
     text: text.trim(),
@@ -278,7 +305,12 @@ export const TextSheet: React.FC<TextSheetProps> = ({
         <textarea
           ref={textArea}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            // A tap that lands before the picker is reused would point at letters
+            // that no longer exist, so the picks start over with the word.
+            setPicked([]);
+          }}
           onSelect={(e) =>
             setSelectedChars(
               Math.max(0, (e.currentTarget.selectionEnd ?? 0) - (e.currentTarget.selectionStart ?? 0))
@@ -484,8 +516,42 @@ export const TextSheet: React.FC<TextSheetProps> = ({
           <div className="flex items-center justify-between">
             <SectionLabel>Part of the word</SectionLabel>
             <span className="font-mono text-[10px] text-mute">
-              {tintedChars > 0 ? `${tintedChars} letters` : 'none'}
+              {targetCount > 0
+                ? `${targetCount} picked`
+                : tintedChars > 0
+                  ? `${tintedChars} tinted`
+                  : 'none'}
             </span>
+          </div>
+          {/* A long label wraps here instead of stretching the sheet. */}
+          <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto rounded-lg border border-line bg-ink-0/60 p-1.5">
+            {text.trim() === '' && (
+              <span className="px-1 text-[11px] text-mute">Type a word above</span>
+            )}
+            {letters.map(({ index, char }, position) =>
+              /^\s+$/.test(char) ? (
+                <span key={`gap-${index}`} className="w-1" />
+              ) : (
+                <button
+                  key={index}
+                  type="button"
+                  aria-label={`Letter ${char}, ${position + 1} of ${letters.length}`}
+                  aria-pressed={picked.includes(index)}
+                  onClick={() =>
+                    setPicked((current) =>
+                      current.includes(index)
+                        ? current.filter((i) => i !== index)
+                        : [...current, index]
+                    )
+                  }
+                  className={`press grid h-8 min-w-7 place-items-center rounded-md px-1 text-[13px] font-semibold ${
+                    picked.includes(index) ? 'bg-accent/25 text-text' : 'bg-ink-2 text-dim'
+                  }`}
+                >
+                  {char}
+                </button>
+              )
+            )}
           </div>
           <select
             value={rangeFont}
@@ -513,16 +579,16 @@ export const TextSheet: React.FC<TextSheetProps> = ({
             <button
               type="button"
               aria-label="Tint selected letters"
-              disabled={selectedChars === 0 || !text.trim()}
+              disabled={targetCount === 0 || !text.trim()}
               onClick={tintSelection}
               className="press h-8 flex-1 rounded-md border border-line bg-ink-2 text-[11.5px] font-semibold text-dim hover:text-text disabled:opacity-40"
             >
-              Tint {selectedChars > 0 ? `${selectedChars} highlighted` : 'highlighted letters'}
+              Tint {targetCount > 0 ? `${targetCount} picked` : 'letters'}
             </button>
             <button
               type="button"
               aria-label="Refont selected letters"
-              disabled={selectedChars === 0 || !text.trim()}
+              disabled={targetCount === 0 || !text.trim()}
               onClick={() => styleSelection({ fontFamily: rangeFont })}
               className="press h-8 flex-1 rounded-md border border-line bg-ink-2 text-[11.5px] font-semibold text-dim hover:text-text disabled:opacity-40"
             >
@@ -532,15 +598,19 @@ export const TextSheet: React.FC<TextSheetProps> = ({
               type="button"
               aria-label="Clear letter tint"
               disabled={tintedChars === 0}
-              onClick={() => setRanges([])}
+              onClick={() => {
+                setRanges([]);
+                setPicked([]);
+              }}
               className="press h-8 rounded-md border border-line px-2.5 text-[11.5px] font-semibold text-dim hover:text-text disabled:opacity-40"
             >
               Clear
             </button>
           </div>
           <p className="text-[10.5px] leading-snug text-mute">
-            Highlight letters above, then tint them with the colour or set them in the typeface
-            picked above. The label stays type.
+            Tap the letters you want — no highlighting needed. Tint paints the picked letters, Refont
+            sets them in the typeface chosen above, and the rest of the word keeps its own paint. The
+            label stays type.
           </p>
         </section>
 

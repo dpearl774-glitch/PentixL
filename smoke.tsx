@@ -16,7 +16,7 @@ import { ToolPanel } from './src/components/ToolPanel';
 import { FirstRunTour } from './src/components/FirstRunTour';
 import { savedTextStyleFrom } from './src/utils/textStyles';
 import { clearTasks, finishTask, medianMs, startTask } from './src/utils/perfTrace';
-import { fillAt, normalizeTextRanges, textRuns } from './src/utils/textRanges';
+import { fillAt, graphemeLetters, normalizeTextRanges, textRuns } from './src/utils/textRanges';
 import type { GradientDef } from './src/types/vector';
 import { sanitizeUserPrefs } from './src/utils/userPrefs';
 import { TopBar } from './src/components/TopBar';
@@ -2347,6 +2347,34 @@ check(
   'a style keeps a tint and a typeface on the same letters',
   normalizeTextRanges([{ start: 0, end: 3, fill: '#FF0000', fontFamily: 'Impact, sans-serif' }], 3)?.[0]
     .fontFamily === 'Impact, sans-serif'
+);
+
+/* The letter picker counts letters, ranges count string units */
+const emojiWord = 'PEN🎨T👩‍👩‍👧X';
+const glyphs = graphemeLetters(emojiWord);
+check(
+  'one letter per grapheme, even an emoji that spans two units',
+  glyphs.length === 7 && glyphs.every((g) => emojiWord.slice(g.index, g.index + g.char.length) === g.char)
+);
+check(
+  'an emoji sits at its real string offset, not its letter number',
+  glyphs[3].index === 3 && glyphs[3].char === '🎨' && glyphs[4].index === 5 && glyphs[5].index === 6
+);
+const accented = graphemeLetters('cafe\u0301');
+check(
+  'an accent that arrives as its own character stays with its letter',
+  accented.length === 4 && accented[3].index === 3 && accented[3].char === 'e\u0301'
+);
+const emojiTint = normalizeTextRanges(
+  [{ start: 6, end: 6 + glyphs[5].char.length, fill: '#FF0000' }],
+  emojiWord.length
+);
+check(
+  'a tinted emoji covers both halves of its pair and nothing beside it',
+  fillAt(emojiTint, 6) === '#FF0000' &&
+    fillAt(emojiTint, 13) === '#FF0000' &&
+    fillAt(emojiTint, 5) === null &&
+    fillAt(emojiTint, 14) === null
 );
 
 check(

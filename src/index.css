@@ -79,6 +79,9 @@
   [contenteditable="true"] {
     user-select: text;
     -webkit-user-select: text;
+    /* The callout ban above would also take away the phone's own selection
+       handles and paste menu inside a field. */
+    -webkit-touch-callout: default;
   }
 
   canvas,

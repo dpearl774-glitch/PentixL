@@ -19,6 +19,40 @@ export function fontAt(ranges: TextRange[] | undefined, index: number): string |
  * leave a range covering characters that still exist.
  */
 
+type GraphemeSegmenter = { segment(text: string): Iterable<{ index: number; segment: string }> };
+
+/** Grapheme segmentation when the browser has it, kept off the hot path. */
+const graphemeSegmenter = (() => {
+  const Segmenter = (
+    Intl as unknown as {
+      Segmenter?: new (locales?: string, options?: { granularity: 'grapheme' }) => GraphemeSegmenter;
+    }
+  ).Segmenter;
+  return Segmenter ? new Segmenter(undefined, { granularity: 'grapheme' }) : null;
+})();
+
+/**
+ * A label's letters as a reader counts them: one entry per grapheme, carrying
+ * the index it starts at in the same string the ranges count in. An emoji stays
+ * one letter although it spans two units, and an accent that arrives as its own
+ * character travels with the letter it sits on.
+ */
+export function graphemeLetters(text: string): { index: number; char: string }[] {
+  if (graphemeSegmenter) {
+    return Array.from(graphemeSegmenter.segment(text), (part) => ({
+      index: part.index,
+      char: part.segment,
+    }));
+  }
+  const letters: { index: number; char: string }[] = [];
+  let index = 0;
+  for (const char of text) {
+    letters.push({ index, char });
+    index += char.length;
+  }
+  return letters;
+}
+
 export interface TextRun {
   text: string;
   /** null means the label's own fill */
