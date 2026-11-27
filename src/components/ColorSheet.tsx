@@ -34,6 +34,12 @@ interface ColorSheetProps {
   fillGradient: GradientDef | null;
   onSetFillType: (type: 'solid' | 'gradient') => void;
   onUpdateFillGradient: (gradient: GradientDef) => void;
+  /** The selection already carries a picture fill */
+  imageFill?: boolean;
+  /** At least one selected closed shape can take a picture */
+  canFillImage?: boolean;
+  onPickFillImage?: (file: File) => void;
+  onClearFillImage?: () => void;
   stopIndex: number;
   onStopIndexChange: (index: number) => void;
   artboardColor: string;
@@ -285,6 +291,10 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
   fillType,
   fillGradient,
   onSetFillType,
+  imageFill = false,
+  canFillImage = false,
+  onPickFillImage,
+  onClearFillImage,
   onUpdateFillGradient,
   stopIndex,
   onStopIndexChange,
@@ -636,6 +646,52 @@ export const ColorSheet: React.FC<ColorSheetProps> = ({
                 ]}
               />
             </div>
+
+            {/* A picture as paint: it is cropped into the outline, so the
+                object stays editable instead of becoming a bitmap. */}
+            {onPickFillImage && (
+              <div className="flex items-center gap-2 rounded-lg border border-line bg-ink-2 px-2.5 py-1.5">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] font-semibold text-text">Image fill</div>
+                  <div className="text-[9.5px] leading-snug text-mute">
+                    {imageFill
+                      ? 'A picture is the fill. Choosing a colour replaces it.'
+                      : canFillImage
+                        ? 'Crops a picture into the selected shapes.'
+                        : 'Select a closed shape first.'}
+                  </div>
+                </div>
+                {imageFill && onClearFillImage && (
+                  <button
+                    type="button"
+                    onClick={onClearFillImage}
+                    className="press h-8 shrink-0 rounded-lg border border-line bg-ink-3 px-2 text-[10px] font-semibold text-dim hover:text-accent"
+                  >
+                    Remove
+                  </button>
+                )}
+                <label
+                  className={`press grid h-8 shrink-0 place-items-center rounded-lg px-2.5 text-[10px] font-bold uppercase tracking-[0.04em] ${
+                    canFillImage
+                      ? 'cursor-pointer bg-accent/15 text-accent'
+                      : 'cursor-not-allowed bg-ink-3 text-mute opacity-50'
+                  }`}
+                >
+                  Choose
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    disabled={!canFillImage}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) onPickFillImage(file);
+                      event.currentTarget.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+            )}
 
             {isGradient && fillGradient && (
               <>

@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { CANVAS } from '../theme';
+import { CANVAS, haptic } from '../theme';
 import { POINTER_DRAG_SLOP, TOUCH_DRAG_SLOP } from '../utils/pointer';
 import { pathIdsForTap } from '../utils/groupSelection';
 import { snapAngleToAxes, snapBoxMove, snapPoint, type SnapLine } from '../utils/snapping';
@@ -269,6 +269,8 @@ interface CanvasProps {
   /** Opens the type editor for an existing text object */
   onEditText?: (path: VectorPath) => void;
   onToolSwitch?: (tool: ToolType) => void;
+  /** A held finger on an object, for its quick actions */
+  onLongPressPath?: (pathId: string) => void;
   /** While the nudge pad is open the selection rectangle steps out of the way */
   hideTransformBox?: boolean;
   /** The precision pad is optional; when off, its launcher is hidden */
@@ -334,6 +336,7 @@ export const Canvas: React.FC<CanvasProps> = ({
   guidesVisible = true,
   guideSnapEnabled = false,
   onToolSwitch,
+  onLongPressPath,
   hideTransformBox = false,
   showPrecisionPad = true,
   warpPreview = null,
@@ -786,6 +789,22 @@ export const Canvas: React.FC<CanvasProps> = ({
     }
     return [...masks, drawInsideSource];
   }, [drawInsideSource, layers]);
+  /**
+   * Masks belonging to the current selection. A clipped object is usually
+   * worked on without its mask selected, so the outline is drawn faintly as an
+   * editing aid — selecting the mask itself draws it at full strength.
+   */
+  const selectedMaskIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    for (const layer of layers) {
+      for (const path of layer.paths) {
+        if (path.clipPathId && selection.selectedPathIds.includes(path.id)) {
+          ids.add(path.clipPathId);
+        }
+      }
+    }
+    return ids;
+  }, [layers, selection.selectedPathIds]);
   const clipIds = React.useMemo(() => collectClipIds(layers), [layers]);
   const missingClipIds = React.useMemo(() => {
     const present = new Set(clippingMasks.map((mask) => mask.id));
@@ -1081,6 +1100,23 @@ export const Canvas: React.FC<CanvasProps> = ({
    */
   const pendingTapDeselectRef = useRef<string[] | null>(null);
 
+  // A held finger on an object opens its quick actions. This is a plain timer,
+  // not a gesture grammar: any travel, a lift or a second finger cancels it, so
+  // it can never compete with a drag, a marquee or a pinch.
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressPointRef = useRef<Point | null>(null);
+  const longPressFiredRef = useRef(false);
+
+  const cancelLongPress = React.useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressPointRef.current = null;
+  }, []);
+
+  useEffect(() => () => cancelLongPress(), [cancelLongPress]);
+
   /** A tap on a grouped member takes the group, unless that member is already
    * selected — then it is the explicit single-object case. */
   const selectionForTap = React.useCallback(
@@ -1137,6 +1173,27 @@ export const Canvas: React.FC<CanvasProps> = ({
   }, [allPaths, selection.selectedPathIds]);
 
   // Unified helper for initiating drags on SVG child elements with pointer capture
+  /**
+   * Starts the hold that opens an object's quick actions. Kept next to the drag
+   * operation because an object's press stops propagation, so the canvas-level
+   * pointer down never sees it.
+   */
+  const beginLongPress = (e: { clientX: number; clientY: number }, pathId: string) => {
+    if (!onLongPressPath) return;
+    cancelLongPress();
+    longPressPointRef.current = { x: e.clientX, y: e.clientY };
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null;
+      longPressPointRef.current = null;
+      longPressFiredRef.current = true;
+      setDraggingTarget(null);
+      setMarqueeBox(null);
+      setIsPointerDown(false);
+      haptic(12);
+      onLongPressPath(pathId);
+    }, 480);
+  };
+
   const startDragOperation = (
     e: React.PointerEvent,
     target: {
@@ -1165,6 +1222,8 @@ export const Canvas: React.FC<CanvasProps> = ({
     lastPointerTimeRef.current = performance.now();
     lastPointerPosRef.current = canvasPt;
     setDraggingTarget(target);
+    // The object's own press, which is the only way a held finger can land here.
+    if (target.type === 'path' && target.pathId) beginLongPress(e, target.pathId);
   };
 
   /**
@@ -1327,6 +1386,8 @@ export const Canvas: React.FC<CanvasProps> = ({
     // A new gesture starts with nothing held: the previous release either
     // applied its deselection or turned it into a drag.
     pendingTapDeselectRef.current = null;
+    cancelLongPress();
+    longPressFiredRef.current = false;
 
     // Handle 2-Finger Pinch / Pan
     if (activePointersRef.current.size === 2) {
@@ -1364,6 +1425,14 @@ export const Canvas: React.FC<CanvasProps> = ({
     lastPointerTimeRef.current = performance.now();
     lastPointerPosRef.current = canvasPt;
     smoothedPressureRef.current = 0.5;
+
+    // A press that reached the canvas itself only holds empty space, where
+    // there is nothing to ask about; object presses start their own timer.
+    if (effectiveTool === 'select' && onLongPressPath) {
+      const hit = (e.target as Element | null)?.closest?.('[data-path-id]');
+      const hitPathId = hit?.getAttribute('data-path-id') ?? null;
+      if (hitPathId) beginLongPress(e, hitPathId);
+    }
 
     // Eyedropper: sample the artwork under the finger and hand it back
     if (eyedropperActive) {
@@ -1583,6 +1652,15 @@ export const Canvas: React.FC<CanvasProps> = ({
 
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (padPressRef.current && e.pointerId !== PAD_POINTER_ID) return;
+
+    // A finger that travels is drawing or dragging, not asking for a menu.
+    if (longPressPointRef.current) {
+      const dx = e.clientX - longPressPointRef.current.x;
+      const dy = e.clientY - longPressPointRef.current.y;
+      if (Math.hypot(dx, dy) > 9) cancelLongPress();
+    }
+    // Once the menu is up, the rest of this hold must not drag what sits under it.
+    if (longPressFiredRef.current) return;
 
     // Armed eyedropper: report the pixel under the finger instead of drawing.
     if (eyedropperActive) {
@@ -2207,6 +2285,8 @@ export const Canvas: React.FC<CanvasProps> = ({
   const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     if (padPressRef.current && e.pointerId !== PAD_POINTER_ID) return;
 
+    cancelLongPress();
+    longPressFiredRef.current = false;
     activePointersRef.current.delete(e.pointerId);
 
     if (activePointersRef.current.size < 2) {
@@ -3125,7 +3205,8 @@ export const Canvas: React.FC<CanvasProps> = ({
 
                   // A mask source clips other artwork but does not paint itself.
                   if (path.isClippingMask) {
-                    if (!isSelected) return null;
+                    const assisting = selectedMaskIds.has(path.id);
+                    if (!isSelected && !assisting) return null;
                     const maskD = pathToSvgD(path);
                     return maskD ? (
                       <path
@@ -3133,9 +3214,9 @@ export const Canvas: React.FC<CanvasProps> = ({
                         d={maskD}
                         fill="none"
                         stroke={CANVAS.accent}
-                        strokeWidth={1.6 / view.zoom}
+                        strokeWidth={(isSelected ? 1.6 : 1.2) / view.zoom}
                         strokeDasharray={`${6 / view.zoom} ${4 / view.zoom}`}
-                        opacity={0.8}
+                        opacity={isSelected ? 0.8 : 0.35}
                         className="pointer-events-none"
                       />
                     ) : null;

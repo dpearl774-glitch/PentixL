@@ -89,6 +89,8 @@ interface ToolOptionsProps {
   onGroup: () => void;
   /** Merge the selection into one editable path */
   onMerge: () => void;
+  /** Opens the shape builder, so combining is not a hunt through the Draw tray */
+  onOpenShapeBuilder?: () => void;
   onBoolean: (op: BooleanOperation) => void;
   onEditText: () => void;
   onExpandText: () => void;
@@ -118,6 +120,9 @@ interface ToolOptionsProps {
   onReleaseClipMask: () => void;
   canMakeClipMask: boolean;
   hasClipMask: boolean;
+  /** The selection is clipped, so its mask outline can be edited */
+  canEditMask?: boolean;
+  onEditMask?: () => void;
   canDrawInside: boolean;
   drawInsideName?: string | null;
   onStartDrawInside: () => void;
@@ -451,6 +456,7 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   onFlip,
   onGroup,
   onMerge,
+  onOpenShapeBuilder,
   onBoolean,
   onEditText,
   onExpandText,
@@ -477,6 +483,8 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
   onReleaseClipMask,
   canMakeClipMask,
   hasClipMask,
+  canEditMask = false,
+  onEditMask,
   canDrawInside,
   drawInsideName,
   onStartDrawInside,
@@ -1416,6 +1424,24 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
               </button>
             ))}
           </div>
+          {onOpenShapeBuilder && (
+            <div className="mb-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setAlignMenu(false);
+                  onOpenShapeBuilder();
+                }}
+                className="press flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-accent/15 font-sans text-[10px] font-bold uppercase tracking-[0.06em] text-accent"
+              >
+                <Combine size={13} /> Shape builder
+              </button>
+              <p className="px-1 pt-1 text-[9.5px] leading-snug text-mute">
+                Brush across shapes to join them; hold Alt to erase. Use this when
+                you want to keep only part of the overlap.
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-1">
             {ALIGN_BUTTONS.map((b) => (
               <button
@@ -2553,6 +2579,18 @@ export const ToolOptions: React.FC<ToolOptionsProps> = ({
                     className="press h-8 rounded-lg bg-ink-3 text-[10px] font-semibold text-dim hover:text-accent"
                   >
                     Release
+                  </button>
+                )}
+                {canEditMask && onEditMask && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onEditMask();
+                      setMoreMenu(false);
+                    }}
+                    className="press col-span-2 h-8 rounded-lg bg-ink-3 text-[10px] font-semibold text-dim hover:text-accent"
+                  >
+                    Edit mask outline
                   </button>
                 )}
               </div>

@@ -5,6 +5,7 @@ import { TopBar } from './components/TopBar';
 import { ToolDock } from './components/ToolDock';
 import { ModifierNotice, ModifierTray } from './components/ModifierTray';
 import { ToolOptions } from './components/ToolOptions';
+import { QuickActions } from './components/QuickActions';
 import { Canvas } from './components/Canvas';
 import { AppMenu } from './components/AppMenu';
 import { LayersSheet } from './components/LayersSheet';
@@ -748,6 +749,8 @@ export default function App() {
    * Sheets & transient UI
    * ------------------------------------------------------------------ */
   const [sheet, setSheet] = useState<SheetName | null>(null);
+  /** The object a held finger asked about; its quick actions sit above the dock */
+  const [quickActionPathId, setQuickActionPathId] = useState<string | null>(null);
   /** The first-run marks wait until the start sheet is out of the way */
   const [tourPending, setTourPending] = useState(false);
   const [tourStep, setTourStep] = useState<number | null>(null);
@@ -895,6 +898,40 @@ export default function App() {
     () => allPaths.filter((p) => selection.selectedPathIds.includes(p.id)),
     [allPaths, selection.selectedPathIds]
   );
+  const quickActionPath = useMemo(
+    () => allPaths.find((p) => p.id === quickActionPathId) ?? null,
+    [allPaths, quickActionPathId]
+  );
+  /** The builder needs two closed outlines before it has a region to brush. */
+  const canBuildShapes = useMemo(
+    () =>
+      allPaths.filter((p) => !p.isClippingMask && (p.closed || p.points.length >= 3)).length >=
+      2,
+    [allPaths]
+  );
+
+  /**
+   * A clipped object's mask is usually hidden — it only paints as a dashed
+   * outline while selected. This hands it over for node editing, so the cut can
+   * be changed without releasing the mask and starting again.
+   */
+  const editMaskOutline = useCallback(() => {
+    const clipped = selectedPaths.find((path) => path.clipPathId);
+    const mask = clipped?.clipPathId
+      ? allPaths.find((path) => path.id === clipped.clipPathId)
+      : null;
+    if (!mask) {
+      notify('This object has no mask outline');
+      return;
+    }
+    setSelection({
+      selectedPathIds: [mask.id],
+      selectedAnchorIndex: null,
+      selectedHandleType: null,
+    });
+    setTool('direct-select');
+    notify('Editing the mask outline');
+  }, [allPaths, notify, selectedPaths]);
   const drawInsidePath = useMemo(() => {
     if (!drawInsideId) return null;
     const path = allPaths.find((p) => p.id === drawInsideId) ?? null;
@@ -2805,6 +2842,45 @@ export default function App() {
     [applyLayers, dropFromSelection]
   );
 
+  /** One undo step for a lock or hide that covers several objects. */
+  const setPathsLock = useCallback(
+    (ids: string[], locked: boolean) => {
+      const targets = new Set(ids);
+      if (!targets.size) return;
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((p) => (targets.has(p.id) ? { ...p, locked } : p)),
+        }))
+      );
+      if (locked) {
+        setSelection((prev) => ({
+          ...prev,
+          selectedPathIds: prev.selectedPathIds.filter((id) => !targets.has(id)),
+        }));
+      }
+    },
+    [applyLayers]
+  );
+
+  const hidePaths = useCallback(
+    (ids: string[]) => {
+      const targets = new Set(ids);
+      if (!targets.size) return;
+      applyLayers((prev) =>
+        prev.map((layer) => ({
+          ...layer,
+          paths: layer.paths.map((p) => (targets.has(p.id) ? { ...p, visible: false } : p)),
+        }))
+      );
+      setSelection((prev) => ({
+        ...prev,
+        selectedPathIds: prev.selectedPathIds.filter((id) => !targets.has(id)),
+      }));
+    },
+    [applyLayers]
+  );
+
   const setPathOpacity = useCallback(
     (id: string, opacity: number) => {
       applyLayers(
@@ -2981,7 +3057,9 @@ export default function App() {
     (gradient: GradientDef) => {
       setFillType('gradient');
       setFillGradient(gradient);
-      if (selection.selectedPathIds.length) patchSelection({ fillGradient: gradient });
+      if (selection.selectedPathIds.length) {
+        patchSelection({ fillGradient: gradient, image: undefined });
+      }
       notify('Gradient applied');
     },
     [notify, patchSelection, selection.selectedPathIds.length]
@@ -3759,6 +3837,63 @@ export default function App() {
       view.width,
     ]
   );
+
+  /**
+   * Paint the selected closed shapes with a picture. Same stored paint the
+   * References sheet uses; it used to be reachable only from that sheet.
+   */
+  const fillSelectionWithImage = useCallback(
+    async (file: File) => {
+      const targets = selectedPaths.filter(
+        (path) => path.closed && path.points.length >= 3 && !path.isClippingMask
+      );
+      if (!targets.length) {
+        notify('Select a closed shape to fill');
+        return;
+      }
+      let reference: ReferenceImage | null = null;
+      try {
+        reference = await referenceImageFromFile(file);
+        const image = await imagePaintFromReference(reference);
+        const ids = new Set(targets.map((path) => path.id));
+        applyLayers((prev) =>
+          prev.map((layer) => ({
+            ...layer,
+            paths: layer.paths.map((path) =>
+              ids.has(path.id)
+                ? { ...path, image, fill: 'none', fillGradient: undefined }
+                : path
+            ),
+          }))
+        );
+        notify(
+          targets.length === 1
+            ? 'Image fill applied'
+            : `Image fill applied to ${targets.length} shapes`
+        );
+      } catch {
+        notify('That image could not be used as a fill');
+      } finally {
+        if (reference) URL.revokeObjectURL(reference.url);
+      }
+    },
+    [applyLayers, notify, selectedPaths]
+  );
+
+  const clearImageFill = useCallback(() => {
+    const targets = selectedPaths.filter((path) => path.image);
+    if (!targets.length) return;
+    const ids = new Set(targets.map((path) => path.id));
+    applyLayers((prev) =>
+      prev.map((layer) => ({
+        ...layer,
+        paths: layer.paths.map((path) =>
+          ids.has(path.id) ? { ...path, image: undefined, fill: fillColor } : path
+        ),
+      }))
+    );
+    notify('Image fill removed');
+  }, [applyLayers, fillColor, notify, selectedPaths]);
 
   /** Imports a file straight into the artwork, with no trace overlay behind it. */
   const addImageAsArtwork = useCallback(
@@ -4552,6 +4687,20 @@ export default function App() {
           onRequestText={requestText}
           onEditText={(path) => openTextSheet({ path })}
           onToolSwitch={changeTool}
+          onLongPressPath={
+            previewMode
+              ? undefined
+              : (pathId) => {
+                  if (!selection.selectedPathIds.includes(pathId)) {
+                    setSelection({
+                      selectedPathIds: [pathId],
+                      selectedAnchorIndex: null,
+                      selectedHandleType: null,
+                    });
+                  }
+                  setQuickActionPathId(pathId);
+                }
+          }
           hideTransformBox={previewMode || !showTransforms}
           warpPreview={previewMode ? null : warpPreview}
           showPrecisionPad={previewMode ? false : showPrecisionPad}
@@ -4586,6 +4735,57 @@ export default function App() {
 
         </>
         )}
+
+        {!previewMode && tool === 'select' && quickActionPath && (
+          <QuickActions
+            name={
+              selection.selectedPathIds.length > 1
+                ? `${selection.selectedPathIds.length} objects`
+                : quickActionPath.name
+            }
+            locked={Boolean(quickActionPath.locked)}
+            combined={selection.selectedPathIds.length > 1}
+            canBuild={canBuildShapes}
+            onDuplicate={() => {
+              duplicateSelection();
+              setQuickActionPathId(null);
+            }}
+            onToFront={() => {
+              selection.selectedPathIds.forEach((id) => movePath(id, 'front'));
+              setQuickActionPathId(null);
+            }}
+            onToBack={() => {
+              selection.selectedPathIds.forEach((id) => movePath(id, 'back'));
+              setQuickActionPathId(null);
+            }}
+            onToggleLock={() => {
+              setPathsLock(
+                selection.selectedPathIds.length
+                  ? selection.selectedPathIds
+                  : [quickActionPath.id],
+                !quickActionPath.locked
+              );
+              setQuickActionPathId(null);
+            }}
+            onHide={() => {
+              hidePaths(
+                selection.selectedPathIds.length
+                  ? selection.selectedPathIds
+                  : [quickActionPath.id]
+              );
+              setQuickActionPathId(null);
+            }}
+            onDelete={() => {
+              deleteSelection();
+              setQuickActionPathId(null);
+            }}
+            onBuild={() => {
+              setQuickActionPathId(null);
+              changeTool('shape-builder');
+            }}
+            onClose={() => setQuickActionPathId(null)}
+          />
+        )}
       </main>
 
       {!previewMode && (
@@ -4617,6 +4817,7 @@ export default function App() {
         onFlip={flipSelection}
         onGroup={() => groupSelectedObjects()}
         onMerge={() => mergePathsByIds(selection.selectedPathIds)}
+        onOpenShapeBuilder={() => changeTool('shape-builder')}
         onBoolean={runBoolean}
         onEditText={() => openTextSheet({ path: editingTextPath })}
         onExpandText={expandSelectedText}
@@ -4651,6 +4852,8 @@ export default function App() {
         onTextInShape={textInShape}
         canMakeClipMask={selectedPaths.filter((p) => p.closed && !p.text).length >= 2}
         hasClipMask={selectedPaths.some((p) => !!p.clipPathId || p.isClippingMask === true)}
+        canEditMask={selectedPaths.some((p) => Boolean(p.clipPathId))}
+        onEditMask={editMaskOutline}
         canDrawInside={
           selectedPaths.filter((p) => p.closed && !p.text && !p.isClippingMask).length === 1
         }
@@ -5039,15 +5242,27 @@ export default function App() {
         onSetFillType={(type) => {
           setFillType(type);
           if (selection.selectedPathIds.length) {
+            // Picking solid or gradient paint replaces a picture fill, so the
+            // panel's controls always describe what is actually painted.
             patchSelectionSoon(
-              type === 'gradient' ? { fillGradient } : { fillGradient: undefined }
+              type === 'gradient'
+                ? { fillGradient, image: undefined }
+                : { fillGradient: undefined, image: undefined }
             );
           }
         }}
         onUpdateFillGradient={(gradient) => {
           setFillGradient(gradient);
-          if (selection.selectedPathIds.length) patchSelectionSoon({ fillGradient: gradient });
+          if (selection.selectedPathIds.length) {
+            patchSelectionSoon({ fillGradient: gradient, image: undefined });
+          }
         }}
+        imageFill={selectedPaths.some((path) => Boolean(path.image))}
+        canFillImage={selectedPaths.some(
+          (path) => path.closed && path.points.length >= 3 && !path.isClippingMask
+        )}
+        onPickFillImage={(file) => void fillSelectionWithImage(file)}
+        onClearFillImage={clearImageFill}
         stopIndex={activeStopIndex}
         onStopIndexChange={setActiveStopIndex}
         artboardColor={artboardColor}
@@ -5074,7 +5289,10 @@ export default function App() {
           setFillColor(color);
           rememberColor(color);
           // A drag through the picker is one undo step, not one per pixel.
-          if (selection.selectedPathIds.length) patchSelectionSoon({ fill: color });
+          // A solid colour is paint, so it takes over from an image fill.
+          if (selection.selectedPathIds.length) {
+            patchSelectionSoon({ fill: color, image: undefined });
+          }
         }}
         onUpdateStroke={(color) => {
           setStrokeColor(color);

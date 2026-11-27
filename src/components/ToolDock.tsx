@@ -167,6 +167,10 @@ export const ToolDock: React.FC<ToolDockProps> = ({
                 );
               })}
             </div>
+            <p className="px-2 pt-2 text-[9.5px] leading-snug text-mute">
+              Build brushes shapes into one. It is also in Arrange whenever a shape
+              is selected.
+            </p>
           </div>
         </>
       )}
